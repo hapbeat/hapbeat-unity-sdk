@@ -1,0 +1,12 @@
+{
+  "name": "com.hapbeat.sdk",
+  "version": "0.1.0",
+  "displayName": "Hapbeat SDK",
+  "description": "Unity SDK for Hapbeat haptic devices",
+  "unity": "2021.3",
+  "keywords": ["haptics", "hapbeat", "esp-now"],
+  "author": {
+    "name": "Hapbeat",
+    "url": "https://hapbeat.com"
+  }
+}
