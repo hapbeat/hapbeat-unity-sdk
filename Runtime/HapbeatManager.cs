@@ -1,11 +1,12 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Hapbeat
 {
     /// <summary>
     /// Main singleton manager for the Hapbeat SDK.
-    /// Provides the public API for triggering haptic events via the Hapbeat Bridge.
+    /// Provides the public API for triggering haptic events via Wi-Fi UDP (standard) or Bridge (ESP-NOW).
     /// Attach this component to a GameObject in your scene, or it will create itself automatically.
     /// </summary>
     public class HapbeatManager : MonoBehaviour
@@ -13,13 +14,13 @@ namespace Hapbeat
         /// <summary>Singleton instance of HapbeatManager.</summary>
         public static HapbeatManager Instance { get; private set; }
 
-        /// <summary>Invoked when the client connects to the Bridge.</summary>
+        /// <summary>Invoked when the client connects to a device or Bridge.</summary>
         public event Action OnConnected;
 
-        /// <summary>Invoked when the client disconnects from the Bridge.</summary>
+        /// <summary>Invoked when the client disconnects.</summary>
         public event Action OnDisconnected;
 
-        /// <summary>Invoked when an error is received from the Bridge.</summary>
+        /// <summary>Invoked when an error is received.</summary>
         public event Action<string> OnError;
 
         /// <summary>Invoked when a PONG response is received. Parameter is round-trip time in microseconds.</summary>
@@ -30,18 +31,22 @@ namespace Hapbeat
         [SerializeField]
         private HapbeatConfig _config;
 
-        /// <summary>Whether the client is currently connected to the Bridge.</summary>
+        /// <summary>Whether the client is currently connected.</summary>
         public bool IsConnected => _client != null && _client.IsConnected;
 
         /// <summary>
-        /// Estimated time offset between local clock and Bridge clock in microseconds.
-        /// Calculated from PONG responses: bridgeTime = localTime + BridgeTimeOffsetUs.
+        /// Estimated time offset between local clock and remote clock in microseconds.
+        /// Calculated from PONG responses: remoteTime = localTime + TimeOffsetUs.
         /// </summary>
-        public long BridgeTimeOffsetUs { get; private set; }
+        public long TimeOffsetUs { get; private set; }
 
         private HapbeatClient _client;
+        private HapbeatDiscovery _discovery;
         private float _lastPingTime;
         private bool _isInitialized;
+
+        /// <summary>List of discovered devices from the last scan.</summary>
+        public IReadOnlyList<HapbeatDevice> DiscoveredDevices => _discovery?.DiscoveredDevices ?? new List<HapbeatDevice>().AsReadOnly();
 
         #region Unity Lifecycle
 
@@ -63,6 +68,9 @@ namespace Hapbeat
 
         private void Update()
         {
+            // Dispatch discovery callbacks
+            _discovery?.DispatchCallbacks();
+
             if (_client == null)
                 return;
 
@@ -101,7 +109,7 @@ namespace Hapbeat
         /// <summary>
         /// Play a haptic event immediately.
         /// </summary>
-        /// <param name="eventId">Event identifier registered in the Bridge.</param>
+        /// <param name="eventId">Event identifier.</param>
         /// <param name="gain">Gain multiplier (0.0 to 1.0+). Default is 1.0.</param>
         /// <param name="group">Target group ID. 0 = broadcast to all devices.</param>
         public void Play(string eventId, float gain = 1.0f, byte group = 0)
@@ -158,7 +166,7 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Send a PING to the Bridge for keep-alive and time synchronization.
+        /// Send a PING for keep-alive and time synchronization.
         /// </summary>
         public void Ping()
         {
@@ -169,9 +177,32 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Connect to the Hapbeat Bridge using the current configuration.
+        /// Connect using the current configuration.
+        /// In standard mode (Wi-Fi UDP): discovers devices and connects to the first one found.
+        /// In Bridge mode (ESP-NOW): connects to the configured Bridge host.
         /// </summary>
         public void Connect()
+        {
+            if (IsConnected)
+            {
+                Log("Already connected.");
+                return;
+            }
+
+            if (_config != null && _config.useBridge)
+            {
+                ConnectToBridge();
+            }
+            else
+            {
+                AutoConnect(_config != null ? _config.discoveryTimeoutMs : 3000);
+            }
+        }
+
+        /// <summary>
+        /// Connect to the Hapbeat Bridge (ESP-NOW mode).
+        /// </summary>
+        public void ConnectToBridge()
         {
             if (_client == null)
             {
@@ -185,7 +216,7 @@ namespace Hapbeat
             }
 
             string host = _config != null ? _config.bridgeHost : "127.0.0.1";
-            int port = _config != null ? _config.bridgePort : 7700;
+            int port = _config != null ? _config.port : 7700;
 
             try
             {
@@ -200,7 +231,7 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Disconnect from the Hapbeat Bridge.
+        /// Disconnect from the current device or Bridge.
         /// </summary>
         public void Disconnect()
         {
@@ -208,12 +239,103 @@ namespace Hapbeat
                 return;
 
             _client.Disconnect();
-            Log("Disconnected from Bridge.");
+            Log("Disconnected.");
+        }
+
+        /// <summary>
+        /// Discover Hapbeat devices on the local network via UDP broadcast.
+        /// Results are available via DiscoveredDevices and OnDeviceFound event.
+        /// </summary>
+        /// <param name="timeoutMs">Discovery timeout in milliseconds.</param>
+        public void Discover(int timeoutMs = 3000)
+        {
+            if (_discovery == null)
+            {
+                _discovery = new HapbeatDiscovery();
+                _discovery.OnDeviceFound += (device) =>
+                {
+                    Log($"Device found: {device.name} at {device.ipAddress} (group={device.group})");
+                };
+                _discovery.OnDiscoveryComplete += (devices) =>
+                {
+                    Log($"Discovery complete: {devices.Count} device(s) found");
+                };
+            }
+
+            int port = _config != null ? _config.port : 7700;
+            _discovery.Discover(timeoutMs, port);
+            Log("Starting device discovery...");
+        }
+
+        /// <summary>
+        /// Connect directly to a Hapbeat device by IP address (Wi-Fi UDP direct).
+        /// </summary>
+        /// <param name="ipAddress">Device IP address.</param>
+        /// <param name="port">Device UDP port (default: 7700).</param>
+        public void ConnectToDevice(string ipAddress, int port = 7700)
+        {
+            if (_client == null)
+            {
+                _client = CreateClient();
+            }
+
+            if (IsConnected)
+            {
+                Disconnect();
+            }
+
+            try
+            {
+                _client.Connect(ipAddress, port);
+                Log($"Connecting to device at {ipAddress}:{port}...");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Hapbeat] Connection to device failed: {ex.Message}");
+                OnError?.Invoke(ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Discover devices and auto-connect to the first one found.
+        /// </summary>
+        /// <param name="timeoutMs">Discovery timeout in milliseconds.</param>
+        public void AutoConnect(int timeoutMs = 3000)
+        {
+            if (_discovery == null)
+            {
+                _discovery = new HapbeatDiscovery();
+            }
+
+            _discovery.OnDiscoveryComplete += OnAutoConnectDiscoveryComplete;
+
+            int port = _config != null ? _config.port : 7700;
+            _discovery.Discover(timeoutMs, port);
+            Log("Auto-connect: starting discovery...");
         }
 
         #endregion
 
         #region Private Methods
+
+        private void OnAutoConnectDiscoveryComplete(List<HapbeatDevice> devices)
+        {
+            // Unsubscribe to avoid multiple connections on repeated calls
+            _discovery.OnDiscoveryComplete -= OnAutoConnectDiscoveryComplete;
+
+            if (devices.Count > 0)
+            {
+                var device = devices[0];
+                int port = _config != null ? _config.port : 7700;
+                ConnectToDevice(device.ipAddress, port);
+                Log($"Auto-connect: connecting to {device.name} at {device.ipAddress}");
+            }
+            else
+            {
+                Log("Auto-connect: no devices found, falling back to config host");
+                Connect(); // Fall back to configured bridgeHost
+            }
+        }
 
         private void Initialize()
         {
@@ -236,11 +358,8 @@ namespace Hapbeat
             _client = CreateClient();
             _isInitialized = true;
 
-            // Auto-connect if configured
-            if (_config.autoConnect)
-            {
-                Connect();
-            }
+            // Auto-connect on startup
+            Connect();
         }
 
         private HapbeatClient CreateClient()
@@ -294,6 +413,9 @@ namespace Hapbeat
 
         private void Cleanup()
         {
+            _discovery?.Dispose();
+            _discovery = null;
+
             if (_client != null)
             {
                 _client.Dispose();

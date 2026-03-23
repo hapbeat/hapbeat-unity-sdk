@@ -11,6 +11,8 @@ contracts / bridge / pack の上に薄く載せる最初の正式 SDK。
 ## 責務
 
 - C# API（HapbeatManager, EventTrigger 等）
+- Wi-Fi UDP 直接通信（標準方式）
+- デバイス自動検出（UDP ブロードキャスト PING）
 - Bridge 接続クライアント（UDP 送信）
 - Editor tools（Pack 管理、Event ID ブラウズ）
 - diagnostics UI（接続状態、デバイス一覧）
@@ -51,7 +53,6 @@ contracts / bridge / pack の上に薄く載せる最初の正式 SDK。
 - Unity 固有の仕様で全体仕様を歪める
 - 独自プロトコルを作る
 - 送信機ファームと直接通信する前提を作る
-- Bridge を介さない独自接続方式を作る
 
 ## まだ作らないもの
 
@@ -82,4 +83,5 @@ Bridge がローカルにいれば動作可能。クラウド不要。
 ## 重要な概念
 
 - **Event ID** — これで再生指示を送る
-- **Bridge** — 接続先。UDP でメッセージを送信する
+- **Bridge** — 接続先（オプション）。UDP でメッセージを送信する。Wi-Fi UDP 直接通信が標準方式であり、Bridge は中継が必要な場合に使用する
+- **Discovery** — UDP ブロードキャスト PING によるデバイス自動検出。LAN 上の Hapbeat デバイスを検出し直接接続する
