@@ -16,6 +16,9 @@ namespace Hapbeat
         /// <summary>Human-readable name of the device.</summary>
         public string name;
 
+        /// <summary>IP address of the device (for Wi-Fi UDP direct connection).</summary>
+        public string ipAddress;
+
         /// <summary>Group ID this device belongs to (0 = broadcast, 1-254 = group, 255 = reserved).</summary>
         public byte group;
 
@@ -32,16 +35,18 @@ namespace Hapbeat
         {
             deviceId = string.Empty;
             name = string.Empty;
+            ipAddress = string.Empty;
             group = 0;
             firmwareVersion = string.Empty;
             batteryLevel = 0f;
             lastSeen = DateTime.MinValue;
         }
 
-        public HapbeatDevice(string deviceId, string name, byte group)
+        public HapbeatDevice(string deviceId, string name, byte group, string ipAddress = "")
         {
             this.deviceId = deviceId;
             this.name = name;
+            this.ipAddress = ipAddress;
             this.group = group;
             firmwareVersion = string.Empty;
             batteryLevel = 0f;
@@ -50,7 +55,7 @@ namespace Hapbeat
 
         public override string ToString()
         {
-            return $"HapbeatDevice(id={deviceId}, name={name}, group={group}, " +
+            return $"HapbeatDevice(id={deviceId}, name={name}, ip={ipAddress}, group={group}, " +
                    $"fw={firmwareVersion}, battery={batteryLevel:P0}, lastSeen={lastSeen})";
         }
     }
