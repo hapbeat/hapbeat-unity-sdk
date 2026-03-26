@@ -21,13 +21,14 @@ namespace Hapbeat
         /// <summary>Maximum allowed packet size in bytes.</summary>
         public const int MAX_PACKET_SIZE = 512;
 
-        // Command types (SDK → Bridge)
+        // Command types (SDK → Device)
         public const byte CMD_PLAY = 0x01;
         public const byte CMD_STOP = 0x02;
         public const byte CMD_STOP_ALL = 0x03;
         public const byte CMD_PING = 0x10;
+        public const byte CMD_CONNECT_STATUS = 0x20;
 
-        // Response types (Bridge → SDK)
+        // Response types (Device → SDK)
         public const byte CMD_PONG = 0x11;
         public const byte CMD_ERROR = 0xFF;
 
@@ -157,6 +158,40 @@ namespace Hapbeat
         {
             byte[] payload = new byte[8];
             WriteInt64(payload, 0, timestampUs);
+            return payload;
+        }
+
+        /// <summary>
+        /// Build payload for CONNECT_STATUS command.
+        /// Sent periodically so the device can show connection state on its display/LED.
+        /// Payload: connected(1) + group(1) + appName(null-term) + deviceName(null-term)
+        /// </summary>
+        /// <param name="connected">True if app is connected, false if disconnecting.</param>
+        /// <param name="group">The group this sender is targeting.</param>
+        /// <param name="appName">App name for OLED display (e.g. "MyVRGame").</param>
+        /// <param name="deviceName">Host/device name for OLED display (e.g. "Quest3-Player1").</param>
+        public static byte[] BuildConnectStatusPayload(bool connected, byte group,
+            string appName = "", string deviceName = "")
+        {
+            byte[] appBytes = Encoding.UTF8.GetBytes(appName ?? "");
+            byte[] devBytes = Encoding.UTF8.GetBytes(deviceName ?? "");
+            // connected(1) + group(1) + appName(null-term) + deviceName(null-term)
+            int size = 1 + 1 + appBytes.Length + 1 + devBytes.Length + 1;
+            byte[] payload = new byte[size];
+
+            int offset = 0;
+            payload[offset] = connected ? (byte)1 : (byte)0;
+            offset += 1;
+            payload[offset] = group;
+            offset += 1;
+            Buffer.BlockCopy(appBytes, 0, payload, offset, appBytes.Length);
+            offset += appBytes.Length;
+            payload[offset] = 0; // null terminator
+            offset += 1;
+            Buffer.BlockCopy(devBytes, 0, payload, offset, devBytes.Length);
+            offset += devBytes.Length;
+            payload[offset] = 0; // null terminator
+
             return payload;
         }
 

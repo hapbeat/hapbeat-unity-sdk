@@ -13,6 +13,10 @@ namespace Hapbeat
         [Tooltip("UDP port for communication with Hapbeat devices.")]
         public int port = 7700;
 
+        [Tooltip("Target group ID for this player. 0 = broadcast to all devices. In multiplayer, assign a unique group per player.")]
+        [Range(0, 254)]
+        public int group = 0;
+
         [Header("Bridge (ESP-NOW)")]
         [Tooltip("Use Bridge for ESP-NOW multi-device transmission. When disabled (default), connects directly to devices via Wi-Fi UDP.")]
         public bool useBridge = false;

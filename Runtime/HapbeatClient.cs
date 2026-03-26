@@ -8,8 +8,8 @@ using System.Threading;
 namespace Hapbeat
 {
     /// <summary>
-    /// Internal UDP client for communicating with the Hapbeat Bridge.
-    /// Handles packet sending, receiving, and sequence number management.
+    /// Internal UDP client for communicating with Hapbeat devices or Bridge.
+    /// Supports broadcast sending (standard) and unicast sending (Bridge mode).
     /// Receive runs on a background thread; callbacks are queued for main-thread dispatch.
     /// </summary>
     public class HapbeatClient : IDisposable
@@ -23,11 +23,14 @@ namespace Hapbeat
         /// <summary>Invoked on main thread when connection state changes.</summary>
         public event Action<bool> OnConnectionStateChanged; // (isConnected)
 
-        /// <summary>Whether the client is currently connected to the Bridge.</summary>
+        /// <summary>Whether the client is currently ready to send/receive.</summary>
         public bool IsConnected { get; private set; }
 
+        /// <summary>Whether the client is in broadcast mode.</summary>
+        public bool IsBroadcast { get; private set; }
+
         private UdpClient _udpClient;
-        private IPEndPoint _remoteEndPoint;
+        private IPEndPoint _targetEndPoint;
         private Thread _receiveThread;
         private volatile bool _isRunning;
         private ushort _sequenceNumber;
@@ -49,10 +52,40 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Connect to the Hapbeat Bridge at the specified host and port.
+        /// Open for UDP broadcast sending (standard Wi-Fi UDP mode).
+        /// Commands are sent to all devices on the LAN; each device filters by group ID.
+        /// </summary>
+        /// <param name="port">Target UDP port (default: 7700).</param>
+        public void OpenBroadcast(int port)
+        {
+            if (IsConnected)
+                Disconnect();
+
+            try
+            {
+                _udpClient = new UdpClient(0); // bind to OS-assigned local port
+                _udpClient.EnableBroadcast = true;
+                _targetEndPoint = new IPEndPoint(IPAddress.Broadcast, port);
+                IsBroadcast = true;
+
+                StartReceiveLoop();
+                IsConnected = true;
+                EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(true));
+            }
+            catch (Exception ex)
+            {
+                IsConnected = false;
+                IsBroadcast = false;
+                throw new InvalidOperationException(
+                    $"Failed to open broadcast on port {port}: {ex.Message}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Connect to a specific host via UDP unicast (Bridge / ESP-NOW mode).
         /// </summary>
         /// <param name="host">Bridge hostname or IP address.</param>
-        /// <param name="port">Bridge UDP port.</param>
+        /// <param name="port">UDP port.</param>
         public void Connect(string host, int port)
         {
             if (IsConnected)
@@ -60,18 +93,11 @@ namespace Hapbeat
 
             try
             {
-                _remoteEndPoint = new IPEndPoint(IPAddress.Parse(host), port);
-                _udpClient = new UdpClient();
-                _udpClient.Connect(_remoteEndPoint);
+                _udpClient = new UdpClient(0); // bind to OS-assigned local port
+                _targetEndPoint = new IPEndPoint(IPAddress.Parse(host), port);
+                IsBroadcast = false;
 
-                _isRunning = true;
-                _receiveThread = new Thread(ReceiveLoop)
-                {
-                    Name = "HapbeatReceive",
-                    IsBackground = true
-                };
-                _receiveThread.Start();
-
+                StartReceiveLoop();
                 IsConnected = true;
                 EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(true));
             }
@@ -79,12 +105,12 @@ namespace Hapbeat
             {
                 IsConnected = false;
                 throw new InvalidOperationException(
-                    $"Failed to connect to Hapbeat Bridge at {host}:{port}: {ex.Message}", ex);
+                    $"Failed to connect to {host}:{port}: {ex.Message}", ex);
             }
         }
 
         /// <summary>
-        /// Disconnect from the Hapbeat Bridge.
+        /// Disconnect and release resources.
         /// </summary>
         public void Disconnect()
         {
@@ -93,6 +119,7 @@ namespace Hapbeat
 
             _isRunning = false;
             IsConnected = false;
+            IsBroadcast = false;
 
             try
             {
@@ -116,12 +143,8 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Send a PLAY command to the Bridge.
+        /// Send a PLAY command.
         /// </summary>
-        /// <param name="eventId">Event identifier.</param>
-        /// <param name="targetTimeUs">Target time in microseconds.</param>
-        /// <param name="group">Target group ID.</param>
-        /// <param name="gain">Gain multiplier.</param>
         public void SendPlay(string eventId, long targetTimeUs, byte group, float gain)
         {
             byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, group, gain);
@@ -129,10 +152,8 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Send a STOP command to the Bridge.
+        /// Send a STOP command.
         /// </summary>
-        /// <param name="eventId">Event identifier.</param>
-        /// <param name="group">Target group ID.</param>
         public void SendStop(string eventId, byte group)
         {
             byte[] payload = HapbeatProtocol.BuildStopPayload(eventId, group);
@@ -140,9 +161,8 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Send a STOP_ALL command to the Bridge.
+        /// Send a STOP_ALL command.
         /// </summary>
-        /// <param name="group">Target group ID.</param>
         public void SendStopAll(byte group)
         {
             byte[] payload = HapbeatProtocol.BuildStopAllPayload(group);
@@ -150,7 +170,16 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Send a PING command to the Bridge for keep-alive and time synchronization.
+        /// Send a CONNECT_STATUS command so the device can show connection state on display/LED.
+        /// </summary>
+        public void SendConnectStatus(bool connected, byte group, string appName = "", string deviceName = "")
+        {
+            byte[] payload = HapbeatProtocol.BuildConnectStatusPayload(connected, group, appName, deviceName);
+            SendPacket(HapbeatProtocol.CMD_CONNECT_STATUS, payload);
+        }
+
+        /// <summary>
+        /// Send a PING command for keep-alive and time synchronization.
         /// </summary>
         /// <returns>The sequence number of the ping packet.</returns>
         public ushort SendPing()
@@ -186,7 +215,6 @@ namespace Hapbeat
         /// <summary>
         /// Get the current local timestamp in microseconds using a high-resolution timer.
         /// </summary>
-        /// <returns>Timestamp in microseconds.</returns>
         public long GetLocalTimestampUs()
         {
             return _stopwatch.ElapsedTicks * 1_000_000L / Stopwatch.Frequency;
@@ -202,6 +230,17 @@ namespace Hapbeat
 
         #region Private Methods
 
+        private void StartReceiveLoop()
+        {
+            _isRunning = true;
+            _receiveThread = new Thread(ReceiveLoop)
+            {
+                Name = "HapbeatReceive",
+                IsBackground = true
+            };
+            _receiveThread.Start();
+        }
+
         private void SendPacket(byte commandType, byte[] payload)
         {
             ushort seq = GetNextSequenceNumber();
@@ -216,7 +255,7 @@ namespace Hapbeat
 
             try
             {
-                _udpClient.Send(data, data.Length);
+                _udpClient.Send(data, data.Length, _targetEndPoint);
             }
             catch (SocketException ex)
             {
@@ -252,7 +291,7 @@ namespace Hapbeat
                         if (!_isRunning)
                             break;
 
-                        IPEndPoint remoteEp = null;
+                        IPEndPoint remoteEp = new IPEndPoint(IPAddress.Any, 0);
                         byte[] data = _udpClient.Receive(ref remoteEp);
 
                         if (data != null && data.Length >= HapbeatProtocol.HEADER_SIZE)
@@ -343,6 +382,7 @@ namespace Hapbeat
                 return;
 
             IsConnected = false;
+            IsBroadcast = false;
             EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(false));
         }
 

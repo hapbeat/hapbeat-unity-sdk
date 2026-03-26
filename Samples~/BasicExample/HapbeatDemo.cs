@@ -23,9 +23,9 @@ public class HapbeatDemo : MonoBehaviour
     [SerializeField]
     private float _gain = 1.0f;
 
-    [Tooltip("Target group ID.")]
+    [Tooltip("Target group ID. -1 = use config default, 0 = all devices.")]
     [SerializeField]
-    private byte _group = 0;
+    private int _group = -1;
 
     private void Start()
     {
@@ -40,12 +40,13 @@ public class HapbeatDemo : MonoBehaviour
         // Subscribe to events
         HapbeatManager.Instance.OnConnected += () =>
         {
-            Debug.Log("[HapbeatDemo] Bridge に接続しました。");
+            string mode = HapbeatManager.Instance.IsBroadcast ? "broadcast" : "unicast";
+            Debug.Log($"[HapbeatDemo] 送信準備完了 ({mode}, group={HapbeatManager.Instance.DefaultGroup})");
         };
 
         HapbeatManager.Instance.OnDisconnected += () =>
         {
-            Debug.Log("[HapbeatDemo] Bridge から切断されました。");
+            Debug.Log("[HapbeatDemo] 切断されました。");
         };
 
         HapbeatManager.Instance.OnPong += (rttUs) =>
