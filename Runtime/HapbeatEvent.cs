@@ -10,7 +10,7 @@ namespace Hapbeat
     public class HapbeatEvent : MonoBehaviour
     {
         [Header("Event Settings")]
-        [Tooltip("The event ID to trigger (must match an event registered in the Bridge).")]
+        [Tooltip("The event ID to trigger.")]
         [SerializeField]
         private string _eventId = "";
 
@@ -19,9 +19,9 @@ namespace Hapbeat
         [SerializeField]
         private float _gain = 1.0f;
 
-        [Tooltip("Target group ID. 0 = broadcast to all devices.")]
+        [Tooltip("Target group ID. -1 = use config default, 0 = all devices.")]
         [SerializeField]
-        private byte _group = 0;
+        private int _group = -1;
 
         [Header("Behavior")]
         [Tooltip("Automatically trigger Play when this component is enabled.")]
@@ -42,8 +42,8 @@ namespace Hapbeat
             set => _gain = value;
         }
 
-        /// <summary>Target group ID.</summary>
-        public byte Group
+        /// <summary>Target group ID. -1 = use config default.</summary>
+        public int Group
         {
             get => _group;
             set => _group = value;
