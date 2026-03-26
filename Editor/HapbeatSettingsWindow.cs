@@ -47,7 +47,9 @@ namespace Hapbeat.Editor
         {
             EditorGUILayout.LabelField("Hapbeat SDK 設定", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
-                "Hapbeat Bridge への接続設定を行います。",
+                "Hapbeat デバイスへの接続設定を行います。\n" +
+                "標準: Wi-Fi UDP でデバイスを自動検出して接続します。\n" +
+                "Bridge (ESP-NOW): Bridge 経由で複数デバイスに送信します。",
                 MessageType.Info);
         }
 
@@ -76,16 +78,34 @@ namespace Hapbeat.Editor
             _serializedConfig.Update();
 
             EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("port"),
+                new GUIContent("UDP ポート", "通信用 UDP ポート番号"));
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("group"),
+                new GUIContent("グループ ID", "送信先グループ。0 = 全デバイス、1-254 = 特定グループ（マルチプレイヤー時）"));
+
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("Bridge (ESP-NOW)", EditorStyles.boldLabel);
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("useBridge"),
+                new GUIContent("Bridge を使用", "ESP-NOW 経由の多デバイス送信時に有効化"));
+
+            EditorGUI.BeginDisabledGroup(!_config.useBridge);
+            EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("bridgeHost"),
-                new GUIContent("ホスト", "Bridge のホスト名または IP アドレス"));
+                new GUIContent("Bridge ホスト", "Bridge のホスト名または IP アドレス"));
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("検出設定", EditorStyles.boldLabel);
 
             EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("bridgePort"),
-                new GUIContent("ポート", "Bridge の UDP ポート番号"));
+                _serializedConfig.FindProperty("discoveryTimeoutMs"),
+                new GUIContent("検出タイムアウト (ms)", "デバイス検出のタイムアウト"));
 
-            EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("autoConnect"),
-                new GUIContent("自動接続", "起動時に自動的に Bridge へ接続"));
+            EditorGUILayout.Space(5);
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("pingInterval"),
@@ -114,7 +134,7 @@ namespace Hapbeat.Editor
 
             EditorGUI.BeginDisabledGroup(true);
             EditorGUILayout.Toggle("プレイモード", isPlaying);
-            EditorGUILayout.Toggle("Bridge 接続中", isConnected);
+            EditorGUILayout.Toggle("接続中", isConnected);
             EditorGUI.EndDisabledGroup();
 
             if (!isPlaying)
@@ -168,7 +188,7 @@ namespace Hapbeat.Editor
                 if (_isPinging)
                 {
                     _isPinging = false;
-                    _pingResult = "Ping タイムアウト - Bridge が応答しません。";
+                    _pingResult = "Ping タイムアウト - デバイスが応答しません。";
                     HapbeatManager.Instance.OnPong -= OnPingResponse;
                     Repaint();
                 }
