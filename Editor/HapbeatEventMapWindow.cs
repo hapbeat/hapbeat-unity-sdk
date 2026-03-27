@@ -35,6 +35,22 @@ namespace Hapbeat.Editor
             window.minSize = new Vector2(500, 300);
         }
 
+        [MenuItem("GameObject/Hapbeat/Event Router", false, 10)]
+        public static void CreateEventRouter()
+        {
+            // Check if one already exists
+            var existing = FindObjectsByType<HapbeatManager>(FindObjectsSortMode.None);
+            GameObject router = new GameObject("[Hapbeat Event Router]");
+            Undo.RegisterCreatedObjectUndo(router, "Create Hapbeat Event Router");
+
+            // Add HapbeatManager if not in scene
+            if (existing.Length == 0)
+                router.AddComponent<HapbeatManager>();
+
+            Selection.activeGameObject = router;
+            Debug.Log("[Hapbeat] Event Router を作成しました。ここに AnimatorTrigger / UnityEventTrigger を追加してください。");
+        }
+
         private void OnEnable()
         {
             FindEventMap();

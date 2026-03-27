@@ -27,7 +27,7 @@ namespace Hapbeat
         [SerializeField]
         protected float _cooldown = 0f;
 
-        private float _lastFireTime = float.NegativeInfinity;
+        protected float _lastFireTime = float.NegativeInfinity;
 
         /// <summary>The event map this trigger references.</summary>
         public HapbeatEventMap EventMap => _eventMap;
