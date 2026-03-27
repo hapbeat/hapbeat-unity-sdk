@@ -15,7 +15,7 @@ namespace Hapbeat.Editor
         private SerializedProperty _eventMapProp;
         private SerializedProperty _entryIndexProp;
 
-        private void OnEnable()
+        protected virtual void OnEnable()
         {
             _eventMapProp = serializedObject.FindProperty("_eventMap");
             _entryIndexProp = serializedObject.FindProperty("_entryIndex");

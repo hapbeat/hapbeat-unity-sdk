@@ -19,7 +19,7 @@ namespace Hapbeat.Editor
         private SerializedProperty _conditionProp;
         private SerializedProperty _thresholdProp;
 
-        private new void OnEnable()
+        protected override void OnEnable()
         {
             base.OnEnable();
             _targetAnimatorProp = serializedObject.FindProperty("_targetAnimator");
