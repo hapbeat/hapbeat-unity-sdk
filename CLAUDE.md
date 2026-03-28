@@ -85,3 +85,9 @@ Bridge がローカルにいれば動作可能。クラウド不要。
 - **Event ID** — これで再生指示を送る
 - **Bridge** — 接続先（オプション）。UDP でメッセージを送信する。Wi-Fi UDP 直接通信が標準方式であり、Bridge は中継が必要な場合に使用する
 - **Discovery** — UDP ブロードキャスト PING によるデバイス自動検出。LAN 上の Hapbeat デバイスを検出し直接接続する
+
+## 指示書
+
+- `instructions/` — 他セッションからの未実行の指示書
+- `instructions/completed/` — 完了済みの指示書
+- セッション開始時に `instructions/` を確認し、該当する指示書があれば適用する
