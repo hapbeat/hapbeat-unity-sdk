@@ -179,6 +179,34 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Send a STREAM_BEGIN command to start audio streaming.
+        /// </summary>
+        public void SendStreamBegin(ushort sampleRate, byte channels, byte format, uint totalSamples, float gain)
+        {
+            byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(sampleRate, channels, format, totalSamples, gain);
+            SendPacket(HapbeatProtocol.CMD_STREAM_BEGIN, payload);
+        }
+
+        /// <summary>
+        /// Send a STREAM_DATA chunk. Uses larger MTU-safe packet size.
+        /// </summary>
+        public void SendStreamData(uint byteOffset, byte[] audioData, int dataOffset, int dataLength)
+        {
+            if (!IsConnected || _udpClient == null) return;
+            ushort seq = GetNextSequenceNumber();
+            byte[] packet = HapbeatProtocol.BuildStreamDataPacket(seq, byteOffset, audioData, dataOffset, dataLength);
+            SendRaw(packet);
+        }
+
+        /// <summary>
+        /// Send a STREAM_END command to signal streaming completion.
+        /// </summary>
+        public void SendStreamEnd()
+        {
+            SendPacket(HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
+        }
+
+        /// <summary>
         /// Send a PING command for keep-alive and time synchronization.
         /// </summary>
         /// <returns>The sequence number of the ping packet.</returns>

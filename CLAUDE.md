@@ -56,9 +56,16 @@ contracts / bridge / pack の上に薄く載せる最初の正式 SDK。
 
 ## まだ作らないもの
 
-- VR 専用機能
+- VR 専用の高度な機能（ボディトラッキング連動、ハンドトラッキング連動等）
 - Bluetooth 接続
 - 高度な Editor UI
+
+## VR サンプル方針
+
+- VR 専用 API は作らない。既存の API（Play, EventMap, Trigger）で VR 対応できることを示す
+- XR Interaction Toolkit に直接依存しない（asmdef に参照を追加しない）。UnityEvent 経由の疎結合
+- サンプルは Samples~ に配置し、UPM の Import Samples で導入可能にする
+- Player Demo（体験者向け）と Creator Tutorial（開発者向け）の2系統
 
 ## 最初の着手タスク
 
@@ -85,6 +92,15 @@ Bridge がローカルにいれば動作可能。クラウド不要。
 - **Event ID** — これで再生指示を送る
 - **Bridge** — 接続先（オプション）。UDP でメッセージを送信する。Wi-Fi UDP 直接通信が標準方式であり、Bridge は中継が必要な場合に使用する
 - **Discovery** — UDP ブロードキャスト PING によるデバイス自動検出。LAN 上の Hapbeat デバイスを検出し直接接続する
+
+## 開発用 Unity プロジェクト
+
+サンプルシーンの開発・動作確認用の Unity プロジェクト。SDK リポジトリとは別の場所に配置。
+
+- **パス**: `M:\GameEngine\Unity\Projects\HapbeatSDKSamples\`
+- **サンプル Import 先**: `Assets\Samples\Hapbeat SDK\0.1.0\`
+- **編集許可**: このプロジェクト内のファイルは自由に編集・削除してよい
+- **方針**: プロジェクト側で直接編集・動作確認し、完了後にシーンビルダー（Samples~/Editor/）にまとめて反映する
 
 ## 指示書
 

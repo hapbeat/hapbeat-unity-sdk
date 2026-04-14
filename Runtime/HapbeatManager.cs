@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -44,7 +45,16 @@ namespace Hapbeat
         public long TimeOffsetUs { get; private set; }
 
         /// <summary>The default group ID from configuration.</summary>
-        public byte DefaultGroup => _config != null ? (byte)_config.group : (byte)0;
+        /// <summary>The default group ID. -1 maps to 0 (broadcast).</summary>
+        public byte DefaultGroup => _config != null && _config.group >= 0 ? (byte)_config.group : (byte)0;
+
+        /// <summary>App name shown on device OLED. Uses config value or falls back to Application.productName.</summary>
+        public string AppName => _config != null && !string.IsNullOrEmpty(_config.appName)
+            ? _config.appName
+            : Application.productName;
+
+        /// <summary>Internal UDP client. Used by HapbeatAudioBridge for real-time streaming.</summary>
+        internal HapbeatClient Client => _client;
 
         private HapbeatClient _client;
         private HapbeatDiscovery _discovery;
@@ -89,7 +99,7 @@ namespace Hapbeat
                 if (Time.realtimeSinceStartup - _lastPingTime >= _config.pingInterval)
                 {
                     Ping();
-                    _client.SendConnectStatus(true, DefaultGroup, Application.productName, SystemInfo.deviceName);
+                    _client.SendConnectStatus(true, DefaultGroup, AppName, SystemInfo.deviceName);
                     _lastPingTime = Time.realtimeSinceStartup;
                 }
             }
@@ -268,7 +278,7 @@ namespace Hapbeat
 
             // Notify devices that app is disconnecting
             if (_client.IsConnected)
-                _client.SendConnectStatus(false, DefaultGroup, Application.productName, SystemInfo.deviceName);
+                _client.SendConnectStatus(false, DefaultGroup, AppName, SystemInfo.deviceName);
 
             _client.Disconnect();
             Log("Disconnected.");
@@ -298,6 +308,110 @@ namespace Hapbeat
             int port = _config != null ? _config.port : 7700;
             _discovery.Discover(timeoutMs, port);
             Log("Starting device discovery...");
+        }
+
+        /// <summary>
+        /// Stream a Unity AudioClip to Hapbeat devices as PCM16 audio via UDP.
+        /// The audio is sent in chunks that fit within MTU limits.
+        /// Non-blocking: runs as a coroutine.
+        /// </summary>
+        /// <param name="clip">AudioClip to stream (will be read as PCM16).</param>
+        /// <param name="gain">Gain multiplier for playback on device (0.0 - 2.0).</param>
+        public void StreamAudioClip(AudioClip clip, float gain = 1.0f)
+        {
+            if (!EnsureConnected()) return;
+            if (clip == null)
+            {
+                Debug.LogWarning("[Hapbeat] StreamAudioClip: clip is null.");
+                return;
+            }
+            if (_streamCoroutine != null)
+                StopStream();
+            Debug.Log($"[Hapbeat] StreamAudioClip: {clip.name}, freq={clip.frequency}, ch={clip.channels}, samples={clip.samples}, gain={gain}");
+            _streamCoroutine = StartCoroutine(StreamAudioClipCoroutine(clip, gain));
+        }
+
+        /// <summary>
+        /// Stop the current audio stream (if any).
+        /// </summary>
+        public void StopStream()
+        {
+            if (_streamCoroutine != null)
+            {
+                StopCoroutine(_streamCoroutine);
+                _streamCoroutine = null;
+            }
+            if (_client != null && _client.IsConnected)
+            {
+                _client.SendStreamEnd();
+                Log("Stream stopped.");
+            }
+        }
+
+        /// <summary>Whether audio streaming is currently in progress.</summary>
+        public bool IsStreaming => _streamCoroutine != null;
+
+        private Coroutine _streamCoroutine;
+
+        private IEnumerator StreamAudioClipCoroutine(AudioClip clip, float gain)
+        {
+            // Extract PCM data from AudioClip
+            float[] samples = new float[clip.samples * clip.channels];
+            clip.GetData(samples, 0);
+
+            // Convert float [-1,1] to PCM16 (little-endian)
+            byte[] pcmBytes = new byte[samples.Length * 2];
+            for (int i = 0; i < samples.Length; i++)
+            {
+                short pcm16 = (short)Mathf.Clamp(samples[i] * 32767f, -32768f, 32767f);
+                pcmBytes[i * 2] = (byte)(pcm16 & 0xFF);
+                pcmBytes[i * 2 + 1] = (byte)((pcm16 >> 8) & 0xFF);
+            }
+
+            byte channels = (byte)clip.channels;
+            ushort sampleRate = (ushort)clip.frequency;
+            uint totalSamples = (uint)clip.samples;
+
+            // Send STREAM_BEGIN
+            _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16, totalSamples, gain);
+            Log($"Stream begin: {sampleRate}Hz, {channels}ch, {totalSamples} samples, gain={gain}");
+
+            // Send STREAM_DATA in chunks
+            int maxChunkSize = HapbeatProtocol.STREAM_DATA_MAX_PAYLOAD;
+            uint byteOffset = 0;
+            int remaining = pcmBytes.Length;
+
+            // Pace sending to match real-time playback + small buffer ahead
+            // bytes per second = sampleRate * channels * 2 (PCM16)
+            float bytesPerSecond = sampleRate * channels * 2f;
+            float sendAheadSeconds = 0.1f; // 100ms buffer
+            float startTime = Time.realtimeSinceStartup;
+
+            while (remaining > 0 && _client != null && _client.IsConnected)
+            {
+                int chunkSize = Mathf.Min(remaining, maxChunkSize);
+                _client.SendStreamData(byteOffset, pcmBytes, (int)byteOffset, chunkSize);
+
+                byteOffset += (uint)chunkSize;
+                remaining -= chunkSize;
+
+                // Pace: wait if we're sending too far ahead of real-time
+                float elapsedTime = Time.realtimeSinceStartup - startTime;
+                float sentDuration = byteOffset / bytesPerSecond;
+                if (sentDuration > elapsedTime + sendAheadSeconds)
+                {
+                    yield return null; // wait one frame
+                }
+            }
+
+            // Send STREAM_END
+            if (_client != null && _client.IsConnected)
+            {
+                _client.SendStreamEnd();
+                Log($"Stream complete: {byteOffset} bytes sent.");
+            }
+
+            _streamCoroutine = null;
         }
 
         #endregion
@@ -348,7 +462,7 @@ namespace Hapbeat
                     Log($"Ready ({mode}).");
                     _lastPingTime = Time.realtimeSinceStartup;
                     // Notify devices that app is connected
-                    client.SendConnectStatus(true, DefaultGroup, Application.productName, SystemInfo.deviceName);
+                    client.SendConnectStatus(true, DefaultGroup, AppName, SystemInfo.deviceName);
                     OnConnected?.Invoke();
                 }
                 else

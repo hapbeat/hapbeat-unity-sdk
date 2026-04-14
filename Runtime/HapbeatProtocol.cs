@@ -18,8 +18,11 @@ namespace Hapbeat
         /// <summary>Size of the common packet header in bytes.</summary>
         public const int HEADER_SIZE = 8;
 
-        /// <summary>Maximum allowed packet size in bytes.</summary>
+        /// <summary>Maximum allowed packet size for command packets in bytes.</summary>
         public const int MAX_PACKET_SIZE = 512;
+
+        /// <summary>Maximum allowed packet size for streaming data packets (MTU-safe).</summary>
+        public const int MAX_STREAM_PACKET_SIZE = 1472; // 1500 MTU - 20 IP - 8 UDP
 
         // Command types (SDK → Device)
         public const byte CMD_PLAY = 0x01;
@@ -27,6 +30,18 @@ namespace Hapbeat
         public const byte CMD_STOP_ALL = 0x03;
         public const byte CMD_PING = 0x10;
         public const byte CMD_CONNECT_STATUS = 0x20;
+
+        // Streaming commands (SDK → Device)
+        public const byte CMD_STREAM_BEGIN = 0x30;
+        public const byte CMD_STREAM_DATA = 0x31;
+        public const byte CMD_STREAM_END = 0x32;
+
+        // Audio format constants
+        public const byte AUDIO_FORMAT_PCM16 = 0;
+        public const byte AUDIO_FORMAT_IMA_ADPCM = 1;
+
+        /// <summary>Max payload for STREAM_DATA to stay within typical MTU (1500 - IP/UDP headers - protocol header).</summary>
+        public const int STREAM_DATA_MAX_PAYLOAD = 1400;
 
         // Response types (Device → SDK)
         public const byte CMD_PONG = 0x11;
@@ -195,6 +210,58 @@ namespace Hapbeat
             return payload;
         }
 
+        /// <summary>
+        /// Build payload for STREAM_BEGIN command.
+        /// </summary>
+        public static byte[] BuildStreamBeginPayload(ushort sampleRate, byte channels, byte format, uint totalSamples, float gain)
+        {
+            byte[] payload = new byte[10]; // 2+1+1+4+2 ... wait, let me match the spec: u16+u8+u8+u32+f32 = 10
+            // Actually: sample_rate(2) + channels(1) + format(1) + total_samples(4) + gain(4) = 12?
+            // Let me check the spec: no gain field in STREAM_BEGIN per contracts. But firmware parses gain.
+            // firmware udp_receiver.cpp reads: sample_rate(u16), channels(u8), format(u8), total_samples(u32), gain(f32)
+            // That's 2+1+1+4+4 = 12 bytes
+            payload = new byte[12];
+            int offset = 0;
+            WriteUInt16(payload, offset, sampleRate); offset += 2;
+            payload[offset] = channels; offset += 1;
+            payload[offset] = format; offset += 1;
+            WriteUInt32(payload, offset, totalSamples); offset += 4;
+            WriteFloat32(payload, offset, gain);
+            return payload;
+        }
+
+        /// <summary>
+        /// Build payload for STREAM_DATA command.
+        /// </summary>
+        public static byte[] BuildStreamDataPayload(uint byteOffset, byte[] audioData, int dataOffset, int dataLength)
+        {
+            byte[] payload = new byte[4 + dataLength]; // offset(4) + data
+            WriteUInt32(payload, 0, byteOffset);
+            Buffer.BlockCopy(audioData, dataOffset, payload, 4, dataLength);
+            return payload;
+        }
+
+        /// <summary>
+        /// Build a STREAM_DATA packet. Uses larger size limit than command packets.
+        /// </summary>
+        public static byte[] BuildStreamDataPacket(ushort seq, uint byteOffset, byte[] audioData, int dataOffset, int dataLength)
+        {
+            byte[] payload = BuildStreamDataPayload(byteOffset, audioData, dataOffset, dataLength);
+            int totalSize = HEADER_SIZE + payload.Length;
+            if (totalSize > MAX_STREAM_PACKET_SIZE)
+                throw new ArgumentException(
+                    $"Stream packet size {totalSize} exceeds MTU limit {MAX_STREAM_PACKET_SIZE} bytes.");
+
+            byte[] packet = new byte[totalSize];
+            WriteUInt16(packet, 0, MAGIC);
+            packet[2] = PROTOCOL_VERSION;
+            packet[3] = CMD_STREAM_DATA;
+            WriteUInt16(packet, 4, seq);
+            WriteUInt16(packet, 6, (ushort)payload.Length);
+            Buffer.BlockCopy(payload, 0, packet, HEADER_SIZE, payload.Length);
+            return packet;
+        }
+
         #endregion
 
         #region Packet Parsing
@@ -291,6 +358,14 @@ namespace Hapbeat
             if (!BitConverter.IsLittleEndian)
                 Array.Reverse(bytes);
             Buffer.BlockCopy(bytes, 0, buffer, offset, 2);
+        }
+
+        private static void WriteUInt32(byte[] buffer, int offset, uint value)
+        {
+            byte[] bytes = BitConverter.GetBytes(value);
+            if (!BitConverter.IsLittleEndian)
+                Array.Reverse(bytes);
+            Buffer.BlockCopy(bytes, 0, buffer, offset, 4);
         }
 
         private static void WriteInt64(byte[] buffer, int offset, long value)

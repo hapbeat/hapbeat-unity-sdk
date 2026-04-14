@@ -5,6 +5,23 @@
   "description": "Unity SDK for Hapbeat haptic devices",
   "unity": "2021.3",
   "keywords": ["haptics", "hapbeat", "esp-now"],
+  "samples": [
+    {
+      "displayName": "Basic Example",
+      "description": "キーボードで Hapbeat を操作する最小サンプル",
+      "path": "Samples~/BasicExample"
+    },
+    {
+      "displayName": "Player Demo",
+      "description": "VR で Hapbeat の3種のフィードバック（能動・受動・操作系）を体験するデモ",
+      "path": "Samples~/PlayerDemo"
+    },
+    {
+      "displayName": "Creator Tutorial",
+      "description": "既存 VR ゲームに Hapbeat を組み込むステップバイステップチュートリアル",
+      "path": "Samples~/CreatorTutorial"
+    }
+  ],
   "author": {
     "name": "Hapbeat",
     "url": "https://hapbeat.com"
