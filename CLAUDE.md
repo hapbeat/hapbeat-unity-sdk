@@ -107,3 +107,10 @@ Bridge がローカルにいれば動作可能。クラウド不要。
 - `instructions/` — 他セッションからの未実行の指示書
 - `instructions/completed/` — 完了済みの指示書
 - セッション開始時に `instructions/` を確認し、該当する指示書があれば適用する
+
+## エージェント共通メモリ（Claude / OpenAI 系共通）
+
+- セッション間で引き継ぐ知見・ログ・ルールはワークスペースルートの `docs/agent-memory/` に保存する
+- インデックスは `docs/agent-memory/INDEX.md`
+- この repo から参照する場合の相対パスは `../docs/agent-memory/`
+- メモリを新規作成・更新した場合は、必ず `INDEX.md` も更新する
