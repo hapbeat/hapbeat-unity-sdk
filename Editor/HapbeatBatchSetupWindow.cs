@@ -1,0 +1,672 @@
+#if UNITY_EDITOR
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using UnityEditor;
+using UnityEngine;
+using UnityEngine.Events;
+
+namespace Hapbeat.Editor
+{
+    /// <summary>
+    /// Batch setup tool for adding/updating/removing Hapbeat triggers on multiple GameObjects.
+    /// Scans target objects to discover available UnityEvent fields on any component.
+    /// Supports both HapbeatUnityEventTrigger and HapbeatCollisionTrigger.
+    /// </summary>
+    public class HapbeatBatchSetupWindow : EditorWindow
+    {
+        private enum TriggerType { UnityEventTrigger, CollisionTrigger }
+        private TriggerType _triggerType = TriggerType.UnityEventTrigger;
+
+        // --- Shared ---
+        private HapbeatEventMap _eventMap;
+        private int _entryIndex;
+        private float _cooldown;
+
+        // --- CollisionTrigger ---
+        private HapbeatCollisionTrigger.TriggerEvent _collisionEvent = HapbeatCollisionTrigger.TriggerEvent.TriggerEnter;
+        private HapbeatCollisionTrigger.GainMode _gainMode = HapbeatCollisionTrigger.GainMode.Fixed;
+        private float _velocityThreshold = 0.5f;
+        private float _maxVelocity = 5f;
+
+        // --- Targets ---
+        private List<GameObject> _targets = new List<GameObject>();
+        private Vector2 _targetScrollPos;
+        private Vector2 _mainScrollPos;
+
+        // --- Scanned events ---
+        private List<DetectedEventGroup> _detectedEvents = new List<DetectedEventGroup>();
+        private Vector2 _eventScrollPos;
+        // Track target list hash to auto-rescan on change
+        private int _lastTargetHash;
+
+        [Serializable]
+        private struct DetectedEventGroup
+        {
+            public string displayName;
+            public string componentType;
+            public string fieldPath;
+            public int objectCount;
+            public bool selected;
+        }
+
+        // Persisted selection keys (survives editor restart)
+        private const string kSelectedEventsKey = "HapbeatBatchSetup_SelectedEvents";
+
+        [MenuItem("Hapbeat/Batch Setup", false, 20)]
+        [MenuItem("Window/Hapbeat/Batch Setup")]
+        public static void ShowWindow()
+        {
+            var w = GetWindow<HapbeatBatchSetupWindow>("Hapbeat Batch Setup");
+            w.minSize = new Vector2(430, 400);
+        }
+
+        private void OnSelectionChange() => Repaint();
+
+        private void OnGUI()
+        {
+            _mainScrollPos = EditorGUILayout.BeginScrollView(_mainScrollPos);
+
+            DrawTargetSection();
+            EditorGUILayout.Space(6);
+            DrawTriggerTypeSection();
+            EditorGUILayout.Space(6);
+            DrawTriggerSettings();
+            EditorGUILayout.Space(6);
+
+            if (_triggerType == TriggerType.UnityEventTrigger)
+            {
+                AutoScanIfNeeded();
+                DrawEventWiringSection();
+            }
+
+            EditorGUILayout.Space(10);
+            DrawActions();
+
+            EditorGUILayout.EndScrollView();
+        }
+
+        // =====================================================================
+        // Targets
+        // =====================================================================
+
+        private void DrawTargetSection()
+        {
+            EditorGUILayout.LabelField("Target GameObjects", EditorStyles.boldLabel);
+
+            // Drag & drop area (generous height)
+            var dropRect = GUILayoutUtility.GetRect(0, 50, GUILayout.ExpandWidth(true));
+            var dropStyle = new GUIStyle(EditorStyles.helpBox)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 11
+            };
+            GUI.Box(dropRect, "Drag & Drop GameObjects here", dropStyle);
+            HandleDragDrop(dropRect);
+
+            // Buttons
+            EditorGUILayout.BeginHorizontal();
+            int selCount = Selection.gameObjects?.Length ?? 0;
+            if (GUILayout.Button($"Add from Selection ({selCount})", GUILayout.Height(20)))
+            {
+                if (Selection.gameObjects != null)
+                    foreach (var go in Selection.gameObjects)
+                        if (go != null && !_targets.Contains(go))
+                            _targets.Add(go);
+            }
+            if (_targets.Count > 0 && GUILayout.Button("Clear", GUILayout.Width(50), GUILayout.Height(20)))
+                _targets.Clear();
+            EditorGUILayout.EndHorizontal();
+
+            // Target list (compact scroll)
+            if (_targets.Count > 0)
+            {
+                _targetScrollPos = EditorGUILayout.BeginScrollView(
+                    _targetScrollPos, GUILayout.MaxHeight(100));
+                for (int i = 0; i < _targets.Count; i++)
+                {
+                    EditorGUILayout.BeginHorizontal();
+                    var next = (GameObject)EditorGUILayout.ObjectField(
+                        _targets[i], typeof(GameObject), true, GUILayout.Height(18));
+                    if (next != _targets[i])
+                    {
+                        if (next == null) { _targets.RemoveAt(i); i--; }
+                        else if (!_targets.Contains(next)) _targets[i] = next;
+                        EditorGUILayout.EndHorizontal();
+                        continue;
+                    }
+                    if (GUILayout.Button("\u00d7", GUILayout.Width(18), GUILayout.Height(18)))
+                    { _targets.RemoveAt(i); i--; }
+                    EditorGUILayout.EndHorizontal();
+                }
+                EditorGUILayout.EndScrollView();
+            }
+        }
+
+        private void HandleDragDrop(Rect dropRect)
+        {
+            var evt = Event.current;
+            if (!dropRect.Contains(evt.mousePosition)) return;
+            if (evt.type == EventType.DragUpdated)
+            {
+                DragAndDrop.visualMode = DragAndDrop.objectReferences.Any(o => o is GameObject)
+                    ? DragAndDropVisualMode.Copy : DragAndDropVisualMode.Rejected;
+                evt.Use();
+            }
+            else if (evt.type == EventType.DragPerform)
+            {
+                DragAndDrop.AcceptDrag();
+                foreach (var obj in DragAndDrop.objectReferences)
+                    if (obj is GameObject go && !_targets.Contains(go))
+                        _targets.Add(go);
+                evt.Use();
+            }
+        }
+
+        // =====================================================================
+        // Trigger Type
+        // =====================================================================
+
+        private void DrawTriggerTypeSection()
+        {
+            _triggerType = (TriggerType)EditorGUILayout.EnumPopup("Trigger Type", _triggerType);
+
+            string desc = _triggerType switch
+            {
+                TriggerType.UnityEventTrigger =>
+                    "UnityEvent \u306b\u63a5\u7d9a\u3057\u3066\u767a\u706b\u3002\u63b4\u3080/\u96e2\u3059/\u30dc\u30bf\u30f3\u7b49\u306e\u96e2\u6563\u30a4\u30d9\u30f3\u30c8\u5411\u3051\u3002",
+                TriggerType.CollisionTrigger =>
+                    "\u7269\u7406\u884d\u7a81/\u30c8\u30ea\u30ac\u30fc\u3067\u767a\u706b\u3002\u6295\u3052\u305f\u7269\u304c\u5f53\u305f\u308b\u7b49\u306e\u7269\u7406\u63a5\u89e6\u5411\u3051\u3002",
+                _ => ""
+            };
+            EditorGUILayout.LabelField(desc, EditorStyles.miniLabel);
+        }
+
+        // =====================================================================
+        // Trigger Settings
+        // =====================================================================
+
+        private void DrawTriggerSettings()
+        {
+            EditorGUILayout.LabelField("Settings", EditorStyles.boldLabel);
+
+            _eventMap = (HapbeatEventMap)EditorGUILayout.ObjectField(
+                "Event Map", _eventMap, typeof(HapbeatEventMap), false);
+
+            if (_eventMap != null && _eventMap.entries.Count > 0)
+            {
+                string[] names = _eventMap.GetDisplayNames();
+                _entryIndex = Mathf.Clamp(_entryIndex, 0, names.Length - 1);
+                _entryIndex = EditorGUILayout.Popup("Event", _entryIndex, names);
+
+                var entry = _eventMap.GetEntry(_entryIndex);
+                if (entry != null && !string.IsNullOrEmpty(entry.eventId))
+                {
+                    EditorGUI.indentLevel++;
+                    EditorGUI.BeginDisabledGroup(true);
+                    EditorGUILayout.TextField("Event ID", entry.eventId);
+                    EditorGUI.EndDisabledGroup();
+                    EditorGUI.indentLevel--;
+                }
+            }
+            else
+            {
+                EditorGUILayout.HelpBox(
+                    _eventMap == null ? "Event Map \u3092\u8a2d\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+                                      : "Event Map \u306b\u30a8\u30f3\u30c8\u30ea\u304c\u3042\u308a\u307e\u305b\u3093\u3002",
+                    MessageType.Warning);
+            }
+
+            _cooldown = EditorGUILayout.FloatField("Cooldown", _cooldown);
+
+            if (_triggerType == TriggerType.CollisionTrigger)
+            {
+                _collisionEvent = (HapbeatCollisionTrigger.TriggerEvent)
+                    EditorGUILayout.EnumPopup("Physics Event", _collisionEvent);
+                _gainMode = (HapbeatCollisionTrigger.GainMode)
+                    EditorGUILayout.EnumPopup("Gain Mode", _gainMode);
+                if (_gainMode == HapbeatCollisionTrigger.GainMode.VelocityScaled)
+                {
+                    _velocityThreshold = EditorGUILayout.FloatField("Velocity Threshold", _velocityThreshold);
+                    _maxVelocity = EditorGUILayout.FloatField("Max Velocity", _maxVelocity);
+                }
+            }
+        }
+
+        // =====================================================================
+        // Event Wiring — auto-scan + persist selections
+        // =====================================================================
+
+        private void AutoScanIfNeeded()
+        {
+            int hash = ComputeTargetHash();
+            if (hash != _lastTargetHash && _targets.Any(t => t != null))
+            {
+                ScanTargetsForEvents(_targets.Where(t => t != null).ToList());
+                _lastTargetHash = hash;
+            }
+        }
+
+        private int ComputeTargetHash()
+        {
+            int h = _targets.Count;
+            foreach (var t in _targets)
+                if (t != null) h = h * 31 + t.GetInstanceID();
+            return h;
+        }
+
+        private void DrawEventWiringSection()
+        {
+            EditorGUILayout.LabelField("Event Wiring", EditorStyles.boldLabel);
+
+            if (_detectedEvents.Count == 0)
+            {
+                EditorGUILayout.LabelField(
+                    _targets.Any(t => t != null) ? "UnityEvent \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+                                                 : "\u30bf\u30fc\u30b2\u30c3\u30c8\u3092\u8ffd\u52a0\u3059\u308b\u3068\u81ea\u52d5\u30b9\u30ad\u30e3\u30f3\u3057\u307e\u3059\u3002",
+                    EditorStyles.miniLabel);
+                return;
+            }
+
+            // Compact scrollable list (~8 rows)
+            _eventScrollPos = EditorGUILayout.BeginScrollView(
+                _eventScrollPos, GUILayout.MaxHeight(160));
+            for (int i = 0; i < _detectedEvents.Count; i++)
+            {
+                var e = _detectedEvents[i];
+                EditorGUILayout.BeginHorizontal();
+                bool newSel = EditorGUILayout.Toggle(e.selected, GUILayout.Width(16));
+                EditorGUILayout.LabelField(e.displayName);
+                EditorGUILayout.LabelField($"({e.objectCount})", EditorStyles.miniLabel, GUILayout.Width(28));
+                EditorGUILayout.EndHorizontal();
+
+                if (newSel != e.selected)
+                {
+                    e.selected = newSel;
+                    _detectedEvents[i] = e;
+                    SaveEventSelections();
+                }
+            }
+            EditorGUILayout.EndScrollView();
+
+            // Quick select/deselect
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("Select All", EditorStyles.miniButton))
+            {
+                for (int i = 0; i < _detectedEvents.Count; i++)
+                { var e = _detectedEvents[i]; e.selected = true; _detectedEvents[i] = e; }
+                SaveEventSelections();
+            }
+            if (GUILayout.Button("Deselect All", EditorStyles.miniButton))
+            {
+                for (int i = 0; i < _detectedEvents.Count; i++)
+                { var e = _detectedEvents[i]; e.selected = false; _detectedEvents[i] = e; }
+                SaveEventSelections();
+            }
+            if (GUILayout.Button("Re-scan", EditorStyles.miniButton))
+            {
+                ScanTargetsForEvents(_targets.Where(t => t != null).ToList());
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        private void ScanTargetsForEvents(List<GameObject> targets)
+        {
+            var savedSelections = LoadEventSelections();
+            var groups = new Dictionary<string, DetectedEventGroup>();
+
+            foreach (var go in targets)
+            {
+                foreach (var comp in go.GetComponents<Component>())
+                {
+                    if (comp == null) continue;
+                    if (comp is HapbeatTriggerBase || comp is HapbeatEvent || comp is HapbeatAudioBridge)
+                        continue;
+
+                    string typeName = comp.GetType().Name;
+                    var so = new SerializedObject(comp);
+                    var iter = so.GetIterator();
+
+                    while (iter.NextVisible(true))
+                    {
+                        if (!IsUnityEventProperty(iter)) continue;
+
+                        string fieldName = iter.name;
+                        string key = $"{comp.GetType().FullName}|{fieldName}";
+
+                        string cleanField = fieldName;
+                        if (cleanField.StartsWith("m_"))
+                            cleanField = cleanField.Substring(2);
+                        if (cleanField.Length > 0)
+                            cleanField = char.ToLower(cleanField[0]) + cleanField.Substring(1);
+
+                        if (groups.ContainsKey(key))
+                        {
+                            var g = groups[key];
+                            g.objectCount++;
+                            groups[key] = g;
+                        }
+                        else
+                        {
+                            // Restore selection from saved prefs, or auto-select common ones
+                            bool sel;
+                            if (savedSelections.ContainsKey(key))
+                                sel = savedSelections[key];
+                            else
+                                sel = fieldName == "m_SelectEntered"
+                                   || fieldName == "m_SelectExited"
+                                   || fieldName == "m_OnClick";
+
+                            groups[key] = new DetectedEventGroup
+                            {
+                                displayName = $"{typeName} / {cleanField}",
+                                componentType = comp.GetType().FullName,
+                                fieldPath = fieldName,
+                                objectCount = 1,
+                                selected = sel
+                            };
+                        }
+                    }
+                }
+            }
+
+            _detectedEvents = groups.Values
+                .OrderByDescending(g => g.selected)
+                .ThenBy(g => g.displayName)
+                .ToList();
+        }
+
+        private bool IsUnityEventProperty(SerializedProperty prop)
+        {
+            if (prop.propertyType != SerializedPropertyType.Generic) return false;
+            if (prop.depth > 2) return false;
+
+            var copy = prop.Copy();
+            if (copy.FindPropertyRelative("m_PersistentCalls") != null) return true;
+
+            var inner = copy.FindPropertyRelative("m_Event");
+            if (inner != null && inner.FindPropertyRelative("m_PersistentCalls") != null) return true;
+
+            return false;
+        }
+
+        // --- Persist event selections via EditorPrefs ---
+
+        private void SaveEventSelections()
+        {
+            var dict = new Dictionary<string, bool>();
+            foreach (var e in _detectedEvents)
+                dict[$"{e.componentType}|{e.fieldPath}"] = e.selected;
+
+            string json = JsonUtility.ToJson(new SerializableDict(dict));
+            EditorPrefs.SetString(kSelectedEventsKey, json);
+        }
+
+        private Dictionary<string, bool> LoadEventSelections()
+        {
+            string json = EditorPrefs.GetString(kSelectedEventsKey, "");
+            if (string.IsNullOrEmpty(json)) return new Dictionary<string, bool>();
+            try
+            {
+                var sd = JsonUtility.FromJson<SerializableDict>(json);
+                return sd.ToDictionary();
+            }
+            catch { return new Dictionary<string, bool>(); }
+        }
+
+        [Serializable]
+        private class SerializableDict
+        {
+            public List<string> keys = new List<string>();
+            public List<bool> values = new List<bool>();
+
+            public SerializableDict() { }
+            public SerializableDict(Dictionary<string, bool> dict)
+            {
+                foreach (var kv in dict) { keys.Add(kv.Key); values.Add(kv.Value); }
+            }
+            public Dictionary<string, bool> ToDictionary()
+            {
+                var d = new Dictionary<string, bool>();
+                for (int i = 0; i < Mathf.Min(keys.Count, values.Count); i++)
+                    d[keys[i]] = values[i];
+                return d;
+            }
+        }
+
+        // =====================================================================
+        // Actions
+        // =====================================================================
+
+        private void DrawActions()
+        {
+            var validTargets = _targets.Where(t => t != null).ToList();
+            bool canApply = validTargets.Count > 0 && _eventMap != null && _eventMap.entries.Count > 0;
+
+            EditorGUI.BeginDisabledGroup(!canApply);
+            var origColor = GUI.backgroundColor;
+            GUI.backgroundColor = new Color(0.4f, 0.8f, 0.4f);
+            if (GUILayout.Button($"Apply ({validTargets.Count} objects)", GUILayout.Height(26)))
+                ApplyBatch(validTargets);
+            GUI.backgroundColor = origColor;
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.Space(3);
+
+            EditorGUI.BeginDisabledGroup(validTargets.Count == 0);
+            GUI.backgroundColor = new Color(1f, 0.6f, 0.5f);
+            if (GUILayout.Button($"Cleanup Hapbeat ({validTargets.Count} objects)", GUILayout.Height(22)))
+                CleanupBatch(validTargets);
+            GUI.backgroundColor = origColor;
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.LabelField(
+                "Apply: \u540c\u3058\u7a2e\u5225+Entry \u306f\u4e0a\u66f8\u304d\u3002\u7570\u306a\u308b Entry \u306a\u3089\u8ffd\u52a0\u3002  Cleanup: Hapbeat \u5168\u9664\u53bb\u3002",
+                EditorStyles.miniLabel);
+        }
+
+        // =====================================================================
+        // Apply
+        // =====================================================================
+
+        private void ApplyBatch(List<GameObject> targets)
+        {
+            Undo.SetCurrentGroupName("Hapbeat Batch Setup");
+            int undoGroup = Undo.GetCurrentGroup();
+            int added = 0, updated = 0, wired = 0;
+
+            foreach (var go in targets)
+            {
+                if (_triggerType == TriggerType.UnityEventTrigger)
+                {
+                    var trigger = FindOrCreate<HapbeatUnityEventTrigger>(go, out bool isNew);
+                    ConfigureBase(trigger);
+                    if (isNew) added++; else updated++;
+                    wired += WireScannedEvents(go, trigger);
+                }
+                else
+                {
+                    var trigger = FindOrCreate<HapbeatCollisionTrigger>(go, out bool isNew);
+                    ConfigureBase(trigger);
+                    ConfigureCollision(trigger);
+                    if (isNew) added++; else updated++;
+                }
+            }
+
+            Undo.CollapseUndoOperations(undoGroup);
+            string msg = $"{added} added, {updated} updated" + (wired > 0 ? $", {wired} events wired" : "");
+            Debug.Log($"[Hapbeat Batch Setup] {msg}");
+            EditorUtility.DisplayDialog("Hapbeat Batch Setup", msg, "OK");
+        }
+
+        private T FindOrCreate<T>(GameObject go, out bool isNew) where T : HapbeatTriggerBase
+        {
+            foreach (var existing in go.GetComponents<T>())
+            {
+                if (existing.EventMap == _eventMap && existing.EntryIndex == _entryIndex)
+                {
+                    Undo.RecordObject(existing, "Update Hapbeat Trigger");
+                    isNew = false;
+                    return existing;
+                }
+            }
+            isNew = true;
+            return Undo.AddComponent<T>(go);
+        }
+
+        private void ConfigureBase(HapbeatTriggerBase trigger)
+        {
+            var so = new SerializedObject(trigger);
+            so.FindProperty("_eventMap").objectReferenceValue = _eventMap;
+            so.FindProperty("_entryIndex").intValue = _entryIndex;
+            so.FindProperty("_cooldown").floatValue = _cooldown;
+            so.ApplyModifiedProperties();
+        }
+
+        private void ConfigureCollision(HapbeatCollisionTrigger trigger)
+        {
+            var so = new SerializedObject(trigger);
+            so.FindProperty("_triggerEvent").enumValueIndex = (int)_collisionEvent;
+            so.FindProperty("_gainMode").enumValueIndex = (int)_gainMode;
+            if (_gainMode == HapbeatCollisionTrigger.GainMode.VelocityScaled)
+            {
+                so.FindProperty("_velocityThreshold").floatValue = _velocityThreshold;
+                so.FindProperty("_maxVelocity").floatValue = _maxVelocity;
+            }
+            so.ApplyModifiedProperties();
+        }
+
+        private int WireScannedEvents(GameObject go, HapbeatUnityEventTrigger trigger)
+        {
+            int count = 0;
+            var selected = _detectedEvents.Where(e => e.selected).ToList();
+
+            foreach (var comp in go.GetComponents<Component>())
+            {
+                if (comp == null) continue;
+                string fullType = comp.GetType().FullName;
+
+                foreach (var ev in selected)
+                {
+                    if (ev.componentType != fullType) continue;
+                    var so = new SerializedObject(comp);
+                    count += EnsureWired(so, ev.fieldPath, trigger, "Fire");
+                    so.ApplyModifiedProperties();
+                }
+            }
+            return count;
+        }
+
+        private int EnsureWired(SerializedObject so, string fieldName,
+            UnityEngine.Object target, string methodName)
+        {
+            var prop = so.FindProperty(fieldName);
+            if (prop == null)
+            {
+                string alt = fieldName.Replace("m_First", "m_").Replace("m_Last", "m_");
+                if (alt != fieldName) prop = so.FindProperty(alt);
+            }
+            if (prop == null) return 0;
+
+            var callsProp = prop.FindPropertyRelative("m_PersistentCalls.m_Calls");
+            if (callsProp == null)
+            {
+                var inner = prop.FindPropertyRelative("m_Event");
+                if (inner != null)
+                    callsProp = inner.FindPropertyRelative("m_PersistentCalls.m_Calls");
+            }
+            if (callsProp == null) return 0;
+
+            for (int i = 0; i < callsProp.arraySize; i++)
+            {
+                var call = callsProp.GetArrayElementAtIndex(i);
+                if (call.FindPropertyRelative("m_Target").objectReferenceValue == target
+                    && call.FindPropertyRelative("m_MethodName").stringValue == methodName)
+                    return 0;
+            }
+
+            callsProp.arraySize++;
+            var nc = callsProp.GetArrayElementAtIndex(callsProp.arraySize - 1);
+            nc.FindPropertyRelative("m_Target").objectReferenceValue = target;
+            nc.FindPropertyRelative("m_MethodName").stringValue = methodName;
+            nc.FindPropertyRelative("m_Mode").intValue = 1;
+            nc.FindPropertyRelative("m_CallState").intValue = 2;
+            return 1;
+        }
+
+        // =====================================================================
+        // Cleanup
+        // =====================================================================
+
+        private void CleanupBatch(List<GameObject> targets)
+        {
+            if (!EditorUtility.DisplayDialog("Hapbeat Cleanup",
+                $"{targets.Count} \u500b\u306e\u30aa\u30d6\u30b8\u30a7\u30af\u30c8\u304b\u3089 Hapbeat \u30b3\u30f3\u30dd\u30fc\u30cd\u30f3\u30c8\u3068\u30a4\u30d9\u30f3\u30c8\u63a5\u7d9a\u3092\u5168\u3066\u9664\u53bb\u3057\u307e\u3059\u3002",
+                "OK", "Cancel"))
+                return;
+
+            Undo.SetCurrentGroupName("Hapbeat Cleanup");
+            int undoGroup = Undo.GetCurrentGroup();
+            int removedComps = 0, removedWires = 0;
+
+            foreach (var go in targets)
+            {
+                var hapComps = new List<Component>();
+                hapComps.AddRange(go.GetComponents<HapbeatTriggerBase>());
+                var he = go.GetComponent<HapbeatEvent>();
+                if (he != null) hapComps.Add(he);
+                var ab = go.GetComponent<HapbeatAudioBridge>();
+                if (ab != null) hapComps.Add(ab);
+
+                foreach (var hc in hapComps)
+                    removedWires += RemoveWiring(go, hc);
+                foreach (var hc in hapComps)
+                {
+                    Undo.DestroyObjectImmediate(hc);
+                    removedComps++;
+                }
+            }
+
+            Undo.CollapseUndoOperations(undoGroup);
+            string msg = $"{removedComps} components, {removedWires} wires removed";
+            Debug.Log($"[Hapbeat Cleanup] {msg}");
+            EditorUtility.DisplayDialog("Hapbeat Cleanup", msg, "OK");
+        }
+
+        private int RemoveWiring(GameObject go, UnityEngine.Object triggerTarget)
+        {
+            int removed = 0;
+            foreach (var comp in go.GetComponents<Component>())
+            {
+                if (comp == null || comp == triggerTarget) continue;
+                if (comp is HapbeatTriggerBase || comp is HapbeatEvent || comp is HapbeatAudioBridge)
+                    continue;
+
+                var so = new SerializedObject(comp);
+                var iter = so.GetIterator();
+                bool changed = false;
+
+                while (iter.NextVisible(true))
+                {
+                    if (iter.propertyType == SerializedPropertyType.Generic
+                        && iter.name == "m_Calls" && iter.isArray)
+                    {
+                        for (int i = iter.arraySize - 1; i >= 0; i--)
+                        {
+                            var t = iter.GetArrayElementAtIndex(i).FindPropertyRelative("m_Target");
+                            if (t != null && t.objectReferenceValue == triggerTarget)
+                            {
+                                iter.DeleteArrayElementAtIndex(i);
+                                removed++;
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if (changed) so.ApplyModifiedProperties();
+            }
+            return removed;
+        }
+    }
+}
+#endif

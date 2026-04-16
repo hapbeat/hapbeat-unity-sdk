@@ -17,7 +17,7 @@ namespace Hapbeat
     ///   3. AudioSource を Stop するとストリーミングも停止する
     /// </summary>
     [RequireComponent(typeof(AudioSource))]
-    [AddComponentMenu("Hapbeat/Audio Bridge")]
+    [AddComponentMenu("Hapbeat/Hapbeat Audio Bridge")]
     public class HapbeatAudioBridge : MonoBehaviour
     {
         [Header("Streaming Settings")]

@@ -28,6 +28,7 @@ namespace Hapbeat.Editor
             public string typeName;
         }
 
+        [MenuItem("Hapbeat/Event Map")]
         [MenuItem("Window/Hapbeat/Event Map")]
         public static void ShowWindow()
         {
@@ -35,6 +36,7 @@ namespace Hapbeat.Editor
             window.minSize = new Vector2(500, 300);
         }
 
+        [MenuItem("Hapbeat/Create Event Router", false, 50)]
         [MenuItem("GameObject/Hapbeat/Event Router", false, 10)]
         public static void CreateEventRouter()
         {
@@ -92,6 +94,11 @@ namespace Hapbeat.Editor
 
             GUILayout.FlexibleSpace();
 
+            if (GUILayout.Button("Batch Setup", EditorStyles.toolbarButton, GUILayout.Width(80)))
+            {
+                HapbeatBatchSetupWindow.ShowWindow();
+            }
+
             if (GUILayout.Button("Scan Scene", EditorStyles.toolbarButton, GUILayout.Width(80)))
             {
                 ScanScene();
@@ -102,8 +109,9 @@ namespace Hapbeat.Editor
                 Undo.RecordObject(_selectedMap, "Add Hapbeat Event Entry");
                 _selectedMap.entries.Add(new HapbeatEventEntry
                 {
-                    displayName = $"New Event {_selectedMap.entries.Count}",
-                    eventId = "new.event"
+                    displayName = "",
+                    category = "",
+                    eventName = ""
                 });
                 EditorUtility.SetDirty(_selectedMap);
             }
@@ -201,8 +209,65 @@ namespace Hapbeat.Editor
             var entryProp = entriesProp.GetArrayElementAtIndex(_selectedEntryIndex);
 
             EditorGUI.BeginChangeCheck();
-            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("displayName"), new GUIContent("Name"));
-            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("eventId"), new GUIContent("Event ID"));
+
+            // Name with placeholder
+            var nameProp = entryProp.FindPropertyRelative("displayName");
+            nameProp.stringValue = PlaceholderTextField("Name", nameProp.stringValue, "e.g. Landing Impact");
+
+            // Category dropdown + event name
+            var categoryProp = entryProp.FindPropertyRelative("category");
+            var eventNameProp = entryProp.FindPropertyRelative("eventName");
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel("Event ID");
+
+            // Category: dropdown for standard + custom option
+            var categories = HapbeatEventEntry.StandardCategories;
+            int catIndex = System.Array.IndexOf(categories, categoryProp.stringValue);
+            bool isEmpty = string.IsNullOrEmpty(categoryProp.stringValue);
+            bool isCustomCategory = !isEmpty && catIndex < 0;
+
+            // Build popup: (select...) + standard categories + (custom)
+            var popupLabels = new List<string> { "(select...)" };
+            popupLabels.AddRange(categories);
+            popupLabels.Add("(custom)");
+
+            int popupIndex;
+            if (isEmpty) popupIndex = 0;
+            else if (isCustomCategory) popupIndex = popupLabels.Count - 1;
+            else popupIndex = catIndex + 1; // offset by 1 for "(select...)"
+
+            int newPopupIndex = EditorGUILayout.Popup(popupIndex, popupLabels.ToArray(), GUILayout.Width(100));
+            if (newPopupIndex == 0)
+                categoryProp.stringValue = "";
+            else if (newPopupIndex < popupLabels.Count - 1)
+                categoryProp.stringValue = categories[newPopupIndex - 1];
+            else if (!isCustomCategory)
+                categoryProp.stringValue = "";
+
+            // Show editable category field if custom
+            if (newPopupIndex == popupLabels.Count - 1)
+                categoryProp.stringValue = PlaceholderTextFieldInline(categoryProp.stringValue, "category", 70);
+
+            EditorGUILayout.LabelField(".", GUILayout.Width(8));
+            eventNameProp.stringValue = PlaceholderTextFieldInline(eventNameProp.stringValue, "e.g. hit");
+            EditorGUILayout.EndHorizontal();
+
+            // Preview computed eventId
+            var entry = _selectedMap.entries[_selectedEntryIndex];
+            string previewId = entry.eventId;
+            if (string.IsNullOrEmpty(previewId))
+                previewId = "impact.hit";
+            EditorGUI.BeginDisabledGroup(true);
+            EditorGUILayout.TextField("  \u2192 eventId", previewId);
+            EditorGUI.EndDisabledGroup();
+
+            // Validation (only when user has entered something)
+            if (!string.IsNullOrEmpty(categoryProp.stringValue) && !HapbeatEventEntry.IsValidSegment(categoryProp.stringValue))
+                EditorGUILayout.HelpBox($"category \"{categoryProp.stringValue}\" is invalid. Use lowercase a-z, 0-9, hyphen, underscore.", MessageType.Warning);
+            if (!string.IsNullOrEmpty(eventNameProp.stringValue) && !HapbeatEventEntry.IsValidSegment(eventNameProp.stringValue))
+                EditorGUILayout.HelpBox($"name \"{eventNameProp.stringValue}\" is invalid. Use lowercase a-z, 0-9, hyphen, underscore.", MessageType.Warning);
+
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("gain"), new GUIContent("Gain"));
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("group"), new GUIContent("Group"));
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"), new GUIContent("Notes"));
@@ -288,6 +353,56 @@ namespace Hapbeat.Editor
         private void OnFocus()
         {
             ScanScene();
+        }
+
+        // --- Placeholder text field helpers ---
+
+        private static GUIStyle _placeholderStyle;
+        private static GUIStyle PlaceholderStyle
+        {
+            get
+            {
+                if (_placeholderStyle == null)
+                {
+                    _placeholderStyle = new GUIStyle(EditorStyles.textField)
+                    {
+                        fontStyle = FontStyle.Italic,
+                        normal = { textColor = new Color(0.5f, 0.5f, 0.5f, 0.6f) }
+                    };
+                }
+                return _placeholderStyle;
+            }
+        }
+
+        private static string PlaceholderTextField(string label, string value, string placeholder)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.PrefixLabel(label);
+                string result = EditorGUILayout.TextField("", PlaceholderStyle);
+                // Draw placeholder over the field
+                var rect = GUILayoutUtility.GetLastRect();
+                if (string.IsNullOrEmpty(result))
+                    EditorGUI.LabelField(rect, placeholder, PlaceholderStyle);
+                EditorGUILayout.EndHorizontal();
+                return result;
+            }
+            return EditorGUILayout.TextField(label, value);
+        }
+
+        private static string PlaceholderTextFieldInline(string value, string placeholder, float width = 0)
+        {
+            var options = width > 0
+                ? new[] { GUILayout.Width(width) }
+                : new GUILayoutOption[0];
+            string result = EditorGUILayout.TextField(value, options);
+            if (string.IsNullOrEmpty(result))
+            {
+                var rect = GUILayoutUtility.GetLastRect();
+                EditorGUI.LabelField(rect, placeholder, PlaceholderStyle);
+            }
+            return result;
         }
     }
 }

@@ -130,7 +130,8 @@ namespace Hapbeat
         /// <param name="eventId">Event identifier.</param>
         /// <param name="gain">Gain multiplier (0.0 to 1.0+). Default is 1.0.</param>
         /// <param name="group">Target group ID. -1 = use config default, 0 = all devices.</param>
-        public void Play(string eventId, float gain = 1.0f, int group = -1)
+        /// <param name="displayName">Optional display name for logging (e.g. "Grab"). Not sent to devices.</param>
+        public void Play(string eventId, float gain = 1.0f, int group = -1, string displayName = null)
         {
             if (!EnsureConnected())
                 return;
@@ -138,7 +139,9 @@ namespace Hapbeat
             byte g = ResolveGroup(group);
             long targetTimeUs = 0; // 0 means play immediately
             _client.SendPlay(eventId, targetTimeUs, g, gain);
-            Log($"Play: eventId={eventId}, gain={gain}, group={g}");
+
+            string label = string.IsNullOrEmpty(displayName) ? eventId : $"{displayName} ({eventId})";
+            Log($"\u25b6 Play \"{label}\" gain={gain:F1} group={g}");
         }
 
         /// <summary>
@@ -155,7 +158,7 @@ namespace Hapbeat
 
             byte g = ResolveGroup(group);
             _client.SendPlay(eventId, targetTimeUs, g, gain);
-            Log($"PlayScheduled: eventId={eventId}, targetTimeUs={targetTimeUs}, gain={gain}, group={g}");
+            Log($"\u25b6 PlayScheduled \"{eventId}\" (target={targetTimeUs}us, gain={gain:F1}, group={g})");
         }
 
         /// <summary>
@@ -163,14 +166,17 @@ namespace Hapbeat
         /// </summary>
         /// <param name="eventId">Event identifier to stop.</param>
         /// <param name="group">Target group ID. -1 = use config default, 0 = all devices.</param>
-        public void Stop(string eventId, int group = -1)
+        /// <param name="displayName">Optional display name for logging. Not sent to devices.</param>
+        public void Stop(string eventId, int group = -1, string displayName = null)
         {
             if (!EnsureConnected())
                 return;
 
             byte g = ResolveGroup(group);
             _client.SendStop(eventId, g);
-            Log($"Stop: eventId={eventId}, group={g}");
+
+            string label = string.IsNullOrEmpty(displayName) ? eventId : $"{displayName} ({eventId})";
+            Log($"\u25a0 Stop \"{label}\" group={g}");
         }
 
         /// <summary>
@@ -184,7 +190,7 @@ namespace Hapbeat
 
             byte g = ResolveGroup(group);
             _client.SendStopAll(g);
-            Log($"StopAll: group={g}");
+            Log($"\u25a0 StopAll (group={g})");
         }
 
         /// <summary>
@@ -479,7 +485,7 @@ namespace Hapbeat
                 long halfRtt = rttUs / 2;
                 TimeOffsetUs = serverTimeUs - (localTimeUs - halfRtt);
 
-                Log($"PONG received: RTT={rttUs}us, offset={TimeOffsetUs}us");
+                LogVerbose($"PONG received: RTT={rttUs}us, offset={TimeOffsetUs}us");
                 OnPong?.Invoke(rttUs);
             };
 
@@ -519,6 +525,14 @@ namespace Hapbeat
         private void Log(string message)
         {
             if (_config != null && _config.enableLogging)
+            {
+                Debug.Log($"[Hapbeat] {message}");
+            }
+        }
+
+        private void LogVerbose(string message)
+        {
+            if (_config != null && _config.verboseLogging)
             {
                 Debug.Log($"[Hapbeat] {message}");
             }

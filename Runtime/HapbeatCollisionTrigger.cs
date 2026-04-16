@@ -11,7 +11,7 @@ namespace Hapbeat
     /// - Fixed: uses the EventMap entry's gain as-is
     /// - VelocityScaled: maps collision velocity to gain via AnimationCurve
     /// </summary>
-    [AddComponentMenu("Hapbeat/Collision Trigger")]
+    [AddComponentMenu("Hapbeat/Hapbeat Collision Trigger")]
     public class HapbeatCollisionTrigger : HapbeatTriggerBase
     {
         public enum PhysicsMode { Auto, Force2D, Force3D }
@@ -144,7 +144,10 @@ namespace Hapbeat
             float gain = curveValue * entry.gain;
 
             if (HapbeatManager.Instance != null)
-                HapbeatManager.Instance.Play(entry.eventId, gain, entry.group);
+            {
+                string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
+                HapbeatManager.Instance.Play(entry.eventId, gain, entry.group, label);
+            }
         }
 
         private float _lastFireTimeInternal = float.NegativeInfinity;

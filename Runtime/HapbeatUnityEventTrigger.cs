@@ -8,7 +8,7 @@ namespace Hapbeat
     /// XR Interaction Toolkit events, etc.
     /// Can be placed on a dedicated [Hapbeat Router] GameObject.
     /// </summary>
-    [AddComponentMenu("Hapbeat/UnityEvent Trigger")]
+    [AddComponentMenu("Hapbeat/Hapbeat UnityEvent Trigger")]
     public class HapbeatUnityEventTrigger : HapbeatTriggerBase
     {
         /// <summary>
@@ -32,7 +32,8 @@ namespace Hapbeat
 
             if (HapbeatManager.Instance != null)
             {
-                HapbeatManager.Instance.Play(entry.eventId, gain, entry.group);
+                string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
+                HapbeatManager.Instance.Play(entry.eventId, gain, entry.group, label);
             }
         }
 

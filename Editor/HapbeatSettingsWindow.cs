@@ -16,6 +16,7 @@ namespace Hapbeat.Editor
         private bool _isPinging;
         private Vector2 _scrollPosition;
 
+        [MenuItem("Hapbeat/Settings")]
         [MenuItem("Window/Hapbeat/Settings")]
         public static void ShowWindow()
         {

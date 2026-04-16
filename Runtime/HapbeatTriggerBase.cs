@@ -60,7 +60,8 @@ namespace Hapbeat
 
             if (HapbeatManager.Instance != null)
             {
-                HapbeatManager.Instance.Play(entry.eventId, entry.gain, entry.group);
+                string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
+                HapbeatManager.Instance.Play(entry.eventId, entry.gain, entry.group, label);
             }
         }
 
@@ -76,7 +77,8 @@ namespace Hapbeat
 
             if (HapbeatManager.Instance != null)
             {
-                HapbeatManager.Instance.Stop(entry.eventId, entry.group);
+                string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
+                HapbeatManager.Instance.Stop(entry.eventId, entry.group, label);
             }
         }
     }

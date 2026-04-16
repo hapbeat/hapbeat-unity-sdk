@@ -39,7 +39,10 @@ namespace Hapbeat
         public float pingInterval = 5.0f;
 
         [Header("Debugging")]
-        [Tooltip("Enable detailed logging to the Unity console.")]
+        [Tooltip("Enable logging to the Unity console (Play, Stop, Connect, errors).")]
         public bool enableLogging = true;
+
+        [Tooltip("Enable verbose logging (PONG, keep-alive, protocol details). Noisy — use for debugging only.")]
+        public bool verboseLogging = false;
     }
 }

@@ -8,7 +8,7 @@ namespace Hapbeat
     /// is specified by reference, not required to be on the same object.
     /// Non-invasive: only reads Animator parameters, never writes.
     /// </summary>
-    [AddComponentMenu("Hapbeat/Animator Trigger")]
+    [AddComponentMenu("Hapbeat/Hapbeat Animator Trigger")]
     public class HapbeatAnimatorTrigger : HapbeatTriggerBase
     {
         public enum Condition
