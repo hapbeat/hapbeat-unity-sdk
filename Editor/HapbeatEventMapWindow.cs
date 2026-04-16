@@ -258,7 +258,7 @@ namespace Hapbeat.Editor
                     }
                 }
 
-                EditorGUILayout.GetControlID(FocusType.Passive); // reserve control for events
+                GUIUtility.GetControlID(FocusType.Passive, cardRect);
 
                 // Click anywhere to select
                 if (Event.current.type == EventType.MouseDown
