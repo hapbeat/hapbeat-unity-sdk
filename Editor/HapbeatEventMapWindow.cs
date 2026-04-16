@@ -210,66 +210,90 @@ namespace Hapbeat.Editor
 
             EditorGUI.BeginChangeCheck();
 
-            // Name with placeholder
+            // Name
             var nameProp = entryProp.FindPropertyRelative("displayName");
-            nameProp.stringValue = PlaceholderTextField("Name", nameProp.stringValue, "e.g. Landing Impact");
+            nameProp.stringValue = DrawPlaceholderField("Name", nameProp.stringValue, "e.g. Grab");
 
-            // Category dropdown + event name
+            // Category + event name on one line — both editable text with dropdown assist
             var categoryProp = entryProp.FindPropertyRelative("category");
             var eventNameProp = entryProp.FindPropertyRelative("eventName");
 
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.PrefixLabel("Event ID");
 
-            // Category: dropdown for standard + custom option
-            var categories = HapbeatEventEntry.StandardCategories;
-            int catIndex = System.Array.IndexOf(categories, categoryProp.stringValue);
-            bool isEmpty = string.IsNullOrEmpty(categoryProp.stringValue);
-            bool isCustomCategory = !isEmpty && catIndex < 0;
-
-            // Build popup: (select...) + standard categories + (custom)
-            var popupLabels = new List<string> { "(select...)" };
-            popupLabels.AddRange(categories);
-            popupLabels.Add("(custom)");
-
-            int popupIndex;
-            if (isEmpty) popupIndex = 0;
-            else if (isCustomCategory) popupIndex = popupLabels.Count - 1;
-            else popupIndex = catIndex + 1; // offset by 1 for "(select...)"
-
-            int newPopupIndex = EditorGUILayout.Popup(popupIndex, popupLabels.ToArray(), GUILayout.Width(100));
-            if (newPopupIndex == 0)
-                categoryProp.stringValue = "";
-            else if (newPopupIndex < popupLabels.Count - 1)
-                categoryProp.stringValue = categories[newPopupIndex - 1];
-            else if (!isCustomCategory)
-                categoryProp.stringValue = "";
-
-            // Show editable category field if custom
-            if (newPopupIndex == popupLabels.Count - 1)
-                categoryProp.stringValue = PlaceholderTextFieldInline(categoryProp.stringValue, "category", 70);
+            // Category: editable text + dropdown button
+            categoryProp.stringValue = DrawPlaceholderFieldInline(categoryProp.stringValue, "clip", 80);
+            if (EditorGUILayout.DropdownButton(GUIContent.none, FocusType.Passive, GUILayout.Width(16)))
+            {
+                var menu = new GenericMenu();
+                foreach (var cat in HapbeatEventEntry.StandardCategories)
+                {
+                    string c = cat;
+                    menu.AddItem(new GUIContent(c), categoryProp.stringValue == c,
+                        () => { categoryProp.stringValue = c; so.ApplyModifiedProperties(); });
+                }
+                menu.ShowAsContext();
+            }
 
             EditorGUILayout.LabelField(".", GUILayout.Width(8));
-            eventNameProp.stringValue = PlaceholderTextFieldInline(eventNameProp.stringValue, "e.g. hit");
+            eventNameProp.stringValue = DrawPlaceholderFieldInline(eventNameProp.stringValue, "hit");
             EditorGUILayout.EndHorizontal();
 
-            // Preview computed eventId
+            // eventId preview
             var entry = _selectedMap.entries[_selectedEntryIndex];
             string previewId = entry.eventId;
-            if (string.IsNullOrEmpty(previewId))
-                previewId = "impact.hit";
+            if (string.IsNullOrEmpty(previewId)) previewId = "clip.hit";
             EditorGUI.BeginDisabledGroup(true);
             EditorGUILayout.TextField("  \u2192 eventId", previewId);
             EditorGUI.EndDisabledGroup();
 
-            // Validation (only when user has entered something)
+            // Validation
             if (!string.IsNullOrEmpty(categoryProp.stringValue) && !HapbeatEventEntry.IsValidSegment(categoryProp.stringValue))
-                EditorGUILayout.HelpBox($"category \"{categoryProp.stringValue}\" is invalid. Use lowercase a-z, 0-9, hyphen, underscore.", MessageType.Warning);
+                EditorGUILayout.HelpBox($"category \"{categoryProp.stringValue}\": lowercase a-z, 0-9, -, _ only", MessageType.Warning);
             if (!string.IsNullOrEmpty(eventNameProp.stringValue) && !HapbeatEventEntry.IsValidSegment(eventNameProp.stringValue))
-                EditorGUILayout.HelpBox($"name \"{eventNameProp.stringValue}\" is invalid. Use lowercase a-z, 0-9, hyphen, underscore.", MessageType.Warning);
+                EditorGUILayout.HelpBox($"name \"{eventNameProp.stringValue}\": lowercase a-z, 0-9, -, _ only", MessageType.Warning);
 
+            // Gain
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("gain"), new GUIContent("Gain"));
-            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("group"), new GUIContent("Group"));
+
+            // Target (device addressing)
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("Targeting", EditorStyles.miniBoldLabel);
+            var targetProp = entryProp.FindPropertyRelative("target");
+
+            EditorGUILayout.BeginHorizontal();
+            targetProp.stringValue = EditorGUILayout.TextField("Target", targetProp.stringValue);
+            if (EditorGUILayout.DropdownButton(new GUIContent("\u25bc"), FocusType.Passive, GUILayout.Width(22)))
+            {
+                var menu = new GenericMenu();
+                menu.AddItem(new GUIContent("(broadcast \u2014 all devices)"), string.IsNullOrEmpty(targetProp.stringValue),
+                    () => { targetProp.stringValue = ""; so.ApplyModifiedProperties(); });
+                menu.AddSeparator("");
+                for (int p = 0; p < HapbeatEventEntry.StandardPositions.Length; p++)
+                {
+                    string pos = HapbeatEventEntry.StandardPositions[p];
+                    string label = HapbeatEventEntry.PositionLabels[p];
+                    menu.AddItem(new GUIContent($"Position/{label} (*/{pos})"),
+                        targetProp.stringValue == $"*/{pos}",
+                        () => { targetProp.stringValue = $"*/{pos}"; so.ApplyModifiedProperties(); });
+                }
+                for (int n = 1; n <= 4; n++)
+                {
+                    int pn = n;
+                    menu.AddItem(new GUIContent($"Player/player_{pn}"),
+                        targetProp.stringValue == $"player_{pn}",
+                        () => { targetProp.stringValue = $"player_{pn}"; so.ApplyModifiedProperties(); });
+                }
+                menu.ShowAsContext();
+            }
+            EditorGUILayout.EndHorizontal();
+
+            if (string.IsNullOrEmpty(targetProp.stringValue))
+            {
+                // Show legacy group only when target is empty
+                EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("group"), new GUIContent("Group (legacy)"));
+            }
+
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"), new GUIContent("Notes"));
             if (EditorGUI.EndChangeCheck())
             {
@@ -356,53 +380,47 @@ namespace Hapbeat.Editor
         }
 
         // --- Placeholder text field helpers ---
+        // Draw real TextField always, overlay placeholder only when unfocused + empty.
+        // This ensures correct focus ring behavior.
 
-        private static GUIStyle _placeholderStyle;
-        private static GUIStyle PlaceholderStyle
+        private static GUIStyle _phStyle;
+        private static GUIStyle PhStyle => _phStyle ??= new GUIStyle(EditorStyles.label)
         {
-            get
-            {
-                if (_placeholderStyle == null)
-                {
-                    _placeholderStyle = new GUIStyle(EditorStyles.textField)
-                    {
-                        fontStyle = FontStyle.Italic,
-                        normal = { textColor = new Color(0.5f, 0.5f, 0.5f, 0.6f) }
-                    };
-                }
-                return _placeholderStyle;
-            }
-        }
+            fontStyle = FontStyle.Italic,
+            normal = { textColor = new Color(0.5f, 0.5f, 0.5f, 0.5f) },
+            padding = new RectOffset(3, 0, 0, 0)
+        };
 
-        private static string PlaceholderTextField(string label, string value, string placeholder)
+        private static string DrawPlaceholderField(string label, string value, string placeholder)
         {
-            if (string.IsNullOrEmpty(value))
-            {
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.PrefixLabel(label);
-                string result = EditorGUILayout.TextField("", PlaceholderStyle);
-                // Draw placeholder over the field
-                var rect = GUILayoutUtility.GetLastRect();
-                if (string.IsNullOrEmpty(result))
-                    EditorGUI.LabelField(rect, placeholder, PlaceholderStyle);
-                EditorGUILayout.EndHorizontal();
-                return result;
-            }
-            return EditorGUILayout.TextField(label, value);
-        }
-
-        private static string PlaceholderTextFieldInline(string value, string placeholder, float width = 0)
-        {
-            var options = width > 0
-                ? new[] { GUILayout.Width(width) }
-                : new GUILayoutOption[0];
-            string result = EditorGUILayout.TextField(value, options);
-            if (string.IsNullOrEmpty(result))
+            string result = EditorGUILayout.TextField(label, value);
+            if (string.IsNullOrEmpty(result) && !IsFieldFocused())
             {
                 var rect = GUILayoutUtility.GetLastRect();
-                EditorGUI.LabelField(rect, placeholder, PlaceholderStyle);
+                rect.x += EditorGUIUtility.labelWidth + 2;
+                rect.width -= EditorGUIUtility.labelWidth + 2;
+                EditorGUI.LabelField(rect, placeholder, PhStyle);
             }
             return result;
+        }
+
+        private static string DrawPlaceholderFieldInline(string value, string placeholder, float width = 0)
+        {
+            var opts = width > 0 ? new[] { GUILayout.Width(width) } : new GUILayoutOption[0];
+            string result = EditorGUILayout.TextField(value, opts);
+            if (string.IsNullOrEmpty(result) && !IsFieldFocused())
+            {
+                var rect = GUILayoutUtility.GetLastRect();
+                EditorGUI.LabelField(rect, placeholder, PhStyle);
+            }
+            return result;
+        }
+
+        private static bool IsFieldFocused()
+        {
+            // Check if the text field we just drew has keyboard focus
+            return GUIUtility.keyboardControl != 0
+                && EditorGUIUtility.editingTextField;
         }
     }
 }

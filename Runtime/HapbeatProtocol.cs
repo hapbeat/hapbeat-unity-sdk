@@ -98,11 +98,16 @@ namespace Hapbeat
         /// <param name="group">Target group ID.</param>
         /// <param name="gain">Gain multiplier.</param>
         /// <returns>Payload bytes.</returns>
-        public static byte[] BuildPlayPayload(string eventId, long targetTimeUs, byte group, float gain)
+        public static byte[] BuildPlayPayload(string eventId, long targetTimeUs, byte group, float gain,
+            string target = null)
         {
             byte[] eventIdBytes = Encoding.UTF8.GetBytes(eventId);
+            byte[] targetBytes = string.IsNullOrEmpty(target) ? null : Encoding.UTF8.GetBytes(target);
+
             // event_id (null-terminated) + target_time (int64) + group (uint8) + gain (float32)
+            // + optional: target (null-terminated)
             int size = eventIdBytes.Length + 1 + 8 + 1 + 4;
+            if (targetBytes != null) size += targetBytes.Length + 1;
             byte[] payload = new byte[size];
 
             int offset = 0;
@@ -110,19 +115,28 @@ namespace Hapbeat
             // event_id (null-terminated UTF-8)
             Buffer.BlockCopy(eventIdBytes, 0, payload, offset, eventIdBytes.Length);
             offset += eventIdBytes.Length;
-            payload[offset] = 0; // null terminator
+            payload[offset] = 0;
             offset += 1;
 
             // target_time (int64, little-endian)
             WriteInt64(payload, offset, targetTimeUs);
             offset += 8;
 
-            // target_group (uint8)
+            // target_group (uint8) — legacy, ignored by device if target is present
             payload[offset] = group;
             offset += 1;
 
             // gain (float32, little-endian)
             WriteFloat32(payload, offset, gain);
+            offset += 4;
+
+            // target (null-terminated UTF-8, optional)
+            if (targetBytes != null)
+            {
+                Buffer.BlockCopy(targetBytes, 0, payload, offset, targetBytes.Length);
+                offset += targetBytes.Length;
+                payload[offset] = 0;
+            }
 
             return payload;
         }

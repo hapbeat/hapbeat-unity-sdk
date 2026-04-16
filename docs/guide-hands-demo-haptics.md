@@ -52,16 +52,18 @@ Project ウィンドウで右クリック → **Create > Hapbeat > Event Map** �
    - `Select Entered` → `+` → 自分自身(Cube 1) → `HapbeatUnityEventTrigger.Fire`
    - `Select Exited` → `+` → 自分自身(Cube 1) → `HapbeatUnityEventTrigger.Fire`
 
-**Collision Trigger（投擲衝突用）**
+**Collision Trigger（投擲衝突用 — オプション）**
 
 Cube は ThrowOnDetach=true で投げられるため、床やテーブルに当たった衝撃を検出する。
 
-> **注意**: XRI のハンドインタラクションは Trigger Collider を使うため、手→Cube の接触は
-> `TriggerEnter` で検出される。`CollisionEnter` が発火するのは Cube が物理衝突する場面
-> （投げて床に当たる等）のみ。
+> **注意**: XRI のハンドトラッキングには物理コライダーがない。
+> 手の Poke/Grab は `XRPokeInteractor` によるジオメトリテストで検出され、
+> `OnTriggerEnter` / `OnCollisionEnter` は**発火しない**。
 >
-> 手で触れた時の触覚は上記の UnityEvent Trigger (Select Entered) で対応済み。
-> ここで追加する Collision Trigger は **投擲後の衝突フィードバック専用**。
+> 手のインタラクションによる触覚は UnityEvent Trigger + XRI イベント
+> (`selectEntered`, `hoverEntered`) で対応する。
+>
+> この Collision Trigger は **投げた Cube が床やテーブルに物理衝突した時専用**。
 > 不要であればスキップ可。
 
 1. Add Component → **Hapbeat > Hapbeat Collision Trigger**

@@ -129,19 +129,22 @@ namespace Hapbeat
         /// </summary>
         /// <param name="eventId">Event identifier.</param>
         /// <param name="gain">Gain multiplier (0.0 to 1.0+). Default is 1.0.</param>
-        /// <param name="group">Target group ID. -1 = use config default, 0 = all devices.</param>
+        /// <param name="group">Target group ID. -1 = use config default, 0 = all devices. Ignored when target is set.</param>
         /// <param name="displayName">Optional display name for logging (e.g. "Grab"). Not sent to devices.</param>
-        public void Play(string eventId, float gain = 1.0f, int group = -1, string displayName = null)
+        /// <param name="target">Path-based target filter (e.g. "player_1/pos_neck"). Empty = broadcast.</param>
+        public void Play(string eventId, float gain = 1.0f, int group = -1,
+            string displayName = null, string target = null)
         {
             if (!EnsureConnected())
                 return;
 
             byte g = ResolveGroup(group);
-            long targetTimeUs = 0; // 0 means play immediately
-            _client.SendPlay(eventId, targetTimeUs, g, gain);
+            long targetTimeUs = 0;
+            _client.SendPlay(eventId, targetTimeUs, g, gain, target);
 
             string label = string.IsNullOrEmpty(displayName) ? eventId : $"{displayName} ({eventId})";
-            Log($"\u25b6 Play \"{label}\" gain={gain:F1} group={g}");
+            string targetInfo = string.IsNullOrEmpty(target) ? $"group={g}" : $"target={target}";
+            Log($"\u25b6 Play \"{label}\" gain={gain:F1} {targetInfo}");
         }
 
         /// <summary>

@@ -47,7 +47,10 @@ namespace Hapbeat.Editor
                     EditorGUI.BeginDisabledGroup(true);
                     EditorGUILayout.TextField("Event ID", entry.eventId);
                     EditorGUILayout.FloatField("Gain", entry.gain);
-                    EditorGUILayout.IntField("Group", entry.group);
+                    if (entry.HasTarget)
+                        EditorGUILayout.TextField("Target", entry.target);
+                    else
+                        EditorGUILayout.IntField("Group", entry.group);
                     EditorGUI.EndDisabledGroup();
                     EditorGUI.indentLevel--;
                 }

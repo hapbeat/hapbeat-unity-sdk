@@ -145,9 +145,10 @@ namespace Hapbeat
         /// <summary>
         /// Send a PLAY command.
         /// </summary>
-        public void SendPlay(string eventId, long targetTimeUs, byte group, float gain)
+        public void SendPlay(string eventId, long targetTimeUs, byte group, float gain,
+            string target = null)
         {
-            byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, group, gain);
+            byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, group, gain, target);
             SendPacket(HapbeatProtocol.CMD_PLAY, payload);
         }
 
