@@ -75,35 +75,21 @@ namespace Hapbeat.Editor
             // Keyboard navigation
             HandleKeyboard();
 
-            // Responsive: 2-column if wide enough, 1-column if narrow
-            bool twoColumn = position.width > 500;
+            EditorGUILayout.BeginHorizontal();
 
-            if (twoColumn)
-            {
-                EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.BeginVertical(GUILayout.Width(position.width * 0.42f));
+            _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
+            DrawEntryTable();
+            EditorGUILayout.EndScrollView();
+            EditorGUILayout.EndVertical();
 
-                EditorGUILayout.BeginVertical(GUILayout.Width(position.width * 0.42f));
-                _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
-                DrawEntryTable();
-                EditorGUILayout.EndScrollView();
-                EditorGUILayout.EndVertical();
+            EditorGUILayout.BeginVertical();
+            _detailScrollPos = EditorGUILayout.BeginScrollView(_detailScrollPos);
+            DrawSelectedEntryDetail();
+            EditorGUILayout.EndScrollView();
+            EditorGUILayout.EndVertical();
 
-                EditorGUILayout.BeginVertical();
-                _detailScrollPos = EditorGUILayout.BeginScrollView(_detailScrollPos);
-                DrawSelectedEntryDetail();
-                EditorGUILayout.EndScrollView();
-                EditorGUILayout.EndVertical();
-
-                EditorGUILayout.EndHorizontal();
-            }
-            else
-            {
-                _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
-                DrawEntryTable();
-                EditorGUILayout.Space(8);
-                DrawSelectedEntryDetail();
-                EditorGUILayout.EndScrollView();
-            }
+            EditorGUILayout.EndHorizontal();
         }
 
         private void HandleKeyboard()
@@ -181,14 +167,15 @@ namespace Hapbeat.Editor
             EditorGUILayout.EndHorizontal();
         }
 
-        // Selection highlight colors
         private static readonly Color SelectedBg = new Color(0.24f, 0.48f, 0.90f, 0.6f);
         private static readonly Color SelectedText = Color.white;
-        private static readonly Color NoTriggerBg = new Color(1f, 0.9f, 0.7f, 0.15f);
 
         private void DrawEntryTable()
         {
             if (_selectedMap == null) return;
+
+            // Measure available width to decide 1-line vs 2-line cards
+            float listWidth = position.width * 0.42f;
 
             for (int i = 0; i < _selectedMap.entries.Count; i++)
             {
@@ -196,39 +183,19 @@ namespace Hapbeat.Editor
                 bool hasTriggers = _triggersByEntry.ContainsKey(i) && _triggersByEntry[i].Count > 0;
                 bool isSelected = _selectedEntryIndex == i;
 
-                // Draw card background with highlight
                 var cardRect = EditorGUILayout.BeginVertical();
 
-                // Manual background fill for clearer selection
-                if (Event.current.type == EventType.Repaint)
+                // Selection highlight
+                if (Event.current.type == EventType.Repaint && isSelected)
                 {
                     var bgRect = cardRect;
-                    bgRect.height += 2;
-                    if (isSelected)
-                        EditorGUI.DrawRect(bgRect, SelectedBg);
-                    else if (!hasTriggers)
-                        EditorGUI.DrawRect(bgRect, NoTriggerBg);
+                    bgRect.height += 1;
+                    EditorGUI.DrawRect(bgRect, SelectedBg);
                 }
 
-                GUILayout.Space(2);
-
-                // Row 1: index + name + trigger badge
-                var nameStyle = new GUIStyle(EditorStyles.label);
-                if (isSelected) { nameStyle.fontStyle = FontStyle.Bold; nameStyle.normal.textColor = SelectedText; }
+                // Build info string
                 string name = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName : "(new)";
-
-                EditorGUILayout.BeginHorizontal();
-                GUILayout.Label($"[{i}] {name}", nameStyle);
-                if (hasTriggers)
-                {
-                    var badgeStyle = new GUIStyle(EditorStyles.miniLabel);
-                    if (isSelected) badgeStyle.normal.textColor = SelectedText;
-                    GUILayout.Label($"{_triggersByEntry[i].Count}\u25cf", badgeStyle, GUILayout.Width(22));
-                }
-                EditorGUILayout.EndHorizontal();
-
-                // Row 2: eventId + target
-                string eid = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "\u2014";
+                string eid = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "";
                 ParseTarget(entry.target, out _, out int pl, out string pos);
                 string tgt = "";
                 if (pl >= 1) tgt += $"P{pl}";
@@ -237,28 +204,60 @@ namespace Hapbeat.Editor
                     if (tgt.Length > 0) tgt += "/";
                     tgt += pos.Replace("pos_", "");
                 }
-                if (string.IsNullOrEmpty(tgt)) tgt = "all";
+                string info = !string.IsNullOrEmpty(eid) ? eid : "";
+                if (!string.IsNullOrEmpty(tgt)) info += $" \u2192 {tgt}";
 
-                var infoStyle = new GUIStyle(EditorStyles.miniLabel);
-                if (isSelected) infoStyle.normal.textColor = new Color(0.85f, 0.92f, 1f);
-                GUILayout.Label($"  {eid}  \u2192 {tgt}", infoStyle);
-
-                GUILayout.Space(2);
-                EditorGUILayout.EndVertical();
-
-                // Click anywhere on card to select
-                if (Event.current.type == EventType.MouseDown && cardRect.Contains(Event.current.mousePosition))
+                // Styles
+                var nameStyle = new GUIStyle(EditorStyles.label);
+                var infoStyle = new GUIStyle(EditorStyles.miniLabel) { normal = { textColor = Color.gray } };
+                if (isSelected)
                 {
-                    if (Event.current.button == 0) // left click
-                    {
-                        _selectedEntryIndex = i;
-                        Event.current.Use();
-                        Repaint();
-                    }
+                    nameStyle.fontStyle = FontStyle.Bold;
+                    nameStyle.normal.textColor = SelectedText;
+                    infoStyle.normal.textColor = new Color(0.85f, 0.92f, 1f);
                 }
 
-                // Right-click context menu
-                if (Event.current.type == EventType.ContextClick && cardRect.Contains(Event.current.mousePosition))
+                GUILayout.Space(1);
+
+                // Wide enough → single line: [0] Name | info
+                if (listWidth > 260 && !string.IsNullOrEmpty(info))
+                {
+                    EditorGUILayout.BeginHorizontal();
+                    GUILayout.Label($"[{i}] {name}", nameStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label(info, infoStyle);
+                    if (hasTriggers)
+                        GUILayout.Label($"{_triggersByEntry[i].Count}\u25cf", infoStyle, GUILayout.Width(20));
+                    EditorGUILayout.EndHorizontal();
+                }
+                else
+                {
+                    // Narrow → two lines
+                    EditorGUILayout.BeginHorizontal();
+                    GUILayout.Label($"[{i}] {name}", nameStyle);
+                    if (hasTriggers)
+                        GUILayout.Label($"{_triggersByEntry[i].Count}\u25cf", infoStyle, GUILayout.Width(20));
+                    EditorGUILayout.EndHorizontal();
+                    if (!string.IsNullOrEmpty(info))
+                        GUILayout.Label($"  {info}", infoStyle);
+                }
+
+                GUILayout.Space(1);
+                EditorGUILayout.EndVertical();
+
+                // Click anywhere to select
+                if (Event.current.type == EventType.MouseDown
+                    && Event.current.button == 0
+                    && cardRect.Contains(Event.current.mousePosition))
+                {
+                    _selectedEntryIndex = i;
+                    Event.current.Use();
+                    Repaint();
+                }
+
+                // Right-click
+                if (Event.current.type == EventType.ContextClick
+                    && cardRect.Contains(Event.current.mousePosition))
                 {
                     _selectedEntryIndex = i;
                     var ctx = new GenericMenu();
@@ -273,9 +272,7 @@ namespace Hapbeat.Editor
             }
 
             if (_selectedMap.entries.Count == 0)
-            {
                 EditorGUILayout.LabelField("(empty \u2014 click + to add)", EditorStyles.centeredGreyMiniLabel);
-            }
         }
 
         private void InsertEntry(int index)
