@@ -30,6 +30,7 @@ namespace Hapbeat.Editor
             public HapbeatTriggerBase trigger;
             public string gameObjectName;
             public string typeName;
+            public List<string> wiredEvents; // e.g. "XRGrabInteractable.selectEntered"
         }
 
         [MenuItem("Hapbeat/Event Map")]
@@ -498,19 +499,30 @@ namespace Hapbeat.Editor
                 string.IsNullOrEmpty(builtTarget) ? "(broadcast \u2014 all devices)" : builtTarget);
             EditorGUI.EndDisabledGroup();
 
-            // Triggers in scene
+            // Wiring in scene
             if (_triggersByEntry.ContainsKey(_selectedEntryIndex))
             {
                 EditorGUILayout.Space(4);
-                EditorGUILayout.LabelField("Triggers in Scene:", EditorStyles.miniBoldLabel);
+                EditorGUILayout.LabelField("Wiring:", EditorStyles.miniBoldLabel);
                 foreach (var info in _triggersByEntry[_selectedEntryIndex])
                 {
+                    // Object name (clickable)
                     EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField($"  {info.typeName}", GUILayout.Width(70));
-                    if (GUILayout.Button(info.gameObjectName, EditorStyles.linkLabel))
+                    if (GUILayout.Button(info.gameObjectName, EditorStyles.linkLabel, GUILayout.Width(100)))
                     {
                         Selection.activeGameObject = info.trigger.gameObject;
                         EditorGUIUtility.PingObject(info.trigger.gameObject);
+                    }
+
+                    // Wired events
+                    if (info.wiredEvents != null && info.wiredEvents.Count > 0)
+                    {
+                        string events = string.Join(", ", info.wiredEvents);
+                        EditorGUILayout.LabelField(events, EditorStyles.miniLabel);
+                    }
+                    else
+                    {
+                        EditorGUILayout.LabelField("(manual)", EditorStyles.miniLabel);
                     }
                     EditorGUILayout.EndHorizontal();
                 }
@@ -608,7 +620,8 @@ namespace Hapbeat.Editor
                 {
                     trigger = trigger,
                     gameObjectName = trigger.gameObject.name,
-                    typeName = GetTriggerTypeName(trigger)
+                    typeName = GetTriggerTypeName(trigger),
+                    wiredEvents = FindWiredEvents(trigger)
                 };
 
                 int idx = trigger.EntryIndex;
@@ -625,6 +638,64 @@ namespace Hapbeat.Editor
             }
 
             Repaint();
+        }
+
+        /// <summary>
+        /// Find which UnityEvent fields on sibling components reference this trigger.
+        /// Returns list like ["XRGrabInteractable.selectEntered", "Button.onClick"]
+        /// </summary>
+        private List<string> FindWiredEvents(HapbeatTriggerBase trigger)
+        {
+            var result = new List<string>();
+            var go = trigger.gameObject;
+
+            foreach (var comp in go.GetComponents<Component>())
+            {
+                if (comp == null || comp is HapbeatTriggerBase || comp is HapbeatEvent || comp is HapbeatAudioBridge)
+                    continue;
+
+                string compName = comp.GetType().Name;
+                var so = new SerializedObject(comp);
+                var iter = so.GetIterator();
+
+                while (iter.NextVisible(true))
+                {
+                    if (iter.propertyType != SerializedPropertyType.Generic || iter.depth > 2)
+                        continue;
+
+                    // Check for persistent calls
+                    SerializedProperty callsProp = null;
+                    var directCalls = iter.FindPropertyRelative("m_PersistentCalls.m_Calls");
+                    if (directCalls != null)
+                        callsProp = directCalls;
+                    else
+                    {
+                        var inner = iter.FindPropertyRelative("m_Event");
+                        if (inner != null)
+                            callsProp = inner.FindPropertyRelative("m_PersistentCalls.m_Calls");
+                    }
+
+                    if (callsProp == null || !callsProp.isArray) continue;
+
+                    for (int c = 0; c < callsProp.arraySize; c++)
+                    {
+                        var call = callsProp.GetArrayElementAtIndex(c);
+                        var targetRef = call.FindPropertyRelative("m_Target");
+                        if (targetRef != null && targetRef.objectReferenceValue == trigger)
+                        {
+                            string method = call.FindPropertyRelative("m_MethodName")?.stringValue ?? "?";
+                            string fieldName = iter.name;
+                            if (fieldName.StartsWith("m_"))
+                                fieldName = fieldName.Substring(2);
+                            if (fieldName.Length > 0)
+                                fieldName = char.ToLower(fieldName[0]) + fieldName.Substring(1);
+                            result.Add($"{compName}.{fieldName} \u2192 {method}");
+                        }
+                    }
+                }
+            }
+
+            return result;
         }
 
         private string GetTriggerTypeName(HapbeatTriggerBase trigger)
