@@ -174,76 +174,78 @@ namespace Hapbeat.Editor
         {
             if (_selectedMap == null) return;
 
-            // Measure available width to decide 1-line vs 2-line cards
-            float listWidth = position.width * 0.42f;
-
             for (int i = 0; i < _selectedMap.entries.Count; i++)
             {
                 var entry = _selectedMap.entries[i];
                 bool hasTriggers = _triggersByEntry.ContainsKey(i) && _triggersByEntry[i].Count > 0;
                 bool isSelected = _selectedEntryIndex == i;
 
-                var cardRect = EditorGUILayout.BeginVertical();
+                // Single-line card using manual Rect layout for clipping control
+                float rowHeight = EditorGUIUtility.singleLineHeight + 4;
+                var cardRect = GUILayoutUtility.GetRect(0, rowHeight, GUILayout.ExpandWidth(true));
 
                 // Selection highlight
-                if (Event.current.type == EventType.Repaint && isSelected)
+                if (Event.current.type == EventType.Repaint)
                 {
-                    var bgRect = cardRect;
-                    bgRect.height += 1;
-                    EditorGUI.DrawRect(bgRect, SelectedBg);
+                    if (isSelected)
+                        EditorGUI.DrawRect(cardRect, SelectedBg);
+
+                    // Build text parts
+                    string name = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName : "(new)";
+                    string prefix = $"[{i}] {name}";
+
+                    // Right-side info (priority: target > eventId)
+                    ParseTarget(entry.target, out _, out int pl, out string pos);
+                    string tgt = "";
+                    if (pl >= 1) tgt += $"P{pl}";
+                    if (!string.IsNullOrEmpty(pos))
+                    {
+                        if (tgt.Length > 0) tgt += "/";
+                        tgt += pos.Replace("pos_", "");
+                    }
+                    string eid = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "";
+                    string suffix = "";
+                    if (!string.IsNullOrEmpty(tgt)) suffix = tgt;
+                    if (!string.IsNullOrEmpty(eid))
+                        suffix = !string.IsNullOrEmpty(suffix) ? $"{eid} \u2192 {suffix}" : eid;
+                    if (hasTriggers) suffix += $" {_triggersByEntry[i].Count}\u25cf";
+
+                    // Styles
+                    var leftStyle = new GUIStyle(EditorStyles.label)
+                    {
+                        fontStyle = isSelected ? FontStyle.Bold : FontStyle.Normal,
+                        clipping = TextClipping.Clip
+                    };
+                    var rightStyle = new GUIStyle(EditorStyles.miniLabel)
+                    {
+                        alignment = TextAnchor.MiddleRight,
+                        clipping = TextClipping.Clip
+                    };
+                    if (isSelected)
+                    {
+                        leftStyle.normal.textColor = SelectedText;
+                        rightStyle.normal.textColor = new Color(0.85f, 0.92f, 1f);
+                    }
+                    else
+                    {
+                        rightStyle.normal.textColor = Color.gray;
+                    }
+
+                    // Measure suffix width, allocate rest to prefix
+                    float suffixWidth = rightStyle.CalcSize(new GUIContent(suffix)).x + 4;
+                    float availWidth = cardRect.width - 4;
+                    // Suffix gets priority (right-aligned, never clipped if possible)
+                    float rightW = Mathf.Min(suffixWidth, availWidth * 0.6f);
+                    float leftW = availWidth - rightW;
+
+                    var leftRect = new Rect(cardRect.x + 2, cardRect.y, leftW, cardRect.height);
+                    var rightRect = new Rect(cardRect.xMax - rightW - 2, cardRect.y, rightW, cardRect.height);
+
+                    GUI.Label(leftRect, prefix, leftStyle);
+                    GUI.Label(rightRect, suffix, rightStyle);
                 }
 
-                // Build info string
-                string name = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName : "(new)";
-                string eid = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "";
-                ParseTarget(entry.target, out _, out int pl, out string pos);
-                string tgt = "";
-                if (pl >= 1) tgt += $"P{pl}";
-                if (!string.IsNullOrEmpty(pos))
-                {
-                    if (tgt.Length > 0) tgt += "/";
-                    tgt += pos.Replace("pos_", "");
-                }
-                string info = !string.IsNullOrEmpty(eid) ? eid : "";
-                if (!string.IsNullOrEmpty(tgt)) info += $" \u2192 {tgt}";
-
-                // Styles
-                var nameStyle = new GUIStyle(EditorStyles.label);
-                var infoStyle = new GUIStyle(EditorStyles.miniLabel) { normal = { textColor = Color.gray } };
-                if (isSelected)
-                {
-                    nameStyle.fontStyle = FontStyle.Bold;
-                    nameStyle.normal.textColor = SelectedText;
-                    infoStyle.normal.textColor = new Color(0.85f, 0.92f, 1f);
-                }
-
-                GUILayout.Space(1);
-
-                // Wide enough → single line: [0] Name | info
-                if (listWidth > 260 && !string.IsNullOrEmpty(info))
-                {
-                    EditorGUILayout.BeginHorizontal();
-                    GUILayout.Label($"[{i}] {name}", nameStyle);
-                    GUILayout.FlexibleSpace();
-                    GUILayout.Label(info, infoStyle);
-                    if (hasTriggers)
-                        GUILayout.Label($"{_triggersByEntry[i].Count}\u25cf", infoStyle, GUILayout.Width(20));
-                    EditorGUILayout.EndHorizontal();
-                }
-                else
-                {
-                    // Narrow → two lines
-                    EditorGUILayout.BeginHorizontal();
-                    GUILayout.Label($"[{i}] {name}", nameStyle);
-                    if (hasTriggers)
-                        GUILayout.Label($"{_triggersByEntry[i].Count}\u25cf", infoStyle, GUILayout.Width(20));
-                    EditorGUILayout.EndHorizontal();
-                    if (!string.IsNullOrEmpty(info))
-                        GUILayout.Label($"  {info}", infoStyle);
-                }
-
-                GUILayout.Space(1);
-                EditorGUILayout.EndVertical();
+                EditorGUILayout.GetControlID(FocusType.Passive); // reserve control for events
 
                 // Click anywhere to select
                 if (Event.current.type == EventType.MouseDown
