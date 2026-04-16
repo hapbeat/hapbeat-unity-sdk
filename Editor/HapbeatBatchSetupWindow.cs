@@ -34,6 +34,27 @@ namespace Hapbeat.Editor
         private Vector2 _targetScrollPos;
         private Vector2 _mainScrollPos;
 
+        // --- Clone from reference ---
+        private GameObject _referenceObject;
+        private List<CloneTriggerInfo> _refTriggers = new List<CloneTriggerInfo>();
+
+        private struct CloneTriggerInfo
+        {
+            public System.Type triggerType;
+            public HapbeatEventMap eventMap;
+            public int entryIndex;
+            public float cooldown;
+            public string displayName; // for UI
+            public List<WireInfo> wires;
+        }
+
+        private struct WireInfo
+        {
+            public string componentType; // fully qualified
+            public string fieldPath;
+            public string methodName;
+        }
+
         // --- Scanned events ---
         private List<DetectedEventGroup> _detectedEvents = new List<DetectedEventGroup>();
         private Vector2 _eventScrollPos;
@@ -69,15 +90,22 @@ namespace Hapbeat.Editor
 
             DrawTargetSection();
             EditorGUILayout.Space(6);
-            DrawTriggerTypeSection();
-            EditorGUILayout.Space(6);
-            DrawTriggerSettings();
+            DrawCloneSection();
             EditorGUILayout.Space(6);
 
-            if (_triggerType == TriggerType.UnityEventTrigger)
+            // Manual setup (only when not using clone)
+            if (_referenceObject == null)
             {
-                AutoScanIfNeeded();
-                DrawEventWiringSection();
+                DrawTriggerTypeSection();
+                EditorGUILayout.Space(6);
+                DrawTriggerSettings();
+                EditorGUILayout.Space(6);
+
+                if (_triggerType == TriggerType.UnityEventTrigger)
+                {
+                    AutoScanIfNeeded();
+                    DrawEventWiringSection();
+                }
             }
 
             EditorGUILayout.Space(10);
@@ -161,6 +189,115 @@ namespace Hapbeat.Editor
                         _targets.Add(go);
                 evt.Use();
             }
+        }
+
+        // =====================================================================
+        // Clone from Reference
+        // =====================================================================
+
+        private void DrawCloneSection()
+        {
+            EditorGUILayout.LabelField("Clone from Reference", EditorStyles.boldLabel);
+
+            var newRef = (GameObject)EditorGUILayout.ObjectField(
+                new GUIContent("Reference", "Drag an object that already has Hapbeat triggers.\nIts full trigger + wiring setup will be cloned to all targets."),
+                _referenceObject, typeof(GameObject), true);
+
+            if (newRef != _referenceObject)
+            {
+                _referenceObject = newRef;
+                _refTriggers.Clear();
+                if (newRef != null)
+                    ScanReferenceTriggers(newRef);
+            }
+
+            if (_referenceObject != null && _refTriggers.Count > 0)
+            {
+                EditorGUI.indentLevel++;
+                foreach (var rt in _refTriggers)
+                {
+                    string wires = rt.wires.Count > 0
+                        ? string.Join(", ", rt.wires.ConvertAll(w => w.fieldPath.Replace("m_", "").Replace("First", "").Replace("Last", "")))
+                        : "(manual)";
+                    EditorGUILayout.LabelField($"{rt.displayName}  \u2192  {wires}", EditorStyles.miniLabel);
+                }
+                EditorGUI.indentLevel--;
+            }
+            else if (_referenceObject != null)
+            {
+                EditorGUILayout.HelpBox("No Hapbeat triggers found on reference object.", MessageType.Info);
+                _referenceObject = null;
+            }
+            else
+            {
+                EditorGUILayout.LabelField("Set a reference to clone its triggers, or configure manually below.", EditorStyles.miniLabel);
+            }
+        }
+
+        private void ScanReferenceTriggers(GameObject refObj)
+        {
+            _refTriggers.Clear();
+            foreach (var trigger in refObj.GetComponents<HapbeatTriggerBase>())
+            {
+                if (trigger == null || trigger.EventMap == null) continue;
+                var entry = trigger.EventMap.GetEntry(trigger.EntryIndex);
+                string name = entry != null && !string.IsNullOrEmpty(entry.displayName)
+                    ? entry.displayName
+                    : entry != null ? entry.GetSummary() : $"[{trigger.EntryIndex}]";
+
+                var info = new CloneTriggerInfo
+                {
+                    triggerType = trigger.GetType(),
+                    eventMap = trigger.EventMap,
+                    entryIndex = trigger.EntryIndex,
+                    cooldown = 0f, // read via SerializedObject
+                    displayName = name,
+                    wires = new List<WireInfo>()
+                };
+
+                // Read cooldown
+                var so = new SerializedObject(trigger);
+                var cdProp = so.FindProperty("_cooldown");
+                if (cdProp != null) info.cooldown = cdProp.floatValue;
+
+                // Find wired events
+                foreach (var comp in refObj.GetComponents<Component>())
+                {
+                    if (comp == null || comp is HapbeatTriggerBase) continue;
+                    var cso = new SerializedObject(comp);
+                    var iter = cso.GetIterator();
+                    while (iter.NextVisible(true))
+                    {
+                        if (iter.propertyType != SerializedPropertyType.Generic || iter.depth > 2) continue;
+                        var calls = FindCalls(iter);
+                        if (calls == null) continue;
+                        for (int c = 0; c < calls.arraySize; c++)
+                        {
+                            var call = calls.GetArrayElementAtIndex(c);
+                            if (call.FindPropertyRelative("m_Target").objectReferenceValue == trigger)
+                            {
+                                info.wires.Add(new WireInfo
+                                {
+                                    componentType = comp.GetType().FullName,
+                                    fieldPath = iter.name,
+                                    methodName = call.FindPropertyRelative("m_MethodName").stringValue
+                                });
+                            }
+                        }
+                    }
+                }
+
+                _refTriggers.Add(info);
+            }
+        }
+
+        private SerializedProperty FindCalls(SerializedProperty prop)
+        {
+            var direct = prop.FindPropertyRelative("m_PersistentCalls.m_Calls");
+            if (direct != null) return direct;
+            var inner = prop.FindPropertyRelative("m_Event");
+            if (inner != null) return inner.FindPropertyRelative("m_PersistentCalls.m_Calls");
+            return null;
         }
 
         // =====================================================================
@@ -441,13 +578,24 @@ namespace Hapbeat.Editor
         private void DrawActions()
         {
             var validTargets = _targets.Where(t => t != null).ToList();
-            bool canApply = validTargets.Count > 0 && _eventMap != null && _eventMap.entries.Count > 0;
+            bool isCloneMode = _referenceObject != null && _refTriggers.Count > 0;
+            bool canApply = validTargets.Count > 0
+                && (isCloneMode || (_eventMap != null && _eventMap.entries.Count > 0));
+
+            var origColor = GUI.backgroundColor;
 
             EditorGUI.BeginDisabledGroup(!canApply);
-            var origColor = GUI.backgroundColor;
             GUI.backgroundColor = new Color(0.4f, 0.8f, 0.4f);
-            if (GUILayout.Button($"Apply ({validTargets.Count} objects)", GUILayout.Height(26)))
-                ApplyBatch(validTargets);
+            string applyLabel = isCloneMode
+                ? $"Clone to {validTargets.Count} objects"
+                : $"Apply ({validTargets.Count} objects)";
+            if (GUILayout.Button(applyLabel, GUILayout.Height(26)))
+            {
+                if (isCloneMode)
+                    CloneApply(validTargets);
+                else
+                    ApplyBatch(validTargets);
+            }
             GUI.backgroundColor = origColor;
             EditorGUI.EndDisabledGroup();
 
@@ -461,13 +609,59 @@ namespace Hapbeat.Editor
             EditorGUI.EndDisabledGroup();
 
             EditorGUILayout.LabelField(
-                "Apply: \u540c\u3058\u7a2e\u5225+Entry \u306f\u4e0a\u66f8\u304d\u3002\u7570\u306a\u308b Entry \u306a\u3089\u8ffd\u52a0\u3002  Cleanup: Hapbeat \u5168\u9664\u53bb\u3002",
+                isCloneMode ? "Clone: reference object \u306e\u5168\u30c8\u30ea\u30ac\u30fc + \u914d\u7dda\u3092\u8907\u88fd\u3002  Cleanup: Hapbeat \u5168\u9664\u53bb\u3002"
+                            : "Apply: \u540c\u3058\u7a2e\u5225+Entry \u306f\u4e0a\u66f8\u304d\u3002  Cleanup: Hapbeat \u5168\u9664\u53bb\u3002",
                 EditorStyles.miniLabel);
         }
 
         // =====================================================================
         // Apply
         // =====================================================================
+
+        private void CloneApply(List<GameObject> targets)
+        {
+            Undo.SetCurrentGroupName("Hapbeat Clone");
+            int undoGroup = Undo.GetCurrentGroup();
+            int added = 0, wired = 0;
+
+            foreach (var go in targets)
+            {
+                foreach (var rt in _refTriggers)
+                {
+                    // Add trigger component
+                    HapbeatTriggerBase trigger;
+                    if (rt.triggerType == typeof(HapbeatCollisionTrigger))
+                        trigger = Undo.AddComponent<HapbeatCollisionTrigger>(go);
+                    else
+                        trigger = Undo.AddComponent<HapbeatUnityEventTrigger>(go);
+
+                    // Configure
+                    var so = new SerializedObject(trigger);
+                    so.FindProperty("_eventMap").objectReferenceValue = rt.eventMap;
+                    so.FindProperty("_entryIndex").intValue = rt.entryIndex;
+                    so.FindProperty("_cooldown").floatValue = rt.cooldown;
+                    so.ApplyModifiedProperties();
+                    added++;
+
+                    // Wire events — find matching components on target
+                    foreach (var wire in rt.wires)
+                    {
+                        foreach (var comp in go.GetComponents<Component>())
+                        {
+                            if (comp == null || comp.GetType().FullName != wire.componentType) continue;
+                            var cso = new SerializedObject(comp);
+                            wired += EnsureWired(cso, wire.fieldPath, trigger, wire.methodName);
+                            cso.ApplyModifiedProperties();
+                        }
+                    }
+                }
+            }
+
+            Undo.CollapseUndoOperations(undoGroup);
+            string msg = $"{added} triggers added, {wired} events wired";
+            Debug.Log($"[Hapbeat Clone] {msg}");
+            EditorUtility.DisplayDialog("Hapbeat Clone", msg, "OK");
+        }
 
         private void ApplyBatch(List<GameObject> targets)
         {

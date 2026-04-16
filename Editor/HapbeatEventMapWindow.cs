@@ -499,44 +499,50 @@ namespace Hapbeat.Editor
                 string.IsNullOrEmpty(builtTarget) ? "(broadcast \u2014 all devices)" : builtTarget);
             EditorGUI.EndDisabledGroup();
 
-            // Wiring in scene — one line per connection
+            // Wiring in scene — grouped by GameObject
             if (_triggersByEntry.ContainsKey(_selectedEntryIndex))
             {
                 EditorGUILayout.Space(4);
                 EditorGUILayout.LabelField("Wiring:", EditorStyles.miniBoldLabel);
+
+                // Group triggers by GameObject (skip destroyed)
+                var byObject = new Dictionary<GameObject, List<string>>();
+                bool needRescan = false;
                 foreach (var info in _triggersByEntry[_selectedEntryIndex])
                 {
-                    if (info.wiredEvents != null && info.wiredEvents.Count > 0)
-                    {
-                        foreach (var wire in info.wiredEvents)
-                        {
-                            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
-                            float nameW = 80;
-                            float wireW = rect.width - nameW - 4;
+                    if (info.trigger == null) { needRescan = true; continue; }
+                    var go = info.trigger.gameObject;
+                    if (!byObject.ContainsKey(go))
+                        byObject[go] = new List<string>();
+                    if (info.wiredEvents != null)
+                        byObject[go].AddRange(info.wiredEvents);
+                    if (byObject[go].Count == 0)
+                        byObject[go].Add("(manual)");
+                }
+                if (needRescan) { ScanScene(); return; }
 
-                            // Object name (clickable)
+                float nameW = 80;
+                var sorted = byObject.OrderBy(kv => kv.Key.name).ToList();
+                foreach (var kv in sorted)
+                {
+                    for (int w = 0; w < kv.Value.Count; w++)
+                    {
+                        var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+                        float wireW = rect.width - nameW - 4;
+
+                        // Show object name only on first line
+                        if (w == 0)
+                        {
                             if (GUI.Button(new Rect(rect.x, rect.y, nameW, rect.height),
-                                info.gameObjectName, EditorStyles.linkLabel))
+                                kv.Key.name, EditorStyles.linkLabel))
                             {
-                                Selection.activeGameObject = info.trigger.gameObject;
-                                EditorGUIUtility.PingObject(info.trigger.gameObject);
+                                Selection.activeGameObject = kv.Key;
+                                EditorGUIUtility.PingObject(kv.Key);
                             }
+                        }
 
-                            // Event wiring
-                            GUI.Label(new Rect(rect.x + nameW + 4, rect.y, wireW, rect.height),
-                                wire, EditorStyles.miniLabel);
-                        }
-                    }
-                    else
-                    {
-                        EditorGUILayout.BeginHorizontal();
-                        if (GUILayout.Button(info.gameObjectName, EditorStyles.linkLabel, GUILayout.Width(80)))
-                        {
-                            Selection.activeGameObject = info.trigger.gameObject;
-                            EditorGUIUtility.PingObject(info.trigger.gameObject);
-                        }
-                        EditorGUILayout.LabelField("(manual)", EditorStyles.miniLabel);
-                        EditorGUILayout.EndHorizontal();
+                        GUI.Label(new Rect(rect.x + nameW + 4, rect.y, wireW, rect.height),
+                            kv.Value[w], EditorStyles.miniLabel);
                     }
                 }
             }
@@ -627,6 +633,7 @@ namespace Hapbeat.Editor
             var allTriggers = FindObjectsByType<HapbeatTriggerBase>(FindObjectsSortMode.None);
             foreach (var trigger in allTriggers)
             {
+                if (trigger == null) continue;
                 if (trigger.EventMap != _selectedMap) continue;
 
                 var info = new TriggerInfo
