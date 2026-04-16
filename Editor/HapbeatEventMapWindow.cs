@@ -232,29 +232,39 @@ namespace Hapbeat.Editor
                         rightStyle.normal.textColor = normalDim;
                     }
 
-                    // Measure fixed-width segments
+                    // Layout: [name (never clip)] [eventId (clip first)] [target (hide if no room)]
                     float pad = 4;
                     float nameW = nameStyle.CalcSize(new GUIContent(nameText)).x + pad;
                     float tgtW = !string.IsNullOrEmpty(tgt) ? rightStyle.CalcSize(new GUIContent(tgt)).x + pad : 0;
                     float totalW = cardRect.width - 4;
+                    float remaining = totalW - nameW;
 
-                    // Layout: [name] ... [eventId clipped] [target]
-                    // Name takes what it needs, target takes what it needs, eventId gets the rest
-                    float eidW = Mathf.Max(0, totalW - nameW - tgtW);
-
+                    // Name always drawn
                     var nameRect = new Rect(cardRect.x + 2, cardRect.y, nameW, cardRect.height);
                     GUI.Label(nameRect, nameText, nameStyle);
 
-                    if (eidW > 20 && !string.IsNullOrEmpty(eid))
+                    // Only draw extra info if there's room after name
+                    if (remaining > 30)
                     {
-                        var eidRect = new Rect(nameRect.xMax, cardRect.y, eidW, cardRect.height);
-                        GUI.Label(eidRect, eid, dimStyle);
-                    }
-
-                    if (tgtW > 0)
-                    {
-                        var tgtRect = new Rect(cardRect.xMax - tgtW - 2, cardRect.y, tgtW, cardRect.height);
-                        GUI.Label(tgtRect, tgt, rightStyle);
+                        if (remaining >= tgtW + 30 && !string.IsNullOrEmpty(eid))
+                        {
+                            // Room for both: eventId (clipped) + target
+                            float eidW = remaining - tgtW;
+                            var eidRect = new Rect(nameRect.xMax, cardRect.y, eidW, cardRect.height);
+                            GUI.Label(eidRect, eid, dimStyle);
+                            if (tgtW > 0)
+                            {
+                                var tgtRect = new Rect(cardRect.xMax - tgtW - 2, cardRect.y, tgtW, cardRect.height);
+                                GUI.Label(tgtRect, tgt, rightStyle);
+                            }
+                        }
+                        else if (remaining >= tgtW && tgtW > 0)
+                        {
+                            // Room for target only, skip eventId
+                            var tgtRect = new Rect(cardRect.xMax - tgtW - 2, cardRect.y, tgtW, cardRect.height);
+                            GUI.Label(tgtRect, tgt, rightStyle);
+                        }
+                        // else: too narrow, show name only
                     }
                 }
 
