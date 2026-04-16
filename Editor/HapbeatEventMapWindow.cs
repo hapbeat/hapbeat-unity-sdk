@@ -192,7 +192,8 @@ namespace Hapbeat.Editor
 
                     // --- Build 3 segments: name (never clip) | eventId (clip first) | target (high priority) ---
                     string name = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName : "(new)";
-                    string nameText = $"[{i}] {name}";
+                    string modePrefix = entry.GetModePrefix();
+                    string nameText = $"{modePrefix}[{i}] {name}";
 
                     ParseTarget(entry.target, out _, out int pl, out string pos);
                     string tgt = "";
@@ -204,7 +205,7 @@ namespace Hapbeat.Editor
                     }
                     if (hasTriggers) tgt += $" {_triggersByEntry[i].Count}\u25cf";
 
-                    string eid = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "";
+                    string eid = entry.GetSummary();
 
                     // Styles
                     Color normalDim = Color.gray;
@@ -343,44 +344,31 @@ namespace Hapbeat.Editor
                 new GUIContent("Name", "Human-readable label for this event (e.g. Grab, Click)."),
                 nameProp.stringValue);
 
-            // Category + event name — horizontal
-            var categoryProp = entryProp.FindPropertyRelative("category");
-            var eventNameProp = entryProp.FindPropertyRelative("eventName");
+            // Mode
+            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("mode"),
+                new GUIContent("Mode", "Command: send eventId. StreamClip: stream AudioClip. StreamSource: capture AudioSource."));
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel(new GUIContent("Event ID",
-                "Composed from category.name. Sent to devices to identify which clip to play.\n" +
-                "Standard categories: clip, impact, vibration, texture, ambient, ui, custom."));
-            categoryProp.stringValue = DrawPlaceholderFieldInline(categoryProp.stringValue, "clip", 70);
-            if (EditorGUILayout.DropdownButton(GUIContent.none, FocusType.Passive, GUILayout.Width(14)))
-            {
-                var menu = new GenericMenu();
-                foreach (var cat in HapbeatEventEntry.StandardCategories)
-                {
-                    string c = cat;
-                    menu.AddItem(new GUIContent(c), categoryProp.stringValue == c,
-                        () => { categoryProp.stringValue = c; so.ApplyModifiedProperties(); });
-                }
-                menu.ShowAsContext();
-            }
-            EditorGUILayout.LabelField(".", GUILayout.Width(6));
-            eventNameProp.stringValue = DrawPlaceholderFieldInline(eventNameProp.stringValue, "hit");
-            EditorGUILayout.EndHorizontal();
-
-            // eventId preview (read-only)
             var entry = _selectedMap.entries[_selectedEntryIndex];
-            string previewId = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "clip.hit";
-            EditorGUI.BeginDisabledGroup(true);
-            EditorGUILayout.TextField(new GUIContent(" \u2192 eventId"), previewId);
-            EditorGUI.EndDisabledGroup();
 
-            // Validation
-            if (!string.IsNullOrEmpty(categoryProp.stringValue) && !HapbeatEventEntry.IsValidSegment(categoryProp.stringValue))
-                EditorGUILayout.HelpBox($"category: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
-            if (!string.IsNullOrEmpty(eventNameProp.stringValue) && !HapbeatEventEntry.IsValidSegment(eventNameProp.stringValue))
-                EditorGUILayout.HelpBox($"name: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
+            // Mode-specific fields
+            switch (entry.mode)
+            {
+                case HapticMode.Command:
+                    DrawCommandFields(entryProp, so);
+                    break;
+                case HapticMode.StreamClip:
+                    EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
+                        new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16."));
+                    break;
+                case HapticMode.StreamSource:
+                    EditorGUILayout.HelpBox(
+                        "Captures the AudioSource on the trigger's GameObject (or children).\n" +
+                        "A HapbeatAudioBridge is added automatically at runtime.",
+                        MessageType.Info);
+                    break;
+            }
 
-            // Gain
+            // Gain (all modes)
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("gain"),
                 new GUIContent("Gain", "Output gain multiplier. 0.0 = silent, 1.0 = normal, 2.0 = maximum."));
 
@@ -463,6 +451,42 @@ namespace Hapbeat.Editor
             {
                 so.ApplyModifiedProperties();
             }
+        }
+
+        private void DrawCommandFields(SerializedProperty entryProp, SerializedObject so)
+        {
+            var categoryProp = entryProp.FindPropertyRelative("category");
+            var eventNameProp = entryProp.FindPropertyRelative("eventName");
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel(new GUIContent("Event ID",
+                "Composed from category.name. Sent to devices to identify which clip to play."));
+            categoryProp.stringValue = DrawPlaceholderFieldInline(categoryProp.stringValue, "clip", 70);
+            if (EditorGUILayout.DropdownButton(GUIContent.none, FocusType.Passive, GUILayout.Width(14)))
+            {
+                var menu = new GenericMenu();
+                foreach (var cat in HapbeatEventEntry.StandardCategories)
+                {
+                    string c = cat;
+                    menu.AddItem(new GUIContent(c), categoryProp.stringValue == c,
+                        () => { categoryProp.stringValue = c; so.ApplyModifiedProperties(); });
+                }
+                menu.ShowAsContext();
+            }
+            EditorGUILayout.LabelField(".", GUILayout.Width(6));
+            eventNameProp.stringValue = DrawPlaceholderFieldInline(eventNameProp.stringValue, "hit");
+            EditorGUILayout.EndHorizontal();
+
+            var entry = _selectedMap.entries[_selectedEntryIndex];
+            string previewId = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "clip.hit";
+            EditorGUI.BeginDisabledGroup(true);
+            EditorGUILayout.TextField(new GUIContent(" \u2192 eventId"), previewId);
+            EditorGUI.EndDisabledGroup();
+
+            if (!string.IsNullOrEmpty(categoryProp.stringValue) && !HapbeatEventEntry.IsValidSegment(categoryProp.stringValue))
+                EditorGUILayout.HelpBox("category: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
+            if (!string.IsNullOrEmpty(eventNameProp.stringValue) && !HapbeatEventEntry.IsValidSegment(eventNameProp.stringValue))
+                EditorGUILayout.HelpBox("name: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
         }
 
         private void ScanScene()

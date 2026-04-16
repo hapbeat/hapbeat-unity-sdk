@@ -182,9 +182,11 @@ namespace Hapbeat
         /// <summary>
         /// Send a STREAM_BEGIN command to start audio streaming.
         /// </summary>
-        public void SendStreamBegin(ushort sampleRate, byte channels, byte format, uint totalSamples, float gain)
+        public void SendStreamBegin(ushort sampleRate, byte channels, byte format,
+            uint totalSamples, float gain, string target = null)
         {
-            byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(sampleRate, channels, format, totalSamples, gain);
+            byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(
+                sampleRate, channels, format, totalSamples, gain, target);
             SendPacket(HapbeatProtocol.CMD_STREAM_BEGIN, payload);
         }
 

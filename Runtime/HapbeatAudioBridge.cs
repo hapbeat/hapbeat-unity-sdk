@@ -37,11 +37,22 @@ namespace Hapbeat
         /// <summary>現在ストリーミング中かどうか。</summary>
         public bool IsStreaming { get; private set; }
 
+        [Tooltip("Target filter for device addressing. Empty = broadcast to all.")]
+        [SerializeField]
+        private string _target = "";
+
         /// <summary>Gain を動的に変更可能。</summary>
         public float Gain
         {
             get => _gain;
             set => _gain = Mathf.Clamp(value, 0f, 2f);
+        }
+
+        /// <summary>Target filter for device addressing. Set before StartStreaming().</summary>
+        public string Target
+        {
+            get => _target;
+            set => _target = value ?? "";
         }
 
         private HapbeatClient _client;
@@ -172,7 +183,8 @@ namespace Hapbeat
                         (byte)_channels,
                         HapbeatProtocol.AUDIO_FORMAT_PCM16,
                         0, // total_samples unknown (continuous)
-                        _gain);
+                        _gain,
+                        string.IsNullOrEmpty(_target) ? null : _target);
                     _streamStarted = true;
                 }
 

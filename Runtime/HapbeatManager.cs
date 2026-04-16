@@ -326,7 +326,7 @@ namespace Hapbeat
         /// </summary>
         /// <param name="clip">AudioClip to stream (will be read as PCM16).</param>
         /// <param name="gain">Gain multiplier for playback on device (0.0 - 2.0).</param>
-        public void StreamAudioClip(AudioClip clip, float gain = 1.0f)
+        public void StreamAudioClip(AudioClip clip, float gain = 1.0f, string target = null)
         {
             if (!EnsureConnected()) return;
             if (clip == null)
@@ -336,8 +336,9 @@ namespace Hapbeat
             }
             if (_streamCoroutine != null)
                 StopStream();
-            Debug.Log($"[Hapbeat] StreamAudioClip: {clip.name}, freq={clip.frequency}, ch={clip.channels}, samples={clip.samples}, gain={gain}");
-            _streamCoroutine = StartCoroutine(StreamAudioClipCoroutine(clip, gain));
+            string targetInfo = string.IsNullOrEmpty(target) ? "broadcast" : $"target={target}";
+            Log($"\u266a StreamClip: {clip.name}, freq={clip.frequency}, ch={clip.channels}, gain={gain}, {targetInfo}");
+            _streamCoroutine = StartCoroutine(StreamAudioClipCoroutine(clip, gain, target));
         }
 
         /// <summary>
@@ -362,7 +363,7 @@ namespace Hapbeat
 
         private Coroutine _streamCoroutine;
 
-        private IEnumerator StreamAudioClipCoroutine(AudioClip clip, float gain)
+        private IEnumerator StreamAudioClipCoroutine(AudioClip clip, float gain, string target = null)
         {
             // Extract PCM data from AudioClip
             float[] samples = new float[clip.samples * clip.channels];
@@ -382,7 +383,7 @@ namespace Hapbeat
             uint totalSamples = (uint)clip.samples;
 
             // Send STREAM_BEGIN
-            _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16, totalSamples, gain);
+            _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16, totalSamples, gain, target);
             Log($"Stream begin: {sampleRate}Hz, {channels}ch, {totalSamples} samples, gain={gain}");
 
             // Send STREAM_DATA in chunks

@@ -227,20 +227,29 @@ namespace Hapbeat
         /// <summary>
         /// Build payload for STREAM_BEGIN command.
         /// </summary>
-        public static byte[] BuildStreamBeginPayload(ushort sampleRate, byte channels, byte format, uint totalSamples, float gain)
+        public static byte[] BuildStreamBeginPayload(ushort sampleRate, byte channels, byte format,
+            uint totalSamples, float gain, string target = null)
         {
-            byte[] payload = new byte[10]; // 2+1+1+4+2 ... wait, let me match the spec: u16+u8+u8+u32+f32 = 10
-            // Actually: sample_rate(2) + channels(1) + format(1) + total_samples(4) + gain(4) = 12?
-            // Let me check the spec: no gain field in STREAM_BEGIN per contracts. But firmware parses gain.
-            // firmware udp_receiver.cpp reads: sample_rate(u16), channels(u8), format(u8), total_samples(u32), gain(f32)
-            // That's 2+1+1+4+4 = 12 bytes
-            payload = new byte[12];
+            // Base: sample_rate(2) + channels(1) + format(1) + total_samples(4) + gain(4) = 12
+            byte[] targetBytes = string.IsNullOrEmpty(target) ? null : Encoding.UTF8.GetBytes(target);
+            int size = 12 + (targetBytes != null ? targetBytes.Length + 1 : 0);
+            byte[] payload = new byte[size];
+
             int offset = 0;
             WriteUInt16(payload, offset, sampleRate); offset += 2;
             payload[offset] = channels; offset += 1;
             payload[offset] = format; offset += 1;
             WriteUInt32(payload, offset, totalSamples); offset += 4;
-            WriteFloat32(payload, offset, gain);
+            WriteFloat32(payload, offset, gain); offset += 4;
+
+            // Optional: target (null-terminated UTF-8)
+            if (targetBytes != null)
+            {
+                Buffer.BlockCopy(targetBytes, 0, payload, offset, targetBytes.Length);
+                offset += targetBytes.Length;
+                payload[offset] = 0;
+            }
+
             return payload;
         }
 

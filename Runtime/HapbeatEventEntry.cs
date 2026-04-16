@@ -5,8 +5,21 @@ using UnityEngine;
 namespace Hapbeat
 {
     /// <summary>
+    /// Haptic event mode. Determines how the trigger fires.
+    /// </summary>
+    public enum HapticMode
+    {
+        /// <summary>Send eventId command. Device resolves clip locally from installed Pack.</summary>
+        Command,
+        /// <summary>Stream an AudioClip over UDP as PCM16. No Pack needed on device.</summary>
+        StreamClip,
+        /// <summary>Capture AudioSource output and stream over UDP. For real-time/spatial audio.</summary>
+        StreamSource
+    }
+
+    /// <summary>
     /// A single haptic event definition within a HapbeatEventMap.
-    /// Centralizes event ID, gain, target, and group so all triggers reference one source of truth.
+    /// Supports three modes: Command (eventId), StreamClip (AudioClip), and StreamSource (AudioSource).
     /// </summary>
     [Serializable]
     public class HapbeatEventEntry : ISerializationCallbackReceiver
@@ -31,7 +44,15 @@ namespace Hapbeat
             "Hip", "Left Thigh", "Right Thigh", "Left Ankle", "Right Ankle"
         };
 
-        // ---- Event ID ----
+        // ---- Mode ----
+
+        [Tooltip("How this event triggers haptic feedback.\n" +
+                 "Command: send eventId, device plays local clip.\n" +
+                 "StreamClip: stream AudioClip over UDP.\n" +
+                 "StreamSource: capture AudioSource output and stream.")]
+        public HapticMode mode = HapticMode.Command;
+
+        // ---- Event ID (Command mode) ----
 
         [Tooltip("Human-readable label for this event (e.g. \"Landing Impact\").")]
         public string displayName = "";
@@ -41,6 +62,11 @@ namespace Hapbeat
 
         [Tooltip("Event name within the category (e.g. hit, click, grab).")]
         public string eventName = "";
+
+        // ---- StreamClip mode ----
+
+        [Tooltip("AudioClip to stream over UDP (StreamClip mode only).")]
+        public AudioClip streamClip;
 
         // ---- Gain ----
 
@@ -70,6 +96,7 @@ namespace Hapbeat
 
         /// <summary>
         /// Computed event ID in category.name format (contracts-compliant).
+        /// Only meaningful in Command mode.
         /// </summary>
         public string eventId
         {
@@ -81,14 +108,10 @@ namespace Hapbeat
             }
         }
 
-        /// <summary>
-        /// Whether this entry uses the new path-based target (vs legacy group).
-        /// </summary>
+        /// <summary>Whether this entry uses path-based target (vs legacy group).</summary>
         public bool HasTarget => !string.IsNullOrEmpty(target);
 
-        /// <summary>
-        /// Build a target string from player number and position.
-        /// </summary>
+        /// <summary>Build a target string from player number and position.</summary>
         public static string BuildTarget(int player = -1, string position = null)
         {
             string playerPart = player > 0 ? $"player_{player}" : null;
@@ -101,6 +124,31 @@ namespace Hapbeat
             if (posPart != null)
                 return $"*/{posPart}";
             return "";
+        }
+
+        /// <summary>Short description for display in lists.</summary>
+        public string GetSummary()
+        {
+            switch (mode)
+            {
+                case HapticMode.StreamClip:
+                    return streamClip != null ? streamClip.name : "(no clip)";
+                case HapticMode.StreamSource:
+                    return "AudioSource";
+                default:
+                    return eventId;
+            }
+        }
+
+        /// <summary>Mode prefix for list display.</summary>
+        public string GetModePrefix()
+        {
+            switch (mode)
+            {
+                case HapticMode.StreamClip: return "\u266a ";
+                case HapticMode.StreamSource: return "~ ";
+                default: return "";
+            }
         }
 
         public static bool IsValidSegment(string segment)
