@@ -705,7 +705,7 @@ namespace Hapbeat.Editor
                                 fieldName = fieldName.Substring(5);
                             if (fieldName.Length > 0)
                                 fieldName = char.ToLower(fieldName[0]) + fieldName.Substring(1);
-                            result.Add($"{fieldName} \u2192 {method}");
+                            result.Add($"{compName}.{fieldName} \u2192 {method}");
                         }
                     }
                 }
