@@ -320,16 +320,20 @@ Package Manager > Hapbeat SDK > Samples からインポートできます。
 | サンプル | 内容 | 前提 |
 |---|---|---|
 | Basic Example | キーボード操作（Space/S/X/P）で基本 API を確認 | なし |
-| Player Demo | VR で3種のフィードバック（能動・受動・操作系）を体験 | XR Interaction Toolkit 3.x |
+| Player Demo | Hub + Zone A-D の5シーンで VR フィードバックを体験 | XR Interaction Toolkit 3.x |
 | Creator Tutorial | 既存 VR ゲームに Hapbeat を組み込むステップバイステップガイド | XR Interaction Toolkit 3.x |
+
+Player Demo は `PlayerDemoHub.unity` と `PlayerDemoZoneA`〜`PlayerDemoZoneD` の5シーン構成です。Basic Example 以外の `.unity` は開発中のため、SceneBuilder で生成してから調整します。
 
 ### VR クイックスタート
 
 1. Unity Hub で VR テンプレートからプロジェクトを作成
 2. Hapbeat SDK をインポート（Package Manager > Add from disk）
 3. Samples > Player Demo をインポート
-4. `PlayerDemo.unity` を開いて Play
-5. Hapbeat デバイスを同じネットワークに接続
+4. `Hapbeat > Build Samples > 2a. Player Demo - All Scenes` で5シーンを生成
+5. Build Settings に Hub + Zone A-D を登録
+6. `PlayerDemoHub.unity` を開いて Play
+7. Hapbeat デバイスを同じネットワークに接続
 
 ### 開発者向け
 

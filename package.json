@@ -13,7 +13,7 @@
     },
     {
       "displayName": "Player Demo",
-      "description": "VR で Hapbeat の3種のフィードバック（能動・受動・操作系）を体験するデモ",
+      "description": "VR で Hapbeat のフィードバックを体験する5シーン構成デモ（Hub + Zone A-D）",
       "path": "Samples~/PlayerDemo"
     },
     {
