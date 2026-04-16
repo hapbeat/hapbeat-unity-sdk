@@ -15,6 +15,7 @@ namespace Hapbeat.Editor
     {
         private HapbeatEventMap _selectedMap;
         private Vector2 _scrollPosition;
+        private Vector2 _detailScrollPos;
         private int _selectedEntryIndex = -1;
 
         // Cached scene scan results
@@ -71,11 +72,24 @@ namespace Hapbeat.Editor
                 return;
             }
 
+            // Two-column layout: entry list (left) + detail (right)
+            EditorGUILayout.BeginHorizontal();
+
+            // Left panel: entry list
+            EditorGUILayout.BeginVertical(GUILayout.Width(position.width * 0.45f));
             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
             DrawEntryTable();
-            EditorGUILayout.Space(10);
+            EditorGUILayout.EndScrollView();
+            EditorGUILayout.EndVertical();
+
+            // Right panel: detail editor
+            EditorGUILayout.BeginVertical();
+            _detailScrollPos = EditorGUILayout.BeginScrollView(_detailScrollPos);
             DrawSelectedEntryDetail();
             EditorGUILayout.EndScrollView();
+            EditorGUILayout.EndVertical();
+
+            EditorGUILayout.EndHorizontal();
         }
 
         private void DrawToolbar()
@@ -104,7 +118,7 @@ namespace Hapbeat.Editor
                 ScanScene();
             }
 
-            if (_selectedMap != null && GUILayout.Button("+ Entry", EditorStyles.toolbarButton, GUILayout.Width(60)))
+            if (_selectedMap != null && GUILayout.Button("+", EditorStyles.toolbarButton, GUILayout.Width(24)))
             {
                 Undo.RecordObject(_selectedMap, "Add Hapbeat Event Entry");
                 _selectedMap.entries.Add(new HapbeatEventEntry
@@ -113,8 +127,22 @@ namespace Hapbeat.Editor
                     category = "",
                     eventName = ""
                 });
+                _selectedEntryIndex = _selectedMap.entries.Count - 1;
                 EditorUtility.SetDirty(_selectedMap);
             }
+
+            bool canDelete = _selectedMap != null && _selectedEntryIndex >= 0
+                && _selectedEntryIndex < _selectedMap.entries.Count;
+            EditorGUI.BeginDisabledGroup(!canDelete);
+            if (GUILayout.Button("\u2212", EditorStyles.toolbarButton, GUILayout.Width(24)))
+            {
+                Undo.RecordObject(_selectedMap, "Remove Hapbeat Event Entry");
+                _selectedMap.entries.RemoveAt(_selectedEntryIndex);
+                _selectedEntryIndex = Mathf.Min(_selectedEntryIndex, _selectedMap.entries.Count - 1);
+                EditorUtility.SetDirty(_selectedMap);
+                ScanScene();
+            }
+            EditorGUI.EndDisabledGroup();
 
             EditorGUILayout.EndHorizontal();
         }
@@ -123,77 +151,46 @@ namespace Hapbeat.Editor
         {
             if (_selectedMap == null) return;
 
-            // Header
-            EditorGUILayout.BeginHorizontal("box");
-            GUILayout.Label("Name", EditorStyles.boldLabel, GUILayout.Width(120));
-            GUILayout.Label("Event ID", EditorStyles.boldLabel, GUILayout.Width(140));
-            GUILayout.Label("Gain", EditorStyles.boldLabel, GUILayout.Width(50));
-            GUILayout.Label("Group", EditorStyles.boldLabel, GUILayout.Width(50));
-            GUILayout.Label("Type", EditorStyles.boldLabel, GUILayout.Width(80));
-            GUILayout.Label("Attached To", EditorStyles.boldLabel);
-            EditorGUILayout.EndHorizontal();
-
-            // Rows
             for (int i = 0; i < _selectedMap.entries.Count; i++)
             {
                 var entry = _selectedMap.entries[i];
                 bool hasTriggers = _triggersByEntry.ContainsKey(i) && _triggersByEntry[i].Count > 0;
                 bool isSelected = _selectedEntryIndex == i;
 
-                // Row color
                 var bgColor = GUI.backgroundColor;
                 if (isSelected)
                     GUI.backgroundColor = new Color(0.3f, 0.5f, 0.8f, 0.5f);
                 else if (!hasTriggers)
-                    GUI.backgroundColor = new Color(1f, 0.9f, 0.7f, 0.3f);
+                    GUI.backgroundColor = new Color(1f, 0.9f, 0.7f, 0.15f);
 
                 EditorGUILayout.BeginHorizontal("box");
                 GUI.backgroundColor = bgColor;
 
-                // Name
-                string displayName = string.IsNullOrEmpty(entry.displayName) ? "(unnamed)" : entry.displayName;
-                if (GUILayout.Button(displayName, EditorStyles.label, GUILayout.Width(120)))
+                // Compact: index + name (or eventId fallback)
+                string label = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName
+                    : !string.IsNullOrEmpty(entry.eventId) ? entry.eventId
+                    : "(new)";
+
+                if (GUILayout.Button($"[{i}] {label}", isSelected ? EditorStyles.boldLabel : EditorStyles.label))
                     _selectedEntryIndex = i;
 
-                // Event ID
-                GUILayout.Label(entry.eventId, GUILayout.Width(140));
-
-                // Gain
-                GUILayout.Label(entry.gain.ToString("F1"), GUILayout.Width(50));
-
-                // Group
-                string groupStr = entry.group < 0 ? "def" : entry.group.ToString();
-                GUILayout.Label(groupStr, GUILayout.Width(50));
-
-                // Type + Attached To
+                // Trigger count badge
                 if (hasTriggers)
                 {
                     var triggers = _triggersByEntry[i];
-                    string typeName = triggers[0].typeName;
-                    GUILayout.Label(typeName, GUILayout.Width(80));
-
-                    // Summarize attached GameObjects
-                    var goNames = triggers.Select(t => t.gameObjectName).Distinct().ToList();
-                    string summary = goNames.Count <= 2
-                        ? string.Join(", ", goNames)
-                        : $"{goNames[0]} +{goNames.Count - 1}";
-                    summary += $" ({triggers.Count})";
-
-                    if (GUILayout.Button(summary, EditorStyles.linkLabel))
+                    if (GUILayout.Button($"{triggers.Count}\u25cf", EditorStyles.miniLabel, GUILayout.Width(24)))
                     {
-                        // Select first trigger's GameObject in Hierarchy
                         Selection.activeGameObject = triggers[0].trigger.gameObject;
                         EditorGUIUtility.PingObject(triggers[0].trigger.gameObject);
                     }
                 }
-                else
-                {
-                    GUILayout.Label("—", GUILayout.Width(80));
-                    var warnStyle = new GUIStyle(EditorStyles.label) { normal = { textColor = Color.yellow } };
-                    GUILayout.Label("no triggers", warnStyle);
-                }
 
                 EditorGUILayout.EndHorizontal();
+            }
+
+            if (_selectedMap.entries.Count == 0)
+            {
+                EditorGUILayout.LabelField("(empty \u2014 click + to add)", EditorStyles.centeredGreyMiniLabel);
             }
         }
 
