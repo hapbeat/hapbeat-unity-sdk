@@ -196,12 +196,16 @@ namespace Hapbeat.Editor
                     string nameText = $"{modePrefix}[{i}] {name}";
 
                     ParseTarget(entry.target, out _, out int pl, out string pos);
-                    string tgt = "";
-                    if (pl >= 1) tgt += $"P{pl}";
-                    if (!string.IsNullOrEmpty(pos))
+                    string tgt = "all";
+                    if (pl >= 1 || !string.IsNullOrEmpty(pos))
                     {
-                        if (tgt.Length > 0) tgt += "/";
-                        tgt += pos.Replace("pos_", "");
+                        tgt = "";
+                        if (pl >= 1) tgt += $"P{pl}";
+                        if (!string.IsNullOrEmpty(pos))
+                        {
+                            if (tgt.Length > 0) tgt += "/";
+                            tgt += pos.Replace("pos_", "");
+                        }
                     }
                     if (hasTriggers) tgt += $" {_triggersByEntry[i].Count}\u25cf";
 

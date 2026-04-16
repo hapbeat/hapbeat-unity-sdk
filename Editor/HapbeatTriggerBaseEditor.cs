@@ -21,15 +21,44 @@ namespace Hapbeat.Editor
             _entryIndexProp = serializedObject.FindProperty("_entryIndex");
         }
 
+        // Banner style: bold white on colored background
+        private static GUIStyle _bannerStyle;
+        private static GUIStyle BannerStyle => _bannerStyle ??= new GUIStyle(EditorStyles.boldLabel)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontSize = 12,
+            normal = { textColor = Color.white },
+            padding = new RectOffset(4, 4, 2, 2)
+        };
+        private static readonly Color BannerColor = new Color(0.25f, 0.5f, 0.85f, 0.9f);
+
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
+
+            // --- Entry name banner ---
+            var eventMap = _eventMapProp.objectReferenceValue as HapbeatEventMap;
+            if (eventMap != null && eventMap.entries.Count > 0)
+            {
+                int idx = Mathf.Clamp(_entryIndexProp.intValue, 0, eventMap.entries.Count - 1);
+                var entry = eventMap.GetEntry(idx);
+                if (entry != null)
+                {
+                    string bannerText = !string.IsNullOrEmpty(entry.displayName)
+                        ? $"[{entry.displayName}]  {entry.GetModePrefix()}{entry.GetSummary()}"
+                        : $"[{idx}]  {entry.GetModePrefix()}{entry.GetSummary()}";
+
+                    var rect = EditorGUILayout.GetControlRect(false, 20);
+                    EditorGUI.DrawRect(rect, BannerColor);
+                    GUI.Label(rect, bannerText, BannerStyle);
+                    EditorGUILayout.Space(2);
+                }
+            }
 
             // Draw the event map field
             EditorGUILayout.PropertyField(_eventMapProp);
 
             // Draw entry index as dropdown
-            var eventMap = _eventMapProp.objectReferenceValue as HapbeatEventMap;
             if (eventMap != null && eventMap.entries.Count > 0)
             {
                 string[] names = eventMap.GetDisplayNames();
@@ -45,12 +74,13 @@ namespace Hapbeat.Editor
                 {
                     EditorGUI.indentLevel++;
                     EditorGUI.BeginDisabledGroup(true);
-                    EditorGUILayout.TextField("Event ID", entry.eventId);
+                    if (entry.mode == HapticMode.Command)
+                        EditorGUILayout.TextField("Event ID", entry.eventId);
+                    else
+                        EditorGUILayout.TextField("Mode", entry.mode.ToString());
                     EditorGUILayout.FloatField("Gain", entry.gain);
                     if (entry.HasTarget)
                         EditorGUILayout.TextField("Target", entry.target);
-                    else
-                        EditorGUILayout.IntField("Group", entry.group);
                     EditorGUI.EndDisabledGroup();
                     EditorGUI.indentLevel--;
                 }
