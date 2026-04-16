@@ -256,43 +256,46 @@ namespace Hapbeat.Editor
             // Gain
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("gain"), new GUIContent("Gain"));
 
-            // Target (device addressing)
+            // Target (device addressing) — prefix / player / position fields
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Targeting", EditorStyles.miniBoldLabel);
             var targetProp = entryProp.FindPropertyRelative("target");
 
+            // Parse current target into parts
+            ParseTarget(targetProp.stringValue, out string curPrefix, out int curPlayer, out string curPos);
+
+            // Prefix (optional, for large setups)
+            string newPrefix = DrawPlaceholderField("Prefix", curPrefix, "(optional, e.g. team_red)");
+
+            // Player + Position on one line
             EditorGUILayout.BeginHorizontal();
-            targetProp.stringValue = EditorGUILayout.TextField("Target", targetProp.stringValue);
-            if (EditorGUILayout.DropdownButton(new GUIContent("\u25bc"), FocusType.Passive, GUILayout.Width(22)))
+            EditorGUILayout.PrefixLabel("Player / Pos");
+            int newPlayer = EditorGUILayout.IntField(curPlayer, GUILayout.Width(40));
+
+            // Position dropdown: (none) + 12 positions
+            var posOptions = new List<string> { "(none)" };
+            var posValues = new List<string> { "" };
+            for (int p = 0; p < HapbeatEventEntry.StandardPositions.Length; p++)
             {
-                var menu = new GenericMenu();
-                menu.AddItem(new GUIContent("(broadcast \u2014 all devices)"), string.IsNullOrEmpty(targetProp.stringValue),
-                    () => { targetProp.stringValue = ""; so.ApplyModifiedProperties(); });
-                menu.AddSeparator("");
-                for (int p = 0; p < HapbeatEventEntry.StandardPositions.Length; p++)
-                {
-                    string pos = HapbeatEventEntry.StandardPositions[p];
-                    string label = HapbeatEventEntry.PositionLabels[p];
-                    menu.AddItem(new GUIContent($"Position/{label} (*/{pos})"),
-                        targetProp.stringValue == $"*/{pos}",
-                        () => { targetProp.stringValue = $"*/{pos}"; so.ApplyModifiedProperties(); });
-                }
-                for (int n = 1; n <= 4; n++)
-                {
-                    int pn = n;
-                    menu.AddItem(new GUIContent($"Player/player_{pn}"),
-                        targetProp.stringValue == $"player_{pn}",
-                        () => { targetProp.stringValue = $"player_{pn}"; so.ApplyModifiedProperties(); });
-                }
-                menu.ShowAsContext();
+                posOptions.Add($"{HapbeatEventEntry.PositionLabels[p]} ({HapbeatEventEntry.StandardPositions[p]})");
+                posValues.Add(HapbeatEventEntry.StandardPositions[p]);
             }
+            int posIdx = posValues.IndexOf(curPos);
+            if (posIdx < 0) posIdx = 0;
+            int newPosIdx = EditorGUILayout.Popup(posIdx, posOptions.ToArray());
+            string newPos = posValues[newPosIdx];
             EditorGUILayout.EndHorizontal();
 
-            if (string.IsNullOrEmpty(targetProp.stringValue))
-            {
-                // Show legacy group only when target is empty
-                EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("group"), new GUIContent("Group (legacy)"));
-            }
+            // Build target from parts
+            string builtTarget = BuildTargetFromParts(newPrefix, newPlayer, newPos);
+            if (builtTarget != targetProp.stringValue)
+                targetProp.stringValue = builtTarget;
+
+            // Preview
+            EditorGUI.BeginDisabledGroup(true);
+            EditorGUILayout.TextField("  \u2192 target",
+                string.IsNullOrEmpty(builtTarget) ? "(broadcast \u2014 all devices)" : builtTarget);
+            EditorGUI.EndDisabledGroup();
 
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"), new GUIContent("Notes"));
             if (EditorGUI.EndChangeCheck())
@@ -418,9 +421,60 @@ namespace Hapbeat.Editor
 
         private static bool IsFieldFocused()
         {
-            // Check if the text field we just drew has keyboard focus
             return GUIUtility.keyboardControl != 0
                 && EditorGUIUtility.editingTextField;
+        }
+
+        // --- Target address helpers ---
+
+        /// <summary>
+        /// Parse a target string back into prefix, player, position parts.
+        /// Handles: "", "player_1", "*/pos_neck", "player_1/pos_neck", "red/player_1/pos_neck"
+        /// </summary>
+        private static void ParseTarget(string target, out string prefix, out int player, out string position)
+        {
+            prefix = "";
+            player = -1;
+            position = "";
+
+            if (string.IsNullOrEmpty(target)) return;
+
+            var parts = target.Split('/');
+            var prefixParts = new List<string>();
+
+            foreach (var part in parts)
+            {
+                if (part.StartsWith("player_") && int.TryParse(part.Substring(7), out int p))
+                    player = p;
+                else if (part.StartsWith("pos_"))
+                    position = part;
+                else if (part != "*")
+                    prefixParts.Add(part);
+            }
+
+            prefix = string.Join("/", prefixParts);
+        }
+
+        /// <summary>
+        /// Build a target string from separate parts (matching manager's _build_address format).
+        /// player=-1 → wildcard or omit. position="" → omit.
+        /// </summary>
+        private static string BuildTargetFromParts(string prefix, int player, string position)
+        {
+            var parts = new List<string>();
+
+            if (!string.IsNullOrEmpty(prefix))
+                parts.Add(prefix.Trim());
+
+            if (player >= 1)
+                parts.Add($"player_{player}");
+            else if (!string.IsNullOrEmpty(position))
+                parts.Add("*"); // wildcard player when only position is set
+
+            if (!string.IsNullOrEmpty(position))
+                parts.Add(position);
+
+            return string.Join("/", parts);
         }
     }
 }
