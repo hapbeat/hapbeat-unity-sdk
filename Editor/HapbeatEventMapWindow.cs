@@ -499,32 +499,45 @@ namespace Hapbeat.Editor
                 string.IsNullOrEmpty(builtTarget) ? "(broadcast \u2014 all devices)" : builtTarget);
             EditorGUI.EndDisabledGroup();
 
-            // Wiring in scene
+            // Wiring in scene — one line per connection
             if (_triggersByEntry.ContainsKey(_selectedEntryIndex))
             {
                 EditorGUILayout.Space(4);
                 EditorGUILayout.LabelField("Wiring:", EditorStyles.miniBoldLabel);
                 foreach (var info in _triggersByEntry[_selectedEntryIndex])
                 {
-                    // Object name (clickable)
-                    EditorGUILayout.BeginHorizontal();
-                    if (GUILayout.Button(info.gameObjectName, EditorStyles.linkLabel, GUILayout.Width(100)))
-                    {
-                        Selection.activeGameObject = info.trigger.gameObject;
-                        EditorGUIUtility.PingObject(info.trigger.gameObject);
-                    }
-
-                    // Wired events
                     if (info.wiredEvents != null && info.wiredEvents.Count > 0)
                     {
-                        string events = string.Join(", ", info.wiredEvents);
-                        EditorGUILayout.LabelField(events, EditorStyles.miniLabel);
+                        foreach (var wire in info.wiredEvents)
+                        {
+                            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+                            float nameW = 80;
+                            float wireW = rect.width - nameW - 4;
+
+                            // Object name (clickable)
+                            if (GUI.Button(new Rect(rect.x, rect.y, nameW, rect.height),
+                                info.gameObjectName, EditorStyles.linkLabel))
+                            {
+                                Selection.activeGameObject = info.trigger.gameObject;
+                                EditorGUIUtility.PingObject(info.trigger.gameObject);
+                            }
+
+                            // Event wiring
+                            GUI.Label(new Rect(rect.x + nameW + 4, rect.y, wireW, rect.height),
+                                wire, EditorStyles.miniLabel);
+                        }
                     }
                     else
                     {
+                        EditorGUILayout.BeginHorizontal();
+                        if (GUILayout.Button(info.gameObjectName, EditorStyles.linkLabel, GUILayout.Width(80)))
+                        {
+                            Selection.activeGameObject = info.trigger.gameObject;
+                            EditorGUIUtility.PingObject(info.trigger.gameObject);
+                        }
                         EditorGUILayout.LabelField("(manual)", EditorStyles.miniLabel);
+                        EditorGUILayout.EndHorizontal();
                     }
-                    EditorGUILayout.EndHorizontal();
                 }
             }
 
@@ -684,12 +697,15 @@ namespace Hapbeat.Editor
                         if (targetRef != null && targetRef.objectReferenceValue == trigger)
                         {
                             string method = call.FindPropertyRelative("m_MethodName")?.stringValue ?? "?";
+                            // Clean field name: m_SelectEntered → selectEntered
                             string fieldName = iter.name;
                             if (fieldName.StartsWith("m_"))
                                 fieldName = fieldName.Substring(2);
+                            if (fieldName.StartsWith("First") || fieldName.StartsWith("Last"))
+                                fieldName = fieldName.Substring(5);
                             if (fieldName.Length > 0)
                                 fieldName = char.ToLower(fieldName[0]) + fieldName.Substring(1);
-                            result.Add($"{compName}.{fieldName} \u2192 {method}");
+                            result.Add($"{fieldName} \u2192 {method}");
                         }
                     }
                 }
