@@ -163,18 +163,14 @@ namespace Hapbeat.Editor
                 else if (!hasTriggers)
                     GUI.backgroundColor = new Color(1f, 0.9f, 0.7f, 0.15f);
 
-                EditorGUILayout.BeginHorizontal("box");
+                var rowRect = EditorGUILayout.BeginVertical("box");
                 GUI.backgroundColor = bgColor;
 
-                // Compact: index + name (or eventId fallback)
-                string label = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName
-                    : !string.IsNullOrEmpty(entry.eventId) ? entry.eventId
-                    : "(new)";
-
-                if (GUILayout.Button($"[{i}] {label}", isSelected ? EditorStyles.boldLabel : EditorStyles.label))
+                // Row 1: index + name
+                string name = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName : "(new)";
+                EditorGUILayout.BeginHorizontal();
+                if (GUILayout.Button($"[{i}] {name}", isSelected ? EditorStyles.boldLabel : EditorStyles.label))
                     _selectedEntryIndex = i;
-
-                // Trigger count badge
                 if (hasTriggers)
                 {
                     var triggers = _triggersByEntry[i];
@@ -184,14 +180,68 @@ namespace Hapbeat.Editor
                         EditorGUIUtility.PingObject(triggers[0].trigger.gameObject);
                     }
                 }
-
                 EditorGUILayout.EndHorizontal();
+
+                // Row 2: eventId + target summary (mini text)
+                string eid = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "\u2014";
+                ParseTarget(entry.target, out _, out int pl, out string pos);
+                string targetSummary = "";
+                if (pl >= 1) targetSummary += $"P{pl}";
+                if (!string.IsNullOrEmpty(pos))
+                {
+                    if (targetSummary.Length > 0) targetSummary += "/";
+                    targetSummary += pos.Replace("pos_", "");
+                }
+                if (string.IsNullOrEmpty(targetSummary)) targetSummary = "all";
+                EditorGUILayout.LabelField($"  {eid}  \u2192 {targetSummary}", EditorStyles.miniLabel);
+
+                EditorGUILayout.EndVertical();
+
+                // Right-click context menu
+                if (Event.current.type == EventType.ContextClick && rowRect.Contains(Event.current.mousePosition))
+                {
+                    _selectedEntryIndex = i;
+                    var ctx = new GenericMenu();
+                    int idx = i;
+                    ctx.AddItem(new GUIContent("Add Entry Above"), false, () => InsertEntry(idx));
+                    ctx.AddItem(new GUIContent("Add Entry Below"), false, () => InsertEntry(idx + 1));
+                    ctx.AddSeparator("");
+                    ctx.AddItem(new GUIContent("Delete Entry"), false, () => DeleteEntry(idx));
+                    ctx.ShowAsContext();
+                    Event.current.Use();
+                }
             }
 
             if (_selectedMap.entries.Count == 0)
             {
                 EditorGUILayout.LabelField("(empty \u2014 click + to add)", EditorStyles.centeredGreyMiniLabel);
             }
+
+            // Right-click on empty area
+            if (_selectedMap.entries.Count == 0 || Event.current.type == EventType.ContextClick)
+            {
+                // Only handle if not already handled above
+            }
+        }
+
+        private void InsertEntry(int index)
+        {
+            if (_selectedMap == null) return;
+            Undo.RecordObject(_selectedMap, "Insert Hapbeat Event Entry");
+            index = Mathf.Clamp(index, 0, _selectedMap.entries.Count);
+            _selectedMap.entries.Insert(index, new HapbeatEventEntry());
+            _selectedEntryIndex = index;
+            EditorUtility.SetDirty(_selectedMap);
+        }
+
+        private void DeleteEntry(int index)
+        {
+            if (_selectedMap == null || index < 0 || index >= _selectedMap.entries.Count) return;
+            Undo.RecordObject(_selectedMap, "Remove Hapbeat Event Entry");
+            _selectedMap.entries.RemoveAt(index);
+            _selectedEntryIndex = Mathf.Min(_selectedEntryIndex, _selectedMap.entries.Count - 1);
+            EditorUtility.SetDirty(_selectedMap);
+            ScanScene();
         }
 
         private void DrawSelectedEntryDetail()
@@ -205,22 +255,28 @@ namespace Hapbeat.Editor
             var entriesProp = so.FindProperty("entries");
             var entryProp = entriesProp.GetArrayElementAtIndex(_selectedEntryIndex);
 
+            // Use consistent label width for alignment
+            float prevLabelWidth = EditorGUIUtility.labelWidth;
+            EditorGUIUtility.labelWidth = 70;
+
             EditorGUI.BeginChangeCheck();
 
             // Name
             var nameProp = entryProp.FindPropertyRelative("displayName");
-            nameProp.stringValue = DrawPlaceholderField("Name", nameProp.stringValue, "e.g. Grab");
+            nameProp.stringValue = EditorGUILayout.TextField(
+                new GUIContent("Name", "Human-readable label for this event (e.g. Grab, Click)."),
+                nameProp.stringValue);
 
-            // Category + event name on one line — both editable text with dropdown assist
+            // Category + event name — horizontal
             var categoryProp = entryProp.FindPropertyRelative("category");
             var eventNameProp = entryProp.FindPropertyRelative("eventName");
 
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel("Event ID");
-
-            // Category: editable text + dropdown button
-            categoryProp.stringValue = DrawPlaceholderFieldInline(categoryProp.stringValue, "clip", 80);
-            if (EditorGUILayout.DropdownButton(GUIContent.none, FocusType.Passive, GUILayout.Width(16)))
+            EditorGUILayout.PrefixLabel(new GUIContent("Event ID",
+                "Composed from category.name. Sent to devices to identify which clip to play.\n" +
+                "Standard categories: clip, impact, vibration, texture, ambient, ui, custom."));
+            categoryProp.stringValue = DrawPlaceholderFieldInline(categoryProp.stringValue, "clip", 70);
+            if (EditorGUILayout.DropdownButton(GUIContent.none, FocusType.Passive, GUILayout.Width(14)))
             {
                 var menu = new GenericMenu();
                 foreach (var cat in HapbeatEventEntry.StandardCategories)
@@ -231,70 +287,83 @@ namespace Hapbeat.Editor
                 }
                 menu.ShowAsContext();
             }
-
-            EditorGUILayout.LabelField(".", GUILayout.Width(8));
+            EditorGUILayout.LabelField(".", GUILayout.Width(6));
             eventNameProp.stringValue = DrawPlaceholderFieldInline(eventNameProp.stringValue, "hit");
             EditorGUILayout.EndHorizontal();
 
-            // eventId preview
+            // eventId preview (read-only)
             var entry = _selectedMap.entries[_selectedEntryIndex];
-            string previewId = entry.eventId;
-            if (string.IsNullOrEmpty(previewId)) previewId = "clip.hit";
+            string previewId = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "clip.hit";
             EditorGUI.BeginDisabledGroup(true);
-            EditorGUILayout.TextField("  \u2192 eventId", previewId);
+            EditorGUILayout.TextField(new GUIContent(" \u2192 eventId"), previewId);
             EditorGUI.EndDisabledGroup();
 
             // Validation
             if (!string.IsNullOrEmpty(categoryProp.stringValue) && !HapbeatEventEntry.IsValidSegment(categoryProp.stringValue))
-                EditorGUILayout.HelpBox($"category \"{categoryProp.stringValue}\": lowercase a-z, 0-9, -, _ only", MessageType.Warning);
+                EditorGUILayout.HelpBox($"category: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
             if (!string.IsNullOrEmpty(eventNameProp.stringValue) && !HapbeatEventEntry.IsValidSegment(eventNameProp.stringValue))
-                EditorGUILayout.HelpBox($"name \"{eventNameProp.stringValue}\": lowercase a-z, 0-9, -, _ only", MessageType.Warning);
+                EditorGUILayout.HelpBox($"name: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
 
             // Gain
-            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("gain"), new GUIContent("Gain"));
+            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("gain"),
+                new GUIContent("Gain", "Output gain multiplier. 0.0 = silent, 1.0 = normal, 2.0 = maximum."));
 
-            // Target (device addressing) — prefix / player / position fields
+            // --- Targeting ---
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Targeting", EditorStyles.miniBoldLabel);
             var targetProp = entryProp.FindPropertyRelative("target");
-
-            // Parse current target into parts
             ParseTarget(targetProp.stringValue, out string curPrefix, out int curPlayer, out string curPos);
 
-            // Prefix (optional, for large setups)
-            string newPrefix = DrawPlaceholderField("Prefix", curPrefix, "(optional, e.g. team_red)");
+            // Prefix
+            string newPrefix = EditorGUILayout.TextField(
+                new GUIContent("Prefix",
+                    "Optional team/group prefix for large multi-team setups.\n" +
+                    "Example: team_red, booth_a.\n" +
+                    "Leave empty for most projects."),
+                curPrefix);
 
-            // Player + Position on one line
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel("Player / Pos");
-            int newPlayer = EditorGUILayout.IntField(curPlayer, GUILayout.Width(40));
+            // Player
+            int newPlayer = EditorGUILayout.IntField(
+                new GUIContent("Player",
+                    "Player number (1-99). Set -1 to target all players.\n" +
+                    "For broadcast to all devices, set Player = -1 and Position = (none)."),
+                curPlayer);
 
-            // Position dropdown: (none) + 12 positions
-            var posOptions = new List<string> { "(none)" };
-            var posValues = new List<string> { "" };
+            // Position
+            var posOptions = new string[HapbeatEventEntry.StandardPositions.Length + 1];
+            var posValues = new string[posOptions.Length];
+            posOptions[0] = "(none \u2014 all positions)";
+            posValues[0] = "";
             for (int p = 0; p < HapbeatEventEntry.StandardPositions.Length; p++)
             {
-                posOptions.Add($"{HapbeatEventEntry.PositionLabels[p]} ({HapbeatEventEntry.StandardPositions[p]})");
-                posValues.Add(HapbeatEventEntry.StandardPositions[p]);
+                posOptions[p + 1] = $"{HapbeatEventEntry.PositionLabels[p]}";
+                posValues[p + 1] = HapbeatEventEntry.StandardPositions[p];
             }
-            int posIdx = posValues.IndexOf(curPos);
+            int posIdx = System.Array.IndexOf(posValues, curPos);
             if (posIdx < 0) posIdx = 0;
-            int newPosIdx = EditorGUILayout.Popup(posIdx, posOptions.ToArray());
+            int newPosIdx = EditorGUILayout.Popup(
+                new GUIContent("Position",
+                    "Body position of the target device.\n" +
+                    "Select (none) to target all positions for the selected player.\n" +
+                    "For broadcast, set both Player = -1 and Position = (none)."),
+                posIdx, posOptions);
             string newPos = posValues[newPosIdx];
-            EditorGUILayout.EndHorizontal();
 
-            // Build target from parts
+            // Build and preview
             string builtTarget = BuildTargetFromParts(newPrefix, newPlayer, newPos);
             if (builtTarget != targetProp.stringValue)
                 targetProp.stringValue = builtTarget;
 
-            // Preview
             EditorGUI.BeginDisabledGroup(true);
-            EditorGUILayout.TextField("  \u2192 target",
+            EditorGUILayout.TextField(new GUIContent(" \u2192 target"),
                 string.IsNullOrEmpty(builtTarget) ? "(broadcast \u2014 all devices)" : builtTarget);
             EditorGUI.EndDisabledGroup();
 
-            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"), new GUIContent("Notes"));
+            // Notes
+            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"),
+                new GUIContent("Notes", "Designer notes. Not sent to devices."));
+
+            EditorGUIUtility.labelWidth = prevLabelWidth;
             if (EditorGUI.EndChangeCheck())
             {
                 so.ApplyModifiedProperties();
