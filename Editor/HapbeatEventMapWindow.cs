@@ -458,11 +458,27 @@ namespace Hapbeat.Editor
             var categoryProp = entryProp.FindPropertyRelative("category");
             var eventNameProp = entryProp.FindPropertyRelative("eventName");
 
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel(new GUIContent("Event ID",
-                "Composed from category.name. Sent to devices to identify which clip to play."));
-            categoryProp.stringValue = DrawPlaceholderFieldInline(categoryProp.stringValue, "clip", 70);
-            if (EditorGUILayout.DropdownButton(GUIContent.none, FocusType.Passive, GUILayout.Width(14)))
+            // Manual Rect layout for consistent alignment
+            var lineRect = EditorGUILayout.GetControlRect();
+            float labelW = EditorGUIUtility.labelWidth;
+            float dropW = 16;
+            float fieldStart = lineRect.x + labelW + 2;
+            float totalFieldW = lineRect.width - labelW - 2;
+            float catW = totalFieldW * 0.4f - dropW;
+            float nameW = totalFieldW * 0.6f;
+
+            // Label
+            EditorGUI.LabelField(new Rect(lineRect.x, lineRect.y, labelW, lineRect.height),
+                new GUIContent("Event ID", "Composed as category.name. Sent to devices."));
+
+            // Category text field
+            categoryProp.stringValue = DrawPlaceholderRect(
+                new Rect(fieldStart, lineRect.y, catW, lineRect.height),
+                categoryProp.stringValue, "clip");
+
+            // Category dropdown button
+            var dropRect = new Rect(fieldStart + catW, lineRect.y, dropW, lineRect.height);
+            if (EditorGUI.DropdownButton(dropRect, GUIContent.none, FocusType.Passive))
             {
                 var menu = new GenericMenu();
                 foreach (var cat in HapbeatEventEntry.StandardCategories)
@@ -473,10 +489,13 @@ namespace Hapbeat.Editor
                 }
                 menu.ShowAsContext();
             }
-            EditorGUILayout.LabelField(".", GUILayout.Width(6));
-            eventNameProp.stringValue = DrawPlaceholderFieldInline(eventNameProp.stringValue, "hit");
-            EditorGUILayout.EndHorizontal();
 
+            // Event name text field
+            eventNameProp.stringValue = DrawPlaceholderRect(
+                new Rect(fieldStart + catW + dropW + 2, lineRect.y, nameW - 2, lineRect.height),
+                eventNameProp.stringValue, "hit");
+
+            // Preview
             var entry = _selectedMap.entries[_selectedEntryIndex];
             string previewId = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "clip.hit";
             EditorGUI.BeginDisabledGroup(true);
@@ -487,6 +506,15 @@ namespace Hapbeat.Editor
                 EditorGUILayout.HelpBox("category: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
             if (!string.IsNullOrEmpty(eventNameProp.stringValue) && !HapbeatEventEntry.IsValidSegment(eventNameProp.stringValue))
                 EditorGUILayout.HelpBox("name: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
+        }
+
+        /// <summary>Draw a text field with placeholder at a specific Rect.</summary>
+        private static string DrawPlaceholderRect(Rect rect, string value, string placeholder)
+        {
+            string result = EditorGUI.TextField(rect, value);
+            if (string.IsNullOrEmpty(result) && !EditorGUIUtility.editingTextField)
+                EditorGUI.LabelField(rect, placeholder, PhStyle);
+            return result;
         }
 
         private void ScanScene()
