@@ -18,6 +18,9 @@ namespace Hapbeat.Editor
         private Vector2 _detailScrollPos;
         private int _selectedEntryIndex = -1;
 
+        // Clipboard for copy/paste
+        private static HapbeatEventEntry _clipboardEntry;
+
         // Cached scene scan results
         private Dictionary<int, List<TriggerInfo>> _triggersByEntry = new Dictionary<int, List<TriggerInfo>>();
         private List<TriggerInfo> _orphanedTriggers = new List<TriggerInfo>();
@@ -101,12 +104,14 @@ namespace Hapbeat.Editor
             if (e.keyCode == KeyCode.UpArrow)
             {
                 _selectedEntryIndex = Mathf.Max(0, _selectedEntryIndex - 1);
+                GUIUtility.keyboardControl = 0;
                 e.Use();
                 Repaint();
             }
             else if (e.keyCode == KeyCode.DownArrow)
             {
                 _selectedEntryIndex = Mathf.Min(_selectedMap.entries.Count - 1, _selectedEntryIndex + 1);
+                GUIUtility.keyboardControl = 0;
                 e.Use();
                 Repaint();
             }
@@ -275,25 +280,34 @@ namespace Hapbeat.Editor
 
                 GUIUtility.GetControlID(FocusType.Passive, cardRect);
 
-                // Click anywhere to select
+                // Click anywhere to select + defocus text fields
                 if (Event.current.type == EventType.MouseDown
                     && Event.current.button == 0
                     && cardRect.Contains(Event.current.mousePosition))
                 {
                     _selectedEntryIndex = i;
+                    GUIUtility.keyboardControl = 0; // defocus text fields
                     Event.current.Use();
                     Repaint();
                 }
 
-                // Right-click
+                // Right-click context menu
                 if (Event.current.type == EventType.ContextClick
                     && cardRect.Contains(Event.current.mousePosition))
                 {
                     _selectedEntryIndex = i;
                     var ctx = new GenericMenu();
                     int idx = i;
+                    ctx.AddItem(new GUIContent("Copy Entry Values"), false, () => CopyEntry(idx));
+                    bool canPaste = _clipboardEntry != null;
+                    if (canPaste)
+                        ctx.AddItem(new GUIContent("Paste Entry Values"), false, () => PasteEntry(idx));
+                    else
+                        ctx.AddDisabledItem(new GUIContent("Paste Entry Values"));
+                    ctx.AddSeparator("");
                     ctx.AddItem(new GUIContent("Add Entry Above"), false, () => InsertEntry(idx));
                     ctx.AddItem(new GUIContent("Add Entry Below"), false, () => InsertEntry(idx + 1));
+                    ctx.AddItem(new GUIContent("Duplicate Entry"), false, () => DuplicateEntry(idx));
                     ctx.AddSeparator("");
                     ctx.AddItem(new GUIContent("Delete Entry"), false, () => DeleteEntry(idx));
                     ctx.ShowAsContext();
@@ -323,6 +337,63 @@ namespace Hapbeat.Editor
             _selectedEntryIndex = Mathf.Min(_selectedEntryIndex, _selectedMap.entries.Count - 1);
             EditorUtility.SetDirty(_selectedMap);
             ScanScene();
+        }
+
+        private void CopyEntry(int index)
+        {
+            if (_selectedMap == null || index < 0 || index >= _selectedMap.entries.Count) return;
+            var src = _selectedMap.entries[index];
+            _clipboardEntry = new HapbeatEventEntry
+            {
+                mode = src.mode,
+                displayName = src.displayName,
+                category = src.category,
+                eventName = src.eventName,
+                streamClip = src.streamClip,
+                gain = src.gain,
+                target = src.target,
+                group = src.group,
+                notes = src.notes
+            };
+        }
+
+        private void PasteEntry(int index)
+        {
+            if (_selectedMap == null || _clipboardEntry == null) return;
+            if (index < 0 || index >= _selectedMap.entries.Count) return;
+            Undo.RecordObject(_selectedMap, "Paste Hapbeat Event Entry");
+            var dst = _selectedMap.entries[index];
+            dst.mode = _clipboardEntry.mode;
+            dst.category = _clipboardEntry.category;
+            dst.eventName = _clipboardEntry.eventName;
+            dst.streamClip = _clipboardEntry.streamClip;
+            dst.gain = _clipboardEntry.gain;
+            dst.target = _clipboardEntry.target;
+            dst.group = _clipboardEntry.group;
+            // Don't paste displayName or notes — keep the target entry's identity
+            EditorUtility.SetDirty(_selectedMap);
+        }
+
+        private void DuplicateEntry(int index)
+        {
+            if (_selectedMap == null || index < 0 || index >= _selectedMap.entries.Count) return;
+            Undo.RecordObject(_selectedMap, "Duplicate Hapbeat Event Entry");
+            var src = _selectedMap.entries[index];
+            var dup = new HapbeatEventEntry
+            {
+                mode = src.mode,
+                displayName = src.displayName + " (copy)",
+                category = src.category,
+                eventName = src.eventName,
+                streamClip = src.streamClip,
+                gain = src.gain,
+                target = src.target,
+                group = src.group,
+                notes = src.notes
+            };
+            _selectedMap.entries.Insert(index + 1, dup);
+            _selectedEntryIndex = index + 1;
+            EditorUtility.SetDirty(_selectedMap);
         }
 
         private void DrawSelectedEntryDetail()
