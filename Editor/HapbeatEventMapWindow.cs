@@ -190,11 +190,10 @@ namespace Hapbeat.Editor
                     if (isSelected)
                         EditorGUI.DrawRect(cardRect, SelectedBg);
 
-                    // Build text parts
+                    // --- Build 3 segments: name (never clip) | eventId (clip first) | target (high priority) ---
                     string name = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName : "(new)";
-                    string prefix = $"[{i}] {name}";
+                    string nameText = $"[{i}] {name}";
 
-                    // Right-side info (priority: target > eventId)
                     ParseTarget(entry.target, out _, out int pl, out string pos);
                     string tgt = "";
                     if (pl >= 1) tgt += $"P{pl}";
@@ -203,46 +202,60 @@ namespace Hapbeat.Editor
                         if (tgt.Length > 0) tgt += "/";
                         tgt += pos.Replace("pos_", "");
                     }
+                    if (hasTriggers) tgt += $" {_triggersByEntry[i].Count}\u25cf";
+
                     string eid = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "";
-                    string suffix = "";
-                    if (!string.IsNullOrEmpty(tgt)) suffix = tgt;
-                    if (!string.IsNullOrEmpty(eid))
-                        suffix = !string.IsNullOrEmpty(suffix) ? $"{eid} \u2192 {suffix}" : eid;
-                    if (hasTriggers) suffix += $" {_triggersByEntry[i].Count}\u25cf";
 
                     // Styles
-                    var leftStyle = new GUIStyle(EditorStyles.label)
+                    Color normalDim = Color.gray;
+                    var nameStyle = new GUIStyle(EditorStyles.label)
                     {
-                        fontStyle = isSelected ? FontStyle.Bold : FontStyle.Normal,
+                        fontStyle = isSelected ? FontStyle.Bold : FontStyle.Normal
+                    };
+                    var dimStyle = new GUIStyle(EditorStyles.miniLabel)
+                    {
                         clipping = TextClipping.Clip
                     };
                     var rightStyle = new GUIStyle(EditorStyles.miniLabel)
                     {
-                        alignment = TextAnchor.MiddleRight,
-                        clipping = TextClipping.Clip
+                        alignment = TextAnchor.MiddleRight
                     };
                     if (isSelected)
                     {
-                        leftStyle.normal.textColor = SelectedText;
-                        rightStyle.normal.textColor = new Color(0.85f, 0.92f, 1f);
+                        nameStyle.normal.textColor = SelectedText;
+                        dimStyle.normal.textColor = new Color(0.75f, 0.85f, 1f);
+                        rightStyle.normal.textColor = new Color(0.9f, 0.95f, 1f);
                     }
                     else
                     {
-                        rightStyle.normal.textColor = Color.gray;
+                        dimStyle.normal.textColor = normalDim;
+                        rightStyle.normal.textColor = normalDim;
                     }
 
-                    // Measure suffix width, allocate rest to prefix
-                    float suffixWidth = rightStyle.CalcSize(new GUIContent(suffix)).x + 4;
-                    float availWidth = cardRect.width - 4;
-                    // Suffix gets priority (right-aligned, never clipped if possible)
-                    float rightW = Mathf.Min(suffixWidth, availWidth * 0.6f);
-                    float leftW = availWidth - rightW;
+                    // Measure fixed-width segments
+                    float pad = 4;
+                    float nameW = nameStyle.CalcSize(new GUIContent(nameText)).x + pad;
+                    float tgtW = !string.IsNullOrEmpty(tgt) ? rightStyle.CalcSize(new GUIContent(tgt)).x + pad : 0;
+                    float totalW = cardRect.width - 4;
 
-                    var leftRect = new Rect(cardRect.x + 2, cardRect.y, leftW, cardRect.height);
-                    var rightRect = new Rect(cardRect.xMax - rightW - 2, cardRect.y, rightW, cardRect.height);
+                    // Layout: [name] ... [eventId clipped] [target]
+                    // Name takes what it needs, target takes what it needs, eventId gets the rest
+                    float eidW = Mathf.Max(0, totalW - nameW - tgtW);
 
-                    GUI.Label(leftRect, prefix, leftStyle);
-                    GUI.Label(rightRect, suffix, rightStyle);
+                    var nameRect = new Rect(cardRect.x + 2, cardRect.y, nameW, cardRect.height);
+                    GUI.Label(nameRect, nameText, nameStyle);
+
+                    if (eidW > 20 && !string.IsNullOrEmpty(eid))
+                    {
+                        var eidRect = new Rect(nameRect.xMax, cardRect.y, eidW, cardRect.height);
+                        GUI.Label(eidRect, eid, dimStyle);
+                    }
+
+                    if (tgtW > 0)
+                    {
+                        var tgtRect = new Rect(cardRect.xMax - tgtW - 2, cardRect.y, tgtW, cardRect.height);
+                        GUI.Label(tgtRect, tgt, rightStyle);
+                    }
                 }
 
                 EditorGUILayout.GetControlID(FocusType.Passive); // reserve control for events
@@ -412,25 +425,15 @@ namespace Hapbeat.Editor
                 string.IsNullOrEmpty(builtTarget) ? "(broadcast \u2014 all devices)" : builtTarget);
             EditorGUI.EndDisabledGroup();
 
-            // Notes
-            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"),
-                new GUIContent("Notes", "Designer notes. Not sent to devices."));
-
-            EditorGUIUtility.labelWidth = prevLabelWidth;
-            if (EditorGUI.EndChangeCheck())
-            {
-                so.ApplyModifiedProperties();
-            }
-
-            // List triggers for this entry
+            // Triggers in scene
             if (_triggersByEntry.ContainsKey(_selectedEntryIndex))
             {
-                EditorGUILayout.Space(5);
-                EditorGUILayout.LabelField("Triggers in Scene:", EditorStyles.boldLabel);
+                EditorGUILayout.Space(4);
+                EditorGUILayout.LabelField("Triggers in Scene:", EditorStyles.miniBoldLabel);
                 foreach (var info in _triggersByEntry[_selectedEntryIndex])
                 {
                     EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.LabelField($"  {info.typeName}", GUILayout.Width(100));
+                    EditorGUILayout.LabelField($"  {info.typeName}", GUILayout.Width(70));
                     if (GUILayout.Button(info.gameObjectName, EditorStyles.linkLabel))
                     {
                         Selection.activeGameObject = info.trigger.gameObject;
@@ -438,6 +441,17 @@ namespace Hapbeat.Editor
                     }
                     EditorGUILayout.EndHorizontal();
                 }
+            }
+
+            // Notes (last)
+            EditorGUILayout.Space(4);
+            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"),
+                new GUIContent("Notes", "Designer notes. Not sent to devices."));
+
+            EditorGUIUtility.labelWidth = prevLabelWidth;
+            if (EditorGUI.EndChangeCheck())
+            {
+                so.ApplyModifiedProperties();
             }
         }
 
