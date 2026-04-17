@@ -1,9 +1,36 @@
 using System;
+using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using UnityEngine;
 
 namespace Hapbeat
 {
+    /// <summary>
+    /// Preset configuration for a HapbeatParameterBinding component.
+    /// Stored in EventEntry so bindings can be auto-generated on targets via Batch Setup.
+    /// </summary>
+    [Serializable]
+    public class HapbeatBindingPreset
+    {
+        [Tooltip("Path to source Transform relative to target.\n" +
+                 "Empty or '.' = target itself. Otherwise child path (e.g. \"Visual\", \"Body/Head\").")]
+        public string sourceTransformPath = "";
+
+        public BindingSourceProperty sourceProperty = BindingSourceProperty.LocalPositionY;
+        public float inputMin = 0f;
+        public float inputMax = 1f;
+
+        public BindingCurveType curveType = BindingCurveType.Linear;
+        public AnimationCurve customCurve = AnimationCurve.Linear(0, 0, 1, 1);
+
+        public BindingOutputParameter outputParameter = BindingOutputParameter.Volume;
+        public float outputMin = 0f;
+        public float outputMax = 1f;
+
+        public bool debugLog = false;
+        public float debugLogInterval = 0.2f;
+    }
+
     /// <summary>
     /// Haptic event mode. Determines how the trigger fires.
     /// </summary>
@@ -63,10 +90,24 @@ namespace Hapbeat
         [Tooltip("Event name within the category (e.g. hit, click, grab).")]
         public string eventName = "";
 
-        // ---- StreamClip mode ----
+        // ---- StreamClip / StreamSource mode ----
 
-        [Tooltip("AudioClip to stream over UDP (StreamClip mode only).")]
+        [Tooltip("AudioClip.\n" +
+                 "StreamClip mode: streamed over UDP as PCM16.\n" +
+                 "StreamSource mode: used as the default AudioSource clip when adding AudioSource via Batch Setup.")]
         public AudioClip streamClip;
+
+        // ---- StreamSource mode ----
+
+        [Tooltip("Mute speaker output when streaming. Audio is captured for haptics only.")]
+        public bool silentMode = true;
+
+        [Tooltip("Loop the AudioSource playback.")]
+        public bool loop = true;
+
+        [Tooltip("Parameter bindings applied on the target GameObject via Batch Setup.\n" +
+                 "Each binding creates a HapbeatParameterBinding component.")]
+        public List<HapbeatBindingPreset> bindings = new List<HapbeatBindingPreset>();
 
         // ---- Gain ----
 
@@ -126,7 +167,7 @@ namespace Hapbeat
             return "";
         }
 
-        /// <summary>Short description for display in lists.</summary>
+        /// <summary>Short description for display in lists (no mode icon).</summary>
         public string GetSummary()
         {
             switch (mode)
@@ -140,13 +181,13 @@ namespace Hapbeat
             }
         }
 
-        /// <summary>Mode prefix for list display.</summary>
-        public string GetModePrefix()
+        /// <summary>Mode icon shown next to display name (e.g. "Click ♪").</summary>
+        public string GetModeIcon()
         {
             switch (mode)
             {
-                case HapticMode.StreamClip: return "\u266a ";
-                case HapticMode.StreamSource: return "~ ";
+                case HapticMode.StreamClip: return "\u266a";
+                case HapticMode.StreamSource: return "~";
                 default: return "";
             }
         }

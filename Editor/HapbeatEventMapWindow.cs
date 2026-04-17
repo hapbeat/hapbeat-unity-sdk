@@ -18,6 +18,12 @@ namespace Hapbeat.Editor
         private Vector2 _detailScrollPos;
         private int _selectedEntryIndex = -1;
 
+        // Split ratio between list (left) and detail (right) panels
+        private const string kSplitRatioKey = "HapbeatEventMap_SplitRatio";
+        private float _splitRatio = 0.42f;
+        private bool _isDraggingSplit;
+        private const float SplitterWidth = 4f;
+
         // Clipboard for copy/paste
         private static HapbeatEventEntry _clipboardEntry;
 
@@ -61,6 +67,8 @@ namespace Hapbeat.Editor
         private void OnEnable()
         {
             FindEventMap();
+            _splitRatio = EditorPrefs.GetFloat(kSplitRatioKey, 0.42f);
+            _splitRatio = Mathf.Clamp(_splitRatio, 0.2f, 0.8f);
         }
 
         private void OnGUI()
@@ -79,14 +87,21 @@ namespace Hapbeat.Editor
             // Keyboard navigation
             HandleKeyboard();
 
+            float leftWidth = position.width * _splitRatio;
+
             EditorGUILayout.BeginHorizontal();
 
-            EditorGUILayout.BeginVertical(GUILayout.Width(position.width * 0.42f));
+            // Left panel
+            EditorGUILayout.BeginVertical(GUILayout.Width(leftWidth));
             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
             DrawEntryTable();
             EditorGUILayout.EndScrollView();
             EditorGUILayout.EndVertical();
 
+            // Splitter bar
+            DrawSplitter();
+
+            // Right panel
             EditorGUILayout.BeginVertical();
             _detailScrollPos = EditorGUILayout.BeginScrollView(_detailScrollPos);
             DrawSelectedEntryDetail();
@@ -94,6 +109,36 @@ namespace Hapbeat.Editor
             EditorGUILayout.EndVertical();
 
             EditorGUILayout.EndHorizontal();
+        }
+
+        private void DrawSplitter()
+        {
+            var rect = GUILayoutUtility.GetRect(SplitterWidth, SplitterWidth,
+                GUILayout.ExpandHeight(true), GUILayout.Width(SplitterWidth));
+
+            if (Event.current.type == EventType.Repaint)
+                EditorGUI.DrawRect(rect, new Color(0f, 0f, 0f, 0.25f));
+
+            EditorGUIUtility.AddCursorRect(rect, MouseCursor.ResizeHorizontal);
+
+            var e = Event.current;
+            if (e.type == EventType.MouseDown && rect.Contains(e.mousePosition))
+            {
+                _isDraggingSplit = true;
+                e.Use();
+            }
+            else if (e.type == EventType.MouseDrag && _isDraggingSplit)
+            {
+                _splitRatio = Mathf.Clamp(e.mousePosition.x / position.width, 0.2f, 0.8f);
+                Repaint();
+                e.Use();
+            }
+            else if (e.type == EventType.MouseUp && _isDraggingSplit)
+            {
+                _isDraggingSplit = false;
+                EditorPrefs.SetFloat(kSplitRatioKey, _splitRatio);
+                e.Use();
+            }
         }
 
         private void HandleKeyboard()
@@ -198,8 +243,8 @@ namespace Hapbeat.Editor
 
                     // --- Build 3 segments: name (never clip) | eventId (clip first) | target (high priority) ---
                     string name = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName : "(new)";
-                    string modePrefix = entry.GetModePrefix();
-                    string nameText = $"{modePrefix}[{i}] {name}";
+                    string icon = entry.GetModeIcon();
+                    string nameText = string.IsNullOrEmpty(icon) ? $"[{i}] {name}" : $"[{i}] {name} {icon}";
 
                     ParseTarget(entry.target, out _, out int pl, out string pos);
                     string tgt = "all";
@@ -437,16 +482,22 @@ namespace Hapbeat.Editor
                         new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16."));
                     break;
                 case HapticMode.StreamSource:
-                    EditorGUILayout.HelpBox(
-                        "Captures the AudioSource on the trigger's GameObject (or children).\n" +
-                        "A HapbeatAudioBridge is added automatically at runtime.",
-                        MessageType.Info);
+                    EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
+                        new GUIContent("Default Clip", "Optional. Used when Batch Setup adds a new AudioSource."));
+                    EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("silentMode"),
+                        new GUIContent("Silent Mode", "Mute speaker output. Audio captured for haptics only."));
+                    EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("loop"),
+                        new GUIContent("Loop", "Loop the AudioSource playback."));
+                    DrawBindingsList(entryProp);
                     break;
             }
 
             // Gain (all modes)
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("gain"),
-                new GUIContent("Gain", "Output gain multiplier. 0.0 = silent, 1.0 = normal, 2.0 = maximum."));
+                new GUIContent("Gain",
+                    "Master gain multiplier for this entry. 0.0 = silent, 1.0 = normal, 2.0 = maximum.\n\n" +
+                    "For StreamSource: multiplied on top of Binding outputs.\n" +
+                    "Example: Binding Volume output = 1.0, Gain = 0.5 → device receives audio × 0.5"));
 
             // --- Targeting ---
             EditorGUILayout.Space(4);
@@ -519,7 +570,13 @@ namespace Hapbeat.Editor
                     if (byObject[go].Count == 0)
                         byObject[go].Add("(manual)");
                 }
-                if (needRescan) { ScanScene(); return; }
+                if (needRescan)
+                {
+                    // Defer ScanScene to next frame to avoid mid-draw layout change
+                    EditorApplication.delayCall += ScanScene;
+                    // Do NOT early-return here — would cause GUILayout Begin/End mismatch.
+                    // Continue drawing with the (possibly stale) list; next frame will refresh.
+                }
 
                 float nameW = 80;
                 var sorted = byObject.OrderBy(kv => kv.Key.name).ToList();
@@ -557,6 +614,285 @@ namespace Hapbeat.Editor
             {
                 so.ApplyModifiedProperties();
             }
+        }
+
+        private void DrawBindingsList(SerializedProperty entryProp)
+        {
+            var bindingsProp = entryProp.FindPropertyRelative("bindings");
+
+            EditorGUILayout.Space(4);
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Parameter Bindings", EditorStyles.miniBoldLabel);
+            if (GUILayout.Button("+", EditorStyles.miniButton, GUILayout.Width(22)))
+            {
+                bindingsProp.arraySize++;
+                var newProp = bindingsProp.GetArrayElementAtIndex(bindingsProp.arraySize - 1);
+                newProp.FindPropertyRelative("sourceTransformPath").stringValue = "";
+                newProp.FindPropertyRelative("sourceProperty").enumValueIndex = (int)BindingSourceProperty.LocalPositionY;
+                newProp.FindPropertyRelative("inputMin").floatValue = 0f;
+                newProp.FindPropertyRelative("inputMax").floatValue = 1f;
+                newProp.FindPropertyRelative("curveType").enumValueIndex = (int)BindingCurveType.Linear;
+                newProp.FindPropertyRelative("outputParameter").enumValueIndex = (int)BindingOutputParameter.Volume;
+                newProp.FindPropertyRelative("outputMin").floatValue = 0f;
+                newProp.FindPropertyRelative("outputMax").floatValue = 1f;
+            }
+            EditorGUILayout.EndHorizontal();
+
+            if (bindingsProp.arraySize == 0)
+            {
+                EditorGUILayout.LabelField("  (no bindings \u2014 click + to add)", EditorStyles.miniLabel);
+                return;
+            }
+
+            // Wider label for binding fields (80 → 95)
+            float prevLabel = EditorGUIUtility.labelWidth;
+            EditorGUIUtility.labelWidth = 95;
+
+            int pendingDelete = -1;
+            for (int i = 0; i < bindingsProp.arraySize; i++)
+            {
+                var bp = bindingsProp.GetArrayElementAtIndex(i);
+                EditorGUILayout.BeginVertical("box");
+
+                EditorGUILayout.BeginHorizontal();
+                var srcProp = bp.FindPropertyRelative("sourceProperty");
+                var outProp = bp.FindPropertyRelative("outputParameter");
+                string summary = $"#{i}  {(BindingSourceProperty)srcProp.enumValueIndex} \u2192 {(BindingOutputParameter)outProp.enumValueIndex}";
+                EditorGUILayout.LabelField(summary, EditorStyles.miniBoldLabel);
+                if (GUILayout.Button("\u2212", EditorStyles.miniButton, GUILayout.Width(22)))
+                    pendingDelete = i;
+                EditorGUILayout.EndHorizontal();
+
+                var pathProp = bp.FindPropertyRelative("sourceTransformPath");
+                DrawSourcePathWithDragDrop(pathProp);
+                DrawSourcePathPingRow(pathProp);
+
+                EditorGUILayout.PropertyField(srcProp,
+                    new GUIContent("Property", "Which value to read from the source Transform/Rigidbody."));
+
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.PrefixLabel(new GUIContent("Input Range",
+                    "Source value at min/max. Input is normalized to 0-1 within this range.\n" +
+                    "Example: LocalPositionY 0 (idle) → -0.01 (pressed) \u21d2 Min=0, Max=-0.01"));
+                EditorGUILayout.PropertyField(bp.FindPropertyRelative("inputMin"), GUIContent.none);
+                EditorGUILayout.PropertyField(bp.FindPropertyRelative("inputMax"), GUIContent.none);
+                EditorGUILayout.EndHorizontal();
+
+                var curveTypeProp = bp.FindPropertyRelative("curveType");
+                EditorGUILayout.PropertyField(curveTypeProp,
+                    new GUIContent("Curve", "Shape of input-to-output mapping."));
+                if ((BindingCurveType)curveTypeProp.enumValueIndex == BindingCurveType.Custom)
+                    EditorGUILayout.PropertyField(bp.FindPropertyRelative("customCurve"), new GUIContent("Custom Curve"));
+
+                EditorGUILayout.PropertyField(outProp,
+                    new GUIContent("Output",
+                        "Volume: AudioSource.volume (0-1). Applied BEFORE capture.\n" +
+                        "Pitch: AudioSource.pitch (-3 to 3). Vibration frequency.\n" +
+                        "Pan: AudioSource.panStereo (-1 to 1). L/R balance.\n" +
+                        "BridgeGain: HapbeatAudioBridge.Gain (0-2). Applied AFTER capture.\n\n" +
+                        "Final device value = audio × Volume × BridgeGain × entry.gain"));
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.PrefixLabel(new GUIContent("Output Range",
+                    "Target values at input min/max."));
+                EditorGUILayout.PropertyField(bp.FindPropertyRelative("outputMin"), GUIContent.none);
+                EditorGUILayout.PropertyField(bp.FindPropertyRelative("outputMax"), GUIContent.none);
+                EditorGUILayout.EndHorizontal();
+
+                // Debug log
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.PropertyField(bp.FindPropertyRelative("debugLog"),
+                    new GUIContent("Debug Log", "Log input/output values to console."));
+                var dbgProp = bp.FindPropertyRelative("debugLog");
+                if (dbgProp.boolValue)
+                {
+                    GUILayout.Space(8);
+                    GUILayout.Label("Interval", GUILayout.Width(52));
+                    var intervalProp = bp.FindPropertyRelative("debugLogInterval");
+                    intervalProp.floatValue = EditorGUILayout.Slider(intervalProp.floatValue, 0.05f, 2f);
+                }
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.EndVertical();
+            }
+
+            // Deferred deletion after the loop to avoid GUI layout mismatch
+            if (pendingDelete >= 0 && pendingDelete < bindingsProp.arraySize)
+                bindingsProp.DeleteArrayElementAtIndex(pendingDelete);
+
+            EditorGUIUtility.labelWidth = prevLabel;
+        }
+
+        /// <summary>
+        /// Source Path text field with drag&drop support.
+        /// The entire text area is a drop zone; a small object picker (◎) button
+        /// on the right lets the user browse GameObjects as well.
+        /// </summary>
+        private static void DrawSourcePathWithDragDrop(SerializedProperty pathProp)
+        {
+            var rect = EditorGUILayout.GetControlRect();
+            float labelW = EditorGUIUtility.labelWidth;
+            float pickerW = 22;
+
+            EditorGUI.LabelField(new Rect(rect.x, rect.y, labelW, rect.height),
+                new GUIContent("Source Path",
+                    "Relative path from target to source Transform.\n" +
+                    "Empty / '.' = target itself.\n" +
+                    "'Visual' = child named Visual.\n" +
+                    "'Body/Head' = nested child.\n\n" +
+                    "Drag a GameObject here or use the \u25ce picker button.\n" +
+                    "If it's a descendant of the Hierarchy-selected object,\n" +
+                    "the relative path is computed. Otherwise, the name is used."));
+
+            var fullRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
+            var textRect = new Rect(fullRect.x, fullRect.y, fullRect.width - pickerW, fullRect.height);
+            var pickerRect = new Rect(textRect.xMax, fullRect.y, pickerW, fullRect.height);
+
+            // Handle drag&drop on text area only (picker has its own drag handling)
+            // IMPORTANT: must run BEFORE TextField to intercept drag events
+            HandlePathDragDrop(textRect, pathProp);
+
+            pathProp.stringValue = EditorGUI.TextField(textRect, pathProp.stringValue);
+
+            // Object picker button (adjacent to text field, no gap)
+            var picked = EditorGUI.ObjectField(pickerRect, null, typeof(GameObject), true) as GameObject;
+            if (picked != null)
+            {
+                pathProp.stringValue = ComputeRelativePath(picked);
+                GUI.FocusControl(null);
+            }
+        }
+
+        // Debug flag for drag-drop troubleshooting
+        private const bool kDragDebug = true;
+
+        private static void HandlePathDragDrop(Rect dropRect, SerializedProperty pathProp)
+        {
+            var e = Event.current;
+
+            // Only process drag events
+            if (e.type != EventType.DragUpdated && e.type != EventType.DragPerform)
+                return;
+
+            bool inside = dropRect.Contains(e.mousePosition);
+            if (kDragDebug)
+                Debug.Log($"[DragDrop] event={e.type} pos={e.mousePosition} rect={dropRect} inside={inside} refs={DragAndDrop.objectReferences.Length}");
+
+            if (!inside) return;
+
+            GameObject droppedGo = null;
+            foreach (var obj in DragAndDrop.objectReferences)
+            {
+                if (obj is GameObject go) { droppedGo = go; break; }
+            }
+
+            DragAndDrop.visualMode = droppedGo != null
+                ? DragAndDropVisualMode.Copy
+                : DragAndDropVisualMode.Rejected;
+
+            if (e.type == EventType.DragPerform && droppedGo != null)
+            {
+                DragAndDrop.AcceptDrag();
+                pathProp.stringValue = ComputeRelativePath(droppedGo);
+                GUI.FocusControl(null);
+            }
+            e.Use();
+        }
+
+        /// <summary>
+        /// Draws a small row showing the resolved GameObject for the source path
+        /// (based on wiring triggers or Hierarchy selection). Click to ping.
+        /// </summary>
+        private void DrawSourcePathPingRow(SerializedProperty pathProp)
+        {
+            string path = pathProp.stringValue;
+
+            // Try resolving via scene triggers bound to this entry, fall back to Selection.
+            var resolved = ResolvePathInScene(path);
+
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            float labelW = EditorGUIUtility.labelWidth;
+            var labelRect = new Rect(rect.x, rect.y, labelW, rect.height);
+            var valueRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
+
+            EditorGUI.LabelField(labelRect, new GUIContent(" \u2192 resolves to",
+                "Shows which GameObject the path resolves to, using scene triggers or Hierarchy selection as root. Click to ping."));
+
+            if (resolved != null)
+            {
+                if (GUI.Button(valueRect, resolved.name, EditorStyles.linkLabel))
+                {
+                    Selection.activeGameObject = resolved;
+                    EditorGUIUtility.PingObject(resolved);
+                }
+            }
+            else
+            {
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUI.LabelField(valueRect,
+                    string.IsNullOrEmpty(path) ? "(self)" : "(not resolvable \u2014 no matching target in scene)",
+                    EditorStyles.miniLabel);
+                EditorGUI.EndDisabledGroup();
+            }
+        }
+
+        /// <summary>
+        /// Try to resolve a source path relative to:
+        /// 1. GameObjects of triggers bound to the currently selected entry
+        /// 2. The currently selected Hierarchy object
+        /// Returns the first resolved GameObject or null.
+        /// </summary>
+        private GameObject ResolvePathInScene(string path)
+        {
+            var candidates = new List<Transform>();
+
+            // Triggers for the currently selected entry
+            if (_triggersByEntry.ContainsKey(_selectedEntryIndex))
+            {
+                foreach (var info in _triggersByEntry[_selectedEntryIndex])
+                {
+                    if (info.trigger != null)
+                        candidates.Add(info.trigger.transform);
+                }
+            }
+
+            // Hierarchy selection fallback
+            if (Selection.activeGameObject != null)
+                candidates.Add(Selection.activeGameObject.transform);
+
+            foreach (var root in candidates)
+            {
+                if (root == null) continue;
+                if (string.IsNullOrEmpty(path) || path == ".")
+                    return root.gameObject;
+                var child = root.Find(path);
+                if (child != null) return child.gameObject;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Compute a relative path from the currently-selected Hierarchy object to the dropped one.
+        /// Falls back to the dropped object's name if no ancestor match is found.
+        /// </summary>
+        private static string ComputeRelativePath(GameObject dropped)
+        {
+            // Use the Hierarchy-selected object as the target root
+            GameObject selected = Selection.activeGameObject;
+            if (selected != null && selected != dropped)
+            {
+                Transform cursor = dropped.transform;
+                var segments = new List<string>();
+                while (cursor != null && cursor.gameObject != selected)
+                {
+                    segments.Insert(0, cursor.name);
+                    cursor = cursor.parent;
+                }
+                if (cursor != null && cursor.gameObject == selected)
+                    return string.Join("/", segments);
+            }
+
+            // Fallback: use the dropped object's name only
+            return dropped.name;
         }
 
         private void DrawCommandFields(SerializedProperty entryProp, SerializedObject so)

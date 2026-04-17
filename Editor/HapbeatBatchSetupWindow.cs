@@ -69,7 +69,10 @@ namespace Hapbeat.Editor
             public string fieldPath;
             public int objectCount;
             public bool selected;
+            public int methodIndex; // 0=Fire, 1=Stop
         }
+
+        private static readonly string[] WireMethods = { "Fire", "Stop" };
 
         // Persisted selection keys (survives editor restart)
         private const string kSelectedEventsKey = "HapbeatBatchSetup_SelectedEvents";
@@ -415,11 +418,13 @@ namespace Hapbeat.Editor
                 bool newSel = EditorGUILayout.Toggle(e.selected, GUILayout.Width(16));
                 EditorGUILayout.LabelField(e.displayName);
                 EditorGUILayout.LabelField($"({e.objectCount})", EditorStyles.miniLabel, GUILayout.Width(28));
+                int newMethod = EditorGUILayout.Popup(e.methodIndex, WireMethods, GUILayout.Width(55));
                 EditorGUILayout.EndHorizontal();
 
-                if (newSel != e.selected)
+                if (newSel != e.selected || newMethod != e.methodIndex)
                 {
                     e.selected = newSel;
+                    e.methodIndex = newMethod;
                     _detectedEvents[i] = e;
                     SaveEventSelections();
                 }
@@ -494,13 +499,17 @@ namespace Hapbeat.Editor
                                    || fieldName == "m_SelectExited"
                                    || fieldName == "m_OnClick";
 
+                            // Default method: Stop for "exited" events, Fire otherwise
+                            int defaultMethod = fieldName.Contains("Exited") ? 1 : 0;
+
                             groups[key] = new DetectedEventGroup
                             {
                                 displayName = $"{typeName} / {cleanField}",
                                 componentType = comp.GetType().FullName,
                                 fieldPath = fieldName,
                                 objectCount = 1,
-                                selected = sel
+                                selected = sel,
+                                methodIndex = defaultMethod
                             };
                         }
                     }
@@ -654,6 +663,14 @@ namespace Hapbeat.Editor
                             cso.ApplyModifiedProperties();
                         }
                     }
+
+                    // StreamSource: also set up AudioSource and bindings from EventEntry presets
+                    var refEntry = rt.eventMap != null ? rt.eventMap.GetEntry(rt.entryIndex) : null;
+                    if (refEntry != null && refEntry.mode == HapticMode.StreamSource)
+                    {
+                        SetupAudioSourceForStreamSource(go, refEntry);
+                        ApplyBindingPresets(go, refEntry);
+                    }
                 }
             }
 
@@ -667,7 +684,11 @@ namespace Hapbeat.Editor
         {
             Undo.SetCurrentGroupName("Hapbeat Batch Setup");
             int undoGroup = Undo.GetCurrentGroup();
-            int added = 0, updated = 0, wired = 0;
+            int added = 0, updated = 0, wired = 0, sourcesAdded = 0;
+
+            // Check if selected entry is StreamSource
+            var entry = _eventMap != null ? _eventMap.GetEntry(_entryIndex) : null;
+            bool isStreamSource = entry != null && entry.mode == HapticMode.StreamSource;
 
             foreach (var go in targets)
             {
@@ -677,6 +698,14 @@ namespace Hapbeat.Editor
                     ConfigureBase(trigger);
                     if (isNew) added++; else updated++;
                     wired += WireScannedEvents(go, trigger);
+
+                    // StreamSource: ensure AudioSource exists with the clip, add bindings
+                    if (isStreamSource)
+                    {
+                        if (SetupAudioSourceForStreamSource(go, entry))
+                            sourcesAdded++;
+                        ApplyBindingPresets(go, entry);
+                    }
                 }
                 else
                 {
@@ -688,9 +717,101 @@ namespace Hapbeat.Editor
             }
 
             Undo.CollapseUndoOperations(undoGroup);
-            string msg = $"{added} added, {updated} updated" + (wired > 0 ? $", {wired} events wired" : "");
+            string msg = $"{added} added, {updated} updated"
+                + (wired > 0 ? $", {wired} events wired" : "")
+                + (sourcesAdded > 0 ? $", {sourcesAdded} AudioSources added" : "");
             Debug.Log($"[Hapbeat Batch Setup] {msg}");
             EditorUtility.DisplayDialog("Hapbeat Batch Setup", msg, "OK");
+        }
+
+        /// <summary>
+        /// Apply the entry's binding presets to the target GameObject, creating
+        /// HapbeatParameterBinding components configured from each preset.
+        /// </summary>
+        private void ApplyBindingPresets(GameObject go, HapbeatEventEntry entry)
+        {
+            if (entry.bindings == null || entry.bindings.Count == 0) return;
+
+            foreach (var preset in entry.bindings)
+            {
+                // Resolve source Transform
+                Transform srcT = ResolveTransformPath(go.transform, preset.sourceTransformPath);
+                if (srcT == null)
+                {
+                    Debug.LogWarning($"[Hapbeat] Binding: source path '{preset.sourceTransformPath}' not found on {go.name}. Skipping.");
+                    continue;
+                }
+
+                // Add binding component (always append — multiple bindings allowed)
+                var binding = Undo.AddComponent<HapbeatParameterBinding>(go);
+                var bso = new SerializedObject(binding);
+                bso.FindProperty("_sourceTransform").objectReferenceValue = srcT;
+                bso.FindProperty("_sourceProperty").enumValueIndex = (int)preset.sourceProperty;
+                bso.FindProperty("_inputMin").floatValue = preset.inputMin;
+                bso.FindProperty("_inputMax").floatValue = preset.inputMax;
+                bso.FindProperty("_curveType").enumValueIndex = (int)preset.curveType;
+                if (preset.customCurve != null)
+                {
+                    var customCurveProp = bso.FindProperty("_customCurve");
+                    if (customCurveProp != null)
+                        customCurveProp.animationCurveValue = preset.customCurve;
+                }
+                bso.FindProperty("_outputParameter").enumValueIndex = (int)preset.outputParameter;
+                bso.FindProperty("_outputMin").floatValue = preset.outputMin;
+                bso.FindProperty("_outputMax").floatValue = preset.outputMax;
+                var dbgProp = bso.FindProperty("_debugLog");
+                if (dbgProp != null) dbgProp.boolValue = preset.debugLog;
+                var dbgIntProp = bso.FindProperty("_debugLogInterval");
+                if (dbgIntProp != null) dbgIntProp.floatValue = preset.debugLogInterval;
+                bso.ApplyModifiedProperties();
+            }
+        }
+
+        /// <summary>Resolve a relative Transform path. Empty or "." returns root.</summary>
+        private static Transform ResolveTransformPath(Transform root, string path)
+        {
+            if (string.IsNullOrEmpty(path) || path == ".") return root;
+            return root.Find(path);
+        }
+
+        /// <summary>
+        /// Ensure the target GameObject has a Hapbeat-dedicated AudioSource (tagged with HapbeatAudioBridge).
+        /// If a HapbeatAudioBridge already exists, reuse its AudioSource.
+        /// Otherwise, add a new AudioSource + HapbeatAudioBridge pair — even if other AudioSources exist.
+        /// Returns true if a new AudioSource was added.
+        /// </summary>
+        private bool SetupAudioSourceForStreamSource(GameObject go, HapbeatEventEntry entry)
+        {
+            // Find existing Hapbeat-tagged AudioSource (one with HapbeatAudioBridge)
+            AudioSource audioSource = null;
+            foreach (var bridge in go.GetComponents<HapbeatAudioBridge>())
+            {
+                audioSource = bridge.GetComponent<AudioSource>();
+                if (audioSource != null) break;
+            }
+
+            bool wasAdded = false;
+            if (audioSource == null)
+            {
+                // Always add a new dedicated AudioSource (even if other AudioSources exist on the GameObject)
+                audioSource = Undo.AddComponent<AudioSource>(go);
+                audioSource.playOnAwake = false;
+                audioSource.spatialBlend = 1f; // default to 3D
+                // Immediately add HapbeatAudioBridge to mark this AudioSource as the haptic one
+                var newBridge = Undo.AddComponent<HapbeatAudioBridge>(go);
+                newBridge.AudioSourceAutoAdded = true; // mark for cleanup
+                wasAdded = true;
+            }
+            else
+            {
+                Undo.RecordObject(audioSource, "Configure AudioSource");
+            }
+
+            if (entry.streamClip != null && audioSource.clip == null)
+                audioSource.clip = entry.streamClip;
+
+            audioSource.loop = entry.loop;
+            return wasAdded;
         }
 
         private T FindOrCreate<T>(GameObject go, out bool isNew) where T : HapbeatTriggerBase
@@ -743,8 +864,9 @@ namespace Hapbeat.Editor
                 foreach (var ev in selected)
                 {
                     if (ev.componentType != fullType) continue;
+                    string method = WireMethods[Mathf.Clamp(ev.methodIndex, 0, WireMethods.Length - 1)];
                     var so = new SerializedObject(comp);
-                    count += EnsureWired(so, ev.fieldPath, trigger, "Fire");
+                    count += EnsureWired(so, ev.fieldPath, trigger, method);
                     so.ApplyModifiedProperties();
                 }
             }
@@ -794,35 +916,67 @@ namespace Hapbeat.Editor
 
         private void CleanupBatch(List<GameObject> targets)
         {
-            if (!EditorUtility.DisplayDialog("Hapbeat Cleanup",
-                $"{targets.Count} \u500b\u306e\u30aa\u30d6\u30b8\u30a7\u30af\u30c8\u304b\u3089 Hapbeat \u30b3\u30f3\u30dd\u30fc\u30cd\u30f3\u30c8\u3068\u30a4\u30d9\u30f3\u30c8\u63a5\u7d9a\u3092\u5168\u3066\u9664\u53bb\u3057\u307e\u3059\u3002",
-                "OK", "Cancel"))
+            if (!EditorUtility.DisplayDialog("\u26a0 Hapbeat Cleanup",
+                $"\u26a0 \u3053\u306e\u64cd\u4f5c\u306f\u7834\u58ca\u7684\u3067\u3059\u3002\n\n" +
+                $"\u5bfe\u8c61: {targets.Count} \u500b\u306e GameObject\n\n" +
+                "\u9664\u53bb\u3055\u308c\u308b\u3082\u306e:\n" +
+                "\u30fb HapbeatTriggerBase \u30b3\u30f3\u30dd\u30fc\u30cd\u30f3\u30c8 (UnityEventTrigger, CollisionTrigger \u7b49)\n" +
+                "\u30fb HapbeatParameterBinding\n" +
+                "\u30fb HapbeatAudioBridge\n" +
+                "\u30fb HapbeatEvent\n" +
+                "\u30fb Batch Setup \u304c\u81ea\u52d5\u8ffd\u52a0\u3057\u305f AudioSource (\u30de\u30fc\u30ab\u30fc\u5bfe\u8c61\u306e\u307f)\n" +
+                "\u30fb \u4e0a\u8a18\u306b\u5411\u3051\u305f UnityEvent \u63a5\u7d9a\n\n" +
+                "\u4fa1\u5024\u3042\u308b\u8a2d\u5b9a\u3092\u5931\u3046\u53ef\u80fd\u6027\u304c\u3042\u308a\u307e\u3059\u3002\n" +
+                "Ctrl+Z \u3067 Undo \u53ef\u80fd\u3067\u3059\u304c\u3001\u78ba\u8a8d\u3057\u3066\u304b\u3089\u5b9f\u884c\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+                "\u5b9f\u884c", "\u30ad\u30e3\u30f3\u30bb\u30eb"))
                 return;
 
             Undo.SetCurrentGroupName("Hapbeat Cleanup");
             int undoGroup = Undo.GetCurrentGroup();
-            int removedComps = 0, removedWires = 0;
+            int removedComps = 0, removedWires = 0, removedAudio = 0;
 
             foreach (var go in targets)
             {
+                // Collect all Hapbeat-owned components
                 var hapComps = new List<Component>();
-                hapComps.AddRange(go.GetComponents<HapbeatTriggerBase>());
+                hapComps.AddRange(go.GetComponents<HapbeatTriggerBase>());       // UnityEventTrigger, CollisionTrigger, AnimatorTrigger
+                hapComps.AddRange(go.GetComponents<HapbeatParameterBinding>()); // Parameter bindings
+                hapComps.AddRange(go.GetComponents<HapbeatAudioBridge>());      // Audio bridges (possibly multiple)
                 var he = go.GetComponent<HapbeatEvent>();
                 if (he != null) hapComps.Add(he);
-                var ab = go.GetComponent<HapbeatAudioBridge>();
-                if (ab != null) hapComps.Add(ab);
 
+                // Only remove AudioSources that were explicitly auto-added by Batch Setup
+                // (identified by HapbeatAudioBridge.AudioSourceAutoAdded flag).
+                var audioSourcesToRemove = new List<AudioSource>();
+                foreach (var bridge in go.GetComponents<HapbeatAudioBridge>())
+                {
+                    if (!bridge.AudioSourceAutoAdded) continue;
+                    var src = bridge.GetComponent<AudioSource>();
+                    if (src != null) audioSourcesToRemove.Add(src);
+                }
+
+                // Remove event wiring that points to any Hapbeat component
                 foreach (var hc in hapComps)
                     removedWires += RemoveWiring(go, hc);
+
+                // Destroy Hapbeat components
                 foreach (var hc in hapComps)
                 {
                     Undo.DestroyObjectImmediate(hc);
                     removedComps++;
                 }
+
+                // Destroy paired AudioSources (after bridges are gone)
+                foreach (var src in audioSourcesToRemove)
+                {
+                    if (src == null) continue;
+                    Undo.DestroyObjectImmediate(src);
+                    removedAudio++;
+                }
             }
 
             Undo.CollapseUndoOperations(undoGroup);
-            string msg = $"{removedComps} components, {removedWires} wires removed";
+            string msg = $"{removedComps} components, {removedAudio} AudioSources, {removedWires} wires removed";
             Debug.Log($"[Hapbeat Cleanup] {msg}");
             EditorUtility.DisplayDialog("Hapbeat Cleanup", msg, "OK");
         }
@@ -833,7 +987,8 @@ namespace Hapbeat.Editor
             foreach (var comp in go.GetComponents<Component>())
             {
                 if (comp == null || comp == triggerTarget) continue;
-                if (comp is HapbeatTriggerBase || comp is HapbeatEvent || comp is HapbeatAudioBridge)
+                if (comp is HapbeatTriggerBase || comp is HapbeatEvent
+                    || comp is HapbeatAudioBridge || comp is HapbeatParameterBinding)
                     continue;
 
                 var so = new SerializedObject(comp);

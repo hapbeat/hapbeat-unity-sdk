@@ -29,8 +29,9 @@ namespace Hapbeat
 
         protected float _lastFireTime = float.NegativeInfinity;
 
-        // Cached AudioBridge for StreamSource mode (added dynamically)
+        // Cached AudioBridge/Source for StreamSource mode
         private HapbeatAudioBridge _cachedAudioBridge;
+        private AudioSource _cachedAudioSource;
 
         /// <summary>The event map this trigger references.</summary>
         public HapbeatEventMap EventMap => _eventMap;
@@ -116,32 +117,61 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Find AudioSource on this GameObject (or children) and start streaming via AudioBridge.
+        /// Find the Hapbeat-tagged AudioSource (one with HapbeatAudioBridge) and start streaming.
+        /// Falls back to any AudioSource if no bridge exists yet.
         /// </summary>
         private void StartAudioSourceStream(HapbeatEventEntry entry)
         {
-            var audioSource = GetComponent<AudioSource>() ?? GetComponentInChildren<AudioSource>();
-            if (audioSource == null)
-            {
-                Debug.LogWarning($"[Hapbeat] StreamSource: No AudioSource found on {gameObject.name} or children.");
-                return;
-            }
+            // Priority 1: existing HapbeatAudioBridge identifies the target AudioSource
+            var bridge = GetComponent<HapbeatAudioBridge>() ?? GetComponentInChildren<HapbeatAudioBridge>();
+            AudioSource audioSource;
 
-            // Get or add HapbeatAudioBridge on the AudioSource's GameObject
-            var bridge = audioSource.GetComponent<HapbeatAudioBridge>();
-            if (bridge == null)
+            if (bridge != null)
+            {
+                audioSource = bridge.GetComponent<AudioSource>();
+                if (audioSource == null)
+                {
+                    Debug.LogWarning($"[Hapbeat] StreamSource: HapbeatAudioBridge on {bridge.gameObject.name} has no AudioSource.");
+                    return;
+                }
+            }
+            else
+            {
+                // Fallback: find any AudioSource and add a bridge to it
+                audioSource = GetComponent<AudioSource>() ?? GetComponentInChildren<AudioSource>();
+                if (audioSource == null)
+                {
+                    Debug.LogWarning($"[Hapbeat] StreamSource: No AudioSource found on {gameObject.name} or children.");
+                    return;
+                }
                 bridge = audioSource.gameObject.AddComponent<HapbeatAudioBridge>();
+            }
 
             bridge.Gain = entry.gain;
             bridge.Target = entry.HasTarget ? entry.target : null;
+            bridge.SilentMode = entry.silentMode;
+            audioSource.loop = entry.loop;
             bridge.StartStreaming();
+
+            if (!audioSource.isPlaying)
+                audioSource.Play();
+
             _cachedAudioBridge = bridge;
+            _cachedAudioSource = audioSource;
+
+            string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
+            Debug.Log($"[Hapbeat] \u223c StreamSource start: \"{label}\" on {audioSource.gameObject.name} (gain={entry.gain:F2})");
         }
 
         private void StopAudioSourceStream()
         {
             if (_cachedAudioBridge != null && _cachedAudioBridge.IsStreaming)
+            {
                 _cachedAudioBridge.StopStreaming();
+                Debug.Log($"[Hapbeat] \u223c StreamSource stop");
+            }
+            if (_cachedAudioSource != null && _cachedAudioSource.isPlaying)
+                _cachedAudioSource.Stop();
         }
     }
 }

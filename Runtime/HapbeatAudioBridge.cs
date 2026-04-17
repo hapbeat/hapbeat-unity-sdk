@@ -41,7 +41,26 @@ namespace Hapbeat
         [SerializeField]
         private string _target = "";
 
-        /// <summary>Gain を動的に変更可能。</summary>
+        [Tooltip("Mute speaker output. Audio is still captured and streamed to devices.\n\n" +
+                 "NOTE: When triggered via EventMap StreamSource entry, this value is\n" +
+                 "overwritten by entry.silentMode at Fire time. Edit EventMap to change\n" +
+                 "permanently; Inspector changes are temporary.")]
+        [SerializeField]
+        private bool _silentMode = false;
+
+        // Internal marker: true if Batch Setup added the paired AudioSource along with this bridge.
+        // Used by Cleanup to know whether to also remove the AudioSource.
+        [SerializeField, HideInInspector]
+        private bool _audioSourceAutoAdded = false;
+
+        /// <summary>True if the AudioSource was auto-added by Batch Setup.</summary>
+        public bool AudioSourceAutoAdded
+        {
+            get => _audioSourceAutoAdded;
+            set => _audioSourceAutoAdded = value;
+        }
+
+        /// <summary>Gain multiplier (0-2). Changes apply immediately to streaming.</summary>
         public float Gain
         {
             get => _gain;
@@ -53,6 +72,16 @@ namespace Hapbeat
         {
             get => _target;
             set => _target = value ?? "";
+        }
+
+        /// <summary>
+        /// When true, speaker output is muted but audio is still captured for haptic streaming.
+        /// OnAudioFilterRead captures data first, then zeros the output buffer.
+        /// </summary>
+        public bool SilentMode
+        {
+            get => _silentMode;
+            set => _silentMode = value;
         }
 
         private HapbeatClient _client;
@@ -135,11 +164,17 @@ namespace Hapbeat
         /// </summary>
         private void OnAudioFilterRead(float[] data, int channels)
         {
-            if (!IsStreaming || _ringBuffer == null) return;
+            if (!IsStreaming || _ringBuffer == null)
+            {
+                // Still mute if silentMode even when not streaming
+                if (_silentMode)
+                    System.Array.Clear(data, 0, data.Length);
+                return;
+            }
 
             _channels = channels;
 
-            // Ring buffer に書き込み
+            // Capture: write to ring buffer (before any muting)
             for (int i = 0; i < data.Length; i++)
             {
                 int nextWrite = (_writePos + 1) % _ringSize;
@@ -149,6 +184,10 @@ namespace Hapbeat
                 _ringBuffer[_writePos] = data[i];
                 _writePos = nextWrite;
             }
+
+            // Mute speaker output (data is zeroed AFTER capture)
+            if (_silentMode)
+                System.Array.Clear(data, 0, data.Length);
         }
 
         /// <summary>送信スレッド: ring buffer から読み出して UDP 送信。</summary>
