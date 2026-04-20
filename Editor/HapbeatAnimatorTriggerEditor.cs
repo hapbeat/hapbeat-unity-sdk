@@ -113,6 +113,15 @@ namespace Hapbeat.Editor
                 EditorGUILayout.PropertyField(_thresholdProp);
             }
 
+            // Diagnostics
+            var verboseProp = serializedObject.FindProperty("_verboseLog");
+            if (verboseProp != null)
+            {
+                EditorGUILayout.Space(5);
+                EditorGUILayout.LabelField("Diagnostics", EditorStyles.boldLabel);
+                EditorGUILayout.PropertyField(verboseProp);
+            }
+
             serializedObject.ApplyModifiedProperties();
         }
 

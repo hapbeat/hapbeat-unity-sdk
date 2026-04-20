@@ -48,6 +48,18 @@ namespace Hapbeat
     /// Works with StreamSource mode — the AudioSource's parameters are captured by
     /// HapbeatAudioBridge's OnAudioFilterRead.
     ///
+    /// <para><b>Linked vs standalone:</b></para>
+    /// <para>
+    /// When <see cref="_linkedEventMap"/> is set, all tuning values (inputMin/Max,
+    /// curve, outputMin/Max, debug options) are read live from the matching
+    /// <see cref="HapbeatBindingPreset"/> in the EventMap — the local SerializedFields
+    /// are ignored at runtime. This lets designers tune haptics in the EventMap
+    /// during Play and see changes immediately.
+    /// </para>
+    /// <para>
+    /// When unlinked, the local SerializedFields are used directly (standalone mode).
+    /// </para>
+    ///
     /// Example: PokeButton push depth → Volume → stronger vibration as button is pushed.
     /// </summary>
     [AddComponentMenu("Hapbeat/Hapbeat Parameter Binding")]
@@ -96,20 +108,42 @@ namespace Hapbeat
         [SerializeField]
         private float _outputMax = 1f;
 
+        [Header("Event Map Link (optional)")]
+        [Tooltip("Link to an EventMap preset. When set, ALL tuning values are read " +
+                 "live from the preset every frame — the local fields above are ignored " +
+                 "at runtime. Leave empty to use the local fields (standalone mode).")]
+        [SerializeField]
+        private HapbeatEventMap _linkedEventMap;
+
+        [Tooltip("Stable id of the HapbeatBindingPreset to read from (inside Linked Event Map).")]
+        [SerializeField]
+        private string _linkedBindingId;
+
+        [Header("Debug")]
+        [Tooltip("Log input/output values to the Unity console. When enabled, a line " +
+                 "is emitted each time the normalized value changes by at least " +
+                 "'Change Threshold', throttled by 'Log Interval' (seconds).")]
+        [SerializeField]
+        private bool _debugLog = false;
+
+        [Tooltip("Minimum seconds between debug log lines (throttle). 0.1\u20130.2 recommended.")]
+        [SerializeField, Range(0.01f, 2f)]
+        private float _debugLogInterval = 0.1f;
+
+        [Tooltip("Minimum normalized-value change (0-1 scale) required before a log line is emitted.")]
+        [SerializeField, Range(0f, 1f)]
+        private float _debugLogChangeThreshold = 0.02f;
+
         // Cached references
         private AudioSource _audioSource;
         private HapbeatAudioBridge _audioBridge;
         private Rigidbody _sourceRigidbody;
         private bool _initialized;
 
-        [Header("Debug")]
-        [Tooltip("Log input/output values to the Unity console at a fixed interval.")]
-        [SerializeField]
-        private bool _debugLog = false;
-
-        [Tooltip("Log interval in seconds (when Debug Log is enabled).")]
-        [SerializeField, Range(0.05f, 2f)]
-        private float _debugLogInterval = 0.2f;
+        // Preset resolution cache — invalidated when _linkedEventMap or _linkedBindingId change.
+        private HapbeatBindingPreset _cachedPreset;
+        private HapbeatEventMap _cachedForMap;
+        private string _cachedForId;
 
         /// <summary>Current raw input value (before mapping).</summary>
         public float CurrentInput { get; private set; }
@@ -120,46 +154,184 @@ namespace Hapbeat
         /// <summary>Current output value (after mapping, written to parameter).</summary>
         public float CurrentOutput { get; private set; }
 
+        /// <summary>Returns the linked EventMap, or null if this binding is standalone.</summary>
+        public HapbeatEventMap LinkedEventMap => _linkedEventMap;
+
+        /// <summary>Returns the id of the linked preset, or empty if standalone.</summary>
+        public string LinkedBindingId => _linkedBindingId;
+
+        /// <summary>Returns the linked preset, or null if standalone / id not found.</summary>
+        public HapbeatBindingPreset ResolveLinkedPreset()
+        {
+            if (_linkedEventMap == null || string.IsNullOrEmpty(_linkedBindingId))
+                return null;
+
+            // Cached reference still valid?
+            if (_cachedPreset != null &&
+                ReferenceEquals(_cachedForMap, _linkedEventMap) &&
+                _cachedForId == _linkedBindingId)
+            {
+                return _cachedPreset;
+            }
+
+            _cachedPreset = null;
+            _cachedForMap = _linkedEventMap;
+            _cachedForId = _linkedBindingId;
+
+            foreach (var entry in _linkedEventMap.entries)
+            {
+                if (entry == null || entry.bindings == null) continue;
+                for (int i = 0; i < entry.bindings.Count; i++)
+                {
+                    var p = entry.bindings[i];
+                    if (p != null && p.id == _linkedBindingId)
+                    {
+                        _cachedPreset = p;
+                        return p;
+                    }
+                }
+            }
+            return null;
+        }
+
         private float _lastDebugLogTime;
+        private float _lastLoggedNormalized = float.NaN;
+        private bool _warnedNoSource;      // one-shot: source Transform unset
+        private bool _warnedNoSink;        // one-shot: no AudioSource/Bridge to write to
+        private bool _warnedPresetNotFound;// one-shot: linked preset id not found in map
 
         private void Start()
         {
             Initialize();
+            // One startup summary so the user can confirm the binding wired up correctly
+            // without enabling per-frame debugLog.
+            var preset = ResolveLinkedPreset();
+            string linkInfo = preset != null
+                ? $"linked(id={_linkedBindingId.Substring(0, Mathf.Min(8, _linkedBindingId.Length))}…)"
+                : (_linkedEventMap != null ? "linked(PRESET NOT FOUND)" : "standalone");
+            Debug.Log(
+                $"[HapbeatBinding] Ready on {name}: " +
+                $"source={(_sourceTransform != null ? _sourceTransform.name : "(null)")} " +
+                $"property={EffectiveSourceProperty(preset)} " +
+                $"\u2192 {EffectiveOutputParameter(preset)} " +
+                $"sink={SinkDescription(preset)} " +
+                $"[{linkInfo}]",
+                this);
         }
+
+        private string SinkDescription(HapbeatBindingPreset preset)
+        {
+            var outParam = EffectiveOutputParameter(preset);
+            if (outParam == BindingOutputParameter.BridgeGain)
+                return _audioBridge != null ? $"Bridge({_audioBridge.name})" : "(no HapbeatAudioBridge)";
+            return _audioSource != null ? $"AudioSource({_audioSource.name})" : "(no AudioSource)";
+        }
+
+        // --- Effective-value helpers: preset (if linked & resolved) wins over local. ---
+
+        private BindingSourceProperty EffectiveSourceProperty(HapbeatBindingPreset p) =>
+            p != null ? p.sourceProperty : _sourceProperty;
+        private float EffectiveInputMin(HapbeatBindingPreset p) => p != null ? p.inputMin : _inputMin;
+        private float EffectiveInputMax(HapbeatBindingPreset p) => p != null ? p.inputMax : _inputMax;
+        private BindingCurveType EffectiveCurveType(HapbeatBindingPreset p) =>
+            p != null ? p.curveType : _curveType;
+        private AnimationCurve EffectiveCustomCurve(HapbeatBindingPreset p) =>
+            p != null ? p.customCurve : _customCurve;
+        private BindingOutputParameter EffectiveOutputParameter(HapbeatBindingPreset p) =>
+            p != null ? p.outputParameter : _outputParameter;
+        private float EffectiveOutputMin(HapbeatBindingPreset p) => p != null ? p.outputMin : _outputMin;
+        private float EffectiveOutputMax(HapbeatBindingPreset p) => p != null ? p.outputMax : _outputMax;
+        private bool EffectiveDebugLog(HapbeatBindingPreset p) => p != null ? p.debugLog : _debugLog;
+        private float EffectiveDebugLogInterval(HapbeatBindingPreset p) =>
+            p != null ? p.debugLogInterval : _debugLogInterval;
+        private float EffectiveDebugLogChangeThreshold(HapbeatBindingPreset p) =>
+            p != null ? p.debugLogChangeThreshold : _debugLogChangeThreshold;
 
         private void Update()
         {
             if (!_initialized) Initialize();
-            if (_sourceTransform == null) return;
+
+            if (_sourceTransform == null)
+            {
+                if (!_warnedNoSource)
+                {
+                    Debug.LogWarning(
+                        $"[HapbeatBinding] Source Transform is NULL on {name}. " +
+                        "Assign it in the Inspector, or use 'Hapbeat/Batch Setup' so the " +
+                        "event entry's Source Path resolves to a child Transform.", this);
+                    _warnedNoSource = true;
+                }
+                return;
+            }
+
+            // Resolve preset (null = standalone / preset missing). Preset values override
+            // the local SerializedFields.
+            var preset = ResolveLinkedPreset();
+            if (preset == null && _linkedEventMap != null && !_warnedPresetNotFound)
+            {
+                Debug.LogWarning(
+                    $"[HapbeatBinding] Linked preset id '{_linkedBindingId}' not found in " +
+                    $"EventMap '{_linkedEventMap.name}' on {name}. Falling back to local values. " +
+                    "Re-run 'Hapbeat/Batch Setup' to refresh the link.", this);
+                _warnedPresetNotFound = true;
+            }
+
+            var srcProp = EffectiveSourceProperty(preset);
+            float inMin = EffectiveInputMin(preset);
+            float inMax = EffectiveInputMax(preset);
+            var curveType = EffectiveCurveType(preset);
+            var customCurve = EffectiveCustomCurve(preset);
+            var outParam = EffectiveOutputParameter(preset);
+            float outMin = EffectiveOutputMin(preset);
+            float outMax = EffectiveOutputMax(preset);
 
             // Read input
-            float raw = ReadSourceValue();
+            float raw = ReadSourceValue(srcProp);
             CurrentInput = raw;
 
             // Normalize to 0-1
-            float range = _inputMax - _inputMin;
+            float range = inMax - inMin;
             float normalized = Mathf.Abs(range) > 0.0001f
-                ? Mathf.Clamp01((raw - _inputMin) / range)
+                ? Mathf.Clamp01((raw - inMin) / range)
                 : 0f;
             CurrentNormalized = normalized;
 
             // Apply curve
-            float curved = ApplyCurve(normalized);
+            float curved = ApplyCurve(normalized, curveType, customCurve);
 
             // Map to output range
-            float output = Mathf.Lerp(_outputMin, _outputMax, curved);
+            float output = Mathf.Lerp(outMin, outMax, curved);
             CurrentOutput = output;
 
-            // Write output
-            WriteOutput(output);
-
-            // Debug log
-            if (_debugLog && Time.unscaledTime - _lastDebugLogTime >= _debugLogInterval)
+            // Write output (warn once if there is nothing to write to).
+            bool wrote = WriteOutput(outParam, output);
+            if (!wrote && !_warnedNoSink)
             {
-                _lastDebugLogTime = Time.unscaledTime;
-                Debug.Log($"[HapbeatBinding] {_sourceProperty} input={raw:F4} " +
-                          $"normalized={normalized:F2} \u2192 {_outputParameter} output={output:F3}",
-                          this);
+                Debug.LogWarning(
+                    $"[HapbeatBinding] No valid sink for {outParam} on {name}. " +
+                    (outParam == BindingOutputParameter.BridgeGain
+                        ? "Add a HapbeatAudioBridge to this GameObject (or a parent/child)."
+                        : "Add an AudioSource to this GameObject (or a parent/child)."),
+                    this);
+                _warnedNoSink = true;
+            }
+
+            // Debug log — only when value changed meaningfully AND throttle elapsed.
+            if (EffectiveDebugLog(preset))
+            {
+                float threshold = EffectiveDebugLogChangeThreshold(preset);
+                float interval = EffectiveDebugLogInterval(preset);
+                bool valueChanged = float.IsNaN(_lastLoggedNormalized)
+                    || Mathf.Abs(normalized - _lastLoggedNormalized) >= threshold;
+                bool intervalElapsed = Time.unscaledTime - _lastDebugLogTime >= interval;
+                if (valueChanged && intervalElapsed)
+                {
+                    _lastDebugLogTime = Time.unscaledTime;
+                    _lastLoggedNormalized = normalized;
+                    Debug.Log($"[HapbeatBinding] {srcProp} input={raw:F4} " +
+                              $"normalized={normalized:F2} \u2192 {outParam} output={output:F3}",
+                              this);
+                }
             }
         }
 
@@ -188,9 +360,35 @@ namespace Hapbeat
             _initialized = true;
         }
 
-        private float ReadSourceValue()
+        /// <summary>
+        /// Dump the current state of the binding to the console. Useful for spot-checking
+        /// without enabling per-frame debug logs. Invokable from the component's gear menu.
+        /// </summary>
+        [ContextMenu("Dump Current State")]
+        public void DumpCurrentState()
         {
-            switch (_sourceProperty)
+            if (!_initialized) Initialize();
+            var preset = ResolveLinkedPreset();
+            string srcName = _sourceTransform != null ? _sourceTransform.name : "(null)";
+            var srcProp = EffectiveSourceProperty(preset);
+            float raw = _sourceTransform != null ? ReadSourceValue(srcProp) : 0f;
+            string linkInfo = preset != null
+                ? $"linked(id={_linkedBindingId})"
+                : (_linkedEventMap != null ? "linked(PRESET NOT FOUND)" : "standalone");
+            Debug.Log(
+                $"[HapbeatBinding] STATE on {name}:\n" +
+                $"  mode={linkInfo}\n" +
+                $"  source={srcName} property={srcProp}\n" +
+                $"  input(raw)={raw:F4}  input range=[{EffectiveInputMin(preset):F4}..{EffectiveInputMax(preset):F4}]\n" +
+                $"  current: input={CurrentInput:F4} normalized={CurrentNormalized:F2} output={CurrentOutput:F3}\n" +
+                $"  output={EffectiveOutputParameter(preset)} range=[{EffectiveOutputMin(preset):F3}..{EffectiveOutputMax(preset):F3}]\n" +
+                $"  sink={SinkDescription(preset)}",
+                this);
+        }
+
+        private float ReadSourceValue(BindingSourceProperty srcProp)
+        {
+            switch (srcProp)
             {
                 case BindingSourceProperty.LocalPositionX: return _sourceTransform.localPosition.x;
                 case BindingSourceProperty.LocalPositionY: return _sourceTransform.localPosition.y;
@@ -210,9 +408,9 @@ namespace Hapbeat
             }
         }
 
-        private float ApplyCurve(float t)
+        private static float ApplyCurve(float t, BindingCurveType curveType, AnimationCurve customCurve)
         {
-            switch (_curveType)
+            switch (curveType)
             {
                 case BindingCurveType.Linear:
                     return t;
@@ -223,39 +421,48 @@ namespace Hapbeat
                 case BindingCurveType.Exponential:
                     return (Mathf.Exp(3f * t) - 1f) / (Mathf.Exp(3f) - 1f);
                 case BindingCurveType.Custom:
-                    return _customCurve.Evaluate(t);
+                    return customCurve != null ? customCurve.Evaluate(t) : t;
                 default:
                     return t;
             }
         }
 
-        private void WriteOutput(float value)
+        /// <summary>
+        /// Writes the computed value to the configured output parameter.
+        /// Returns true if the value was written (i.e. a valid sink existed), false
+        /// otherwise. Used to trigger a one-shot misconfiguration warning.
+        /// </summary>
+        private bool WriteOutput(BindingOutputParameter outParam, float value)
         {
-            switch (_outputParameter)
+            switch (outParam)
             {
                 case BindingOutputParameter.Volume:
-                    if (_audioSource != null)
-                        _audioSource.volume = Mathf.Clamp01(value);
-                    break;
+                    if (_audioSource == null) return false;
+                    _audioSource.volume = Mathf.Clamp01(value);
+                    return true;
                 case BindingOutputParameter.Pitch:
-                    if (_audioSource != null)
-                        _audioSource.pitch = Mathf.Clamp(value, -3f, 3f);
-                    break;
+                    if (_audioSource == null) return false;
+                    _audioSource.pitch = Mathf.Clamp(value, -3f, 3f);
+                    return true;
                 case BindingOutputParameter.Pan:
-                    if (_audioSource != null)
-                        _audioSource.panStereo = Mathf.Clamp(value, -1f, 1f);
-                    break;
+                    if (_audioSource == null) return false;
+                    _audioSource.panStereo = Mathf.Clamp(value, -1f, 1f);
+                    return true;
                 case BindingOutputParameter.BridgeGain:
-                    if (_audioBridge != null)
-                        _audioBridge.Gain = value;
-                    break;
+                    if (_audioBridge == null) return false;
+                    _audioBridge.Gain = value;
+                    return true;
+                default:
+                    return false;
             }
         }
 
         private void OnValidate()
         {
-            // Re-initialize when Inspector values change
+            // Re-initialize caches when Inspector values change.
             _initialized = false;
+            _cachedPreset = null;
+            _warnedPresetNotFound = false;
         }
     }
 }

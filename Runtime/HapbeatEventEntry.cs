@@ -8,10 +8,34 @@ namespace Hapbeat
     /// <summary>
     /// Preset configuration for a HapbeatParameterBinding component.
     /// Stored in EventEntry so bindings can be auto-generated on targets via Batch Setup.
+    ///
+    /// Each preset has a stable GUID (<see cref="id"/>) so runtime HapbeatParameterBinding
+    /// components can link to the preset by id (not by index) and read values live.
     /// </summary>
     [Serializable]
     public class HapbeatBindingPreset
     {
+        [SerializeField, HideInInspector]
+        private string _id;
+
+        /// <summary>
+        /// Stable identifier for this preset. Used by <see cref="HapbeatParameterBinding"/>
+        /// to locate the preset in the EventMap regardless of list position. Generated
+        /// lazily on first access if empty.
+        /// </summary>
+        public string id
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(_id))
+                    _id = Guid.NewGuid().ToString("N");
+                return _id;
+            }
+        }
+
+        /// <summary>Force assignment of a fresh id (used when duplicating presets).</summary>
+        public void RegenerateId() => _id = Guid.NewGuid().ToString("N");
+
         [Tooltip("Path to source Transform relative to target.\n" +
                  "Empty or '.' = target itself. Otherwise child path (e.g. \"Visual\", \"Body/Head\").")]
         public string sourceTransformPath = "";
@@ -28,7 +52,11 @@ namespace Hapbeat
         public float outputMax = 1f;
 
         public bool debugLog = false;
-        public float debugLogInterval = 0.2f;
+        public float debugLogInterval = 0.1f;
+
+        [Tooltip("Minimum normalized-value change (0-1 scale) required to emit a debug " +
+                 "log line. 0 = log every interval regardless of change (may spam).")]
+        public float debugLogChangeThreshold = 0.02f;
     }
 
     /// <summary>
@@ -181,14 +209,23 @@ namespace Hapbeat
             }
         }
 
-        /// <summary>Mode icon shown next to display name (e.g. "Click ♪").</summary>
+        /// <summary>
+        /// Single-character icon identifying the entry's mode. Always returns a glyph
+        /// (even for Command mode) so the list UI can show a consistent prefix.
+        ///   <list type="bullet">
+        ///     <item>&gt; — Command (fire a device-side clip by eventId)</item>
+        ///     <item>♪ — StreamClip (stream a Unity AudioClip over UDP)</item>
+        ///     <item>~ — StreamSource (capture a live AudioSource)</item>
+        ///   </list>
+        /// </summary>
         public string GetModeIcon()
         {
             switch (mode)
             {
-                case HapticMode.StreamClip: return "\u266a";
+                case HapticMode.StreamClip:   return "\u266a";  // ♪
                 case HapticMode.StreamSource: return "~";
-                default: return "";
+                case HapticMode.Command:      return ">";
+                default:                      return "\u25cf";  // ● fallback
             }
         }
 

@@ -242,9 +242,13 @@ namespace Hapbeat.Editor
                         EditorGUI.DrawRect(cardRect, SelectedBg);
 
                     // --- Build 3 segments: name (never clip) | eventId (clip first) | target (high priority) ---
+                    // Format: "[index] <mode-icon> <display-name>"
+                    //   e.g. "[0] ▶ Click", "[1] ♪ Landing", "[2] ~ PushFeedback"
                     string name = !string.IsNullOrEmpty(entry.displayName) ? entry.displayName : "(new)";
                     string icon = entry.GetModeIcon();
-                    string nameText = string.IsNullOrEmpty(icon) ? $"[{i}] {name}" : $"[{i}] {name} {icon}";
+                    string nameText = string.IsNullOrEmpty(icon)
+                        ? $"[{i}] {name}"
+                        : $"[{i}] {icon} {name}";
 
                     ParseTarget(entry.target, out _, out int pl, out string pos);
                     string tgt = "all";
@@ -299,24 +303,34 @@ namespace Hapbeat.Editor
                     var nameRect = new Rect(cardRect.x + 2, cardRect.y, nameW, cardRect.height);
                     GUI.Label(nameRect, nameText, nameStyle);
 
-                    // Only draw extra info if there's room after name
+                    // Priority for extra info when the card is narrow:
+                    //   1. eventId / summary (the "description" of what this entry does) — kept as long as possible
+                    //   2. target — hidden first when no room
+                    // Rationale: the description tells the designer WHAT the entry is;
+                    // target is secondary routing info that can be inferred from context.
                     if (remaining > 30)
                     {
-                        if (remaining >= tgtW + 30 && !string.IsNullOrEmpty(eid))
+                        bool hasEid = !string.IsNullOrEmpty(eid);
+                        bool hasTgt = tgtW > 0;
+
+                        if (hasEid && hasTgt && remaining >= tgtW + 30)
                         {
-                            // Room for both: eventId (clipped) + target
+                            // Plenty of room: eventId (clipped) + target on the right
                             float eidW = remaining - tgtW;
                             var eidRect = new Rect(nameRect.xMax, cardRect.y, eidW, cardRect.height);
                             GUI.Label(eidRect, eid, dimStyle);
-                            if (tgtW > 0)
-                            {
-                                var tgtRect = new Rect(cardRect.xMax - tgtW - 2, cardRect.y, tgtW, cardRect.height);
-                                GUI.Label(tgtRect, tgt, rightStyle);
-                            }
+                            var tgtRect = new Rect(cardRect.xMax - tgtW - 2, cardRect.y, tgtW, cardRect.height);
+                            GUI.Label(tgtRect, tgt, rightStyle);
                         }
-                        else if (remaining >= tgtW && tgtW > 0)
+                        else if (hasEid)
                         {
-                            // Room for target only, skip eventId
+                            // Medium-narrow: keep the description (clipped), drop the target.
+                            var eidRect = new Rect(nameRect.xMax, cardRect.y, remaining - 2, cardRect.height);
+                            GUI.Label(eidRect, eid, dimStyle);
+                        }
+                        else if (hasTgt && remaining >= tgtW)
+                        {
+                            // No description available — fall back to showing target.
                             var tgtRect = new Rect(cardRect.xMax - tgtW - 2, cardRect.y, tgtW, cardRect.height);
                             GUI.Label(tgtRect, tgt, rightStyle);
                         }
@@ -616,6 +630,13 @@ namespace Hapbeat.Editor
             }
         }
 
+        // Cached rects for drag&drop detection (keyed by SerializedProperty.propertyPath).
+        // Captured during EventType.Repaint — Unity's drag events can report mousePosition
+        // in a different coordinate space than GetControlRect() returns during drag-only
+        // passes, so we must use a known-good rect captured from a full paint pass.
+        private static Dictionary<string, Rect> _bindingBoxRectCache = new Dictionary<string, Rect>();
+        private static Dictionary<string, Rect> _sourcePathRectCache = new Dictionary<string, Rect>();
+
         private void DrawBindingsList(SerializedProperty entryProp)
         {
             var bindingsProp = entryProp.FindPropertyRelative("bindings");
@@ -627,6 +648,9 @@ namespace Hapbeat.Editor
             {
                 bindingsProp.arraySize++;
                 var newProp = bindingsProp.GetArrayElementAtIndex(bindingsProp.arraySize - 1);
+                // Assign a fresh GUID so runtime HapbeatParameterBinding instances can
+                // link to this preset by id (stable across list reordering).
+                newProp.FindPropertyRelative("_id").stringValue = System.Guid.NewGuid().ToString("N");
                 newProp.FindPropertyRelative("sourceTransformPath").stringValue = "";
                 newProp.FindPropertyRelative("sourceProperty").enumValueIndex = (int)BindingSourceProperty.LocalPositionY;
                 newProp.FindPropertyRelative("inputMin").floatValue = 0f;
@@ -635,6 +659,9 @@ namespace Hapbeat.Editor
                 newProp.FindPropertyRelative("outputParameter").enumValueIndex = (int)BindingOutputParameter.Volume;
                 newProp.FindPropertyRelative("outputMin").floatValue = 0f;
                 newProp.FindPropertyRelative("outputMax").floatValue = 1f;
+                newProp.FindPropertyRelative("debugLog").boolValue = false;
+                newProp.FindPropertyRelative("debugLogInterval").floatValue = 0.1f;
+                newProp.FindPropertyRelative("debugLogChangeThreshold").floatValue = 0.02f;
             }
             EditorGUILayout.EndHorizontal();
 
@@ -652,6 +679,14 @@ namespace Hapbeat.Editor
             for (int i = 0; i < bindingsProp.arraySize; i++)
             {
                 var bp = bindingsProp.GetArrayElementAtIndex(i);
+                string boxKey = bp.propertyPath;
+
+                // Backfill a GUID if missing (migration from pre-id presets, or
+                // preset duplicated via Ctrl-D which copies the id from the source).
+                var idProp = bp.FindPropertyRelative("_id");
+                if (idProp != null && string.IsNullOrEmpty(idProp.stringValue))
+                    idProp.stringValue = System.Guid.NewGuid().ToString("N");
+
                 EditorGUILayout.BeginVertical("box");
 
                 EditorGUILayout.BeginHorizontal();
@@ -698,21 +733,49 @@ namespace Hapbeat.Editor
                 EditorGUILayout.PropertyField(bp.FindPropertyRelative("outputMax"), GUIContent.none);
                 EditorGUILayout.EndHorizontal();
 
-                // Debug log
-                EditorGUILayout.BeginHorizontal();
+                // Debug log — only emits when (value changed >= threshold) AND (interval elapsed).
                 EditorGUILayout.PropertyField(bp.FindPropertyRelative("debugLog"),
-                    new GUIContent("Debug Log", "Log input/output values to console."));
+                    new GUIContent("Debug Log",
+                        "Log input/output values to console. Only emitted when the " +
+                        "normalized value changed by 'Change' or more AND at least " +
+                        "'Interval' seconds passed since the last log line."));
                 var dbgProp = bp.FindPropertyRelative("debugLog");
                 if (dbgProp.boolValue)
                 {
-                    GUILayout.Space(8);
-                    GUILayout.Label("Interval", GUILayout.Width(52));
+                    EditorGUI.indentLevel++;
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.PrefixLabel(new GUIContent("Interval",
+                        "Minimum seconds between log lines (throttle)."));
                     var intervalProp = bp.FindPropertyRelative("debugLogInterval");
-                    intervalProp.floatValue = EditorGUILayout.Slider(intervalProp.floatValue, 0.05f, 2f);
+                    intervalProp.floatValue = EditorGUILayout.Slider(intervalProp.floatValue, 0.01f, 2f);
+                    EditorGUILayout.EndHorizontal();
+
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.PrefixLabel(new GUIContent("Change",
+                        "Minimum normalized-value change (0-1 scale) to emit a line. " +
+                        "0 = log every interval regardless of change."));
+                    var threshProp = bp.FindPropertyRelative("debugLogChangeThreshold");
+                    if (threshProp != null)
+                        threshProp.floatValue = EditorGUILayout.Slider(threshProp.floatValue, 0f, 1f);
+                    EditorGUILayout.EndHorizontal();
+                    EditorGUI.indentLevel--;
                 }
-                EditorGUILayout.EndHorizontal();
 
                 EditorGUILayout.EndVertical();
+
+                // Capture the entire binding box rect during Repaint.
+                // Used as a fallback drop zone so dragging anywhere inside the binding
+                // box (not just the narrow Source Path line) updates sourceTransformPath.
+                if (Event.current.type == EventType.Repaint)
+                    _bindingBoxRectCache[boxKey] = GUILayoutUtility.GetLastRect();
+
+                // Fallback drop handler — only activates if the text-field-level drop
+                // didn't consume the event (e.g., mouse outside text field but inside box).
+                if (_bindingBoxRectCache.TryGetValue(boxKey, out var boxRect))
+                {
+                    var pathPropForBox = bp.FindPropertyRelative("sourceTransformPath");
+                    HandlePathDragDrop(boxRect, pathPropForBox, "box");
+                }
             }
 
             // Deferred deletion after the loop to avoid GUI layout mismatch
@@ -726,6 +789,11 @@ namespace Hapbeat.Editor
         /// Source Path text field with drag&drop support.
         /// The entire text area is a drop zone; a small object picker (◎) button
         /// on the right lets the user browse GameObjects as well.
+        ///
+        /// Drop detection uses a rect captured during EventType.Repaint and stored in
+        /// <see cref="_sourcePathRectCache"/>. GetControlRect() returns different values
+        /// during drag-only event passes inside nested scroll views, so the cached
+        /// Repaint-era rect is the only reliable source of truth for hit-testing.
         /// </summary>
         private static void DrawSourcePathWithDragDrop(SerializedProperty pathProp)
         {
@@ -747,9 +815,21 @@ namespace Hapbeat.Editor
             var textRect = new Rect(fullRect.x, fullRect.y, fullRect.width - pickerW, fullRect.height);
             var pickerRect = new Rect(textRect.xMax, fullRect.y, pickerW, fullRect.height);
 
-            // Handle drag&drop on text area only (picker has its own drag handling)
-            // IMPORTANT: must run BEFORE TextField to intercept drag events
-            HandlePathDragDrop(textRect, pathProp);
+            // Cache the text-field rect during Repaint so drag events can hit-test against
+            // a known-good rect. The rect returned by GetControlRect() during a drag-only
+            // pass may be off because the layout cursor inside a scroll view hasn't been
+            // advanced the same way as during Layout/Repaint.
+            string key = pathProp.propertyPath;
+            if (Event.current.type == EventType.Repaint)
+                _sourcePathRectCache[key] = textRect;
+
+            // Resolve drop rect: prefer the cached Repaint rect, fall back to live rect.
+            Rect dragRect = _sourcePathRectCache.TryGetValue(key, out var cached) ? cached : textRect;
+
+            // Handle drag&drop on text area only (picker has its own drag handling).
+            // Runs BEFORE TextField so the drag event is consumed before IMGUI's text
+            // selection logic can steal it.
+            HandlePathDragDrop(dragRect, pathProp, "text");
 
             pathProp.stringValue = EditorGUI.TextField(textRect, pathProp.stringValue);
 
@@ -762,10 +842,30 @@ namespace Hapbeat.Editor
             }
         }
 
-        // Debug flag for drag-drop troubleshooting
-        private const bool kDragDebug = true;
+        // Toggle with Hapbeat > Debug > Log Drag&Drop menu (off by default).
+        private const string kDragDebugPrefKey = "Hapbeat.EventMap.DragDropDebug";
+        private static bool DragDebugEnabled => EditorPrefs.GetBool(kDragDebugPrefKey, false);
 
-        private static void HandlePathDragDrop(Rect dropRect, SerializedProperty pathProp)
+        [MenuItem("Hapbeat/Debug/Log Drag&Drop Events", false, 500)]
+        private static void ToggleDragDebug()
+        {
+            bool v = !DragDebugEnabled;
+            EditorPrefs.SetBool(kDragDebugPrefKey, v);
+            Debug.Log($"[Hapbeat] Drag&Drop event logging: {(v ? "ON" : "OFF")}");
+        }
+
+        [MenuItem("Hapbeat/Debug/Log Drag&Drop Events", true)]
+        private static bool ToggleDragDebugValidate()
+        {
+            Menu.SetChecked("Hapbeat/Debug/Log Drag&Drop Events", DragDebugEnabled);
+            return true;
+        }
+
+        /// <summary>
+        /// Accepts a drag&drop of a GameObject into the sourceTransformPath field.
+        /// <paramref name="zone"/> identifies which hit-test rect matched (for diagnostics).
+        /// </summary>
+        private static void HandlePathDragDrop(Rect dropRect, SerializedProperty pathProp, string zone)
         {
             var e = Event.current;
 
@@ -773,9 +873,13 @@ namespace Hapbeat.Editor
             if (e.type != EventType.DragUpdated && e.type != EventType.DragPerform)
                 return;
 
+            // Guard: if another handler already consumed this drag frame, skip.
+            if (e.type == EventType.Used) return;
+
             bool inside = dropRect.Contains(e.mousePosition);
-            if (kDragDebug)
-                Debug.Log($"[DragDrop] event={e.type} pos={e.mousePosition} rect={dropRect} inside={inside} refs={DragAndDrop.objectReferences.Length}");
+
+            if (DragDebugEnabled)
+                Debug.Log($"[DragDrop:{zone}] event={e.type} pos={e.mousePosition} rect={dropRect} inside={inside} refs={DragAndDrop.objectReferences.Length}");
 
             if (!inside) return;
 
@@ -793,7 +897,10 @@ namespace Hapbeat.Editor
             {
                 DragAndDrop.AcceptDrag();
                 pathProp.stringValue = ComputeRelativePath(droppedGo);
+                pathProp.serializedObject.ApplyModifiedProperties();
                 GUI.FocusControl(null);
+                if (DragDebugEnabled)
+                    Debug.Log($"[DragDrop:{zone}] DROPPED '{droppedGo.name}' → '{pathProp.stringValue}'");
             }
             e.Use();
         }

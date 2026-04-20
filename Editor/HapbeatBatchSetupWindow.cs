@@ -725,15 +725,36 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Apply the entry's binding presets to the target GameObject, creating
-        /// HapbeatParameterBinding components configured from each preset.
+        /// Apply the entry's binding presets to the target GameObject.
+        ///
+        /// Matching strategy (3-phase, per preset, in order):
+        ///   1. <b>Exact link match</b> — an existing <see cref="HapbeatParameterBinding"/>
+        ///      already linked to the same EventMap + preset id. Update in place.
+        ///   2. <b>Unlinked legacy match</b> — an existing unlinked binding whose
+        ///      sourceProperty and outputParameter match the preset. Upgrade it by
+        ///      setting the link.
+        ///   3. <b>New</b> — add a new binding.
+        ///
+        /// Each existing binding is only reused once per Apply invocation.
+        ///
+        /// The resulting component is LINKED to the preset via
+        /// <c>_linkedEventMap + _linkedBindingId</c> — tuning values (inputMin/Max,
+        /// curve, outputMin/Max, debug options) are read live from the preset at
+        /// runtime. The local SerializedFields are also populated as a visible cache
+        /// and as a fallback for when the link is later cleared.
         /// </summary>
         private void ApplyBindingPresets(GameObject go, HapbeatEventEntry entry)
         {
             if (entry.bindings == null || entry.bindings.Count == 0) return;
 
+            var existing = new List<HapbeatParameterBinding>(go.GetComponents<HapbeatParameterBinding>());
+            var consumed = new HashSet<HapbeatParameterBinding>();
+
             foreach (var preset in entry.bindings)
             {
+                // Touch the id getter so lazy-assigned GUIDs get persisted.
+                string presetId = preset.id;
+
                 // Resolve source Transform
                 Transform srcT = ResolveTransformPath(go.transform, preset.sourceTransformPath);
                 if (srcT == null)
@@ -742,10 +763,30 @@ namespace Hapbeat.Editor
                     continue;
                 }
 
-                // Add binding component (always append — multiple bindings allowed)
-                var binding = Undo.AddComponent<HapbeatParameterBinding>(go);
+                // Phase 1: already linked to this preset
+                var binding = FindLinkedBinding(existing, consumed, _eventMap, presetId);
+
+                // Phase 2: upgrade an unlinked binding that looks like a match
+                if (binding == null)
+                    binding = FindUpgradeCandidate(existing, consumed, preset);
+
+                // Phase 3: new
+                if (binding == null)
+                {
+                    binding = Undo.AddComponent<HapbeatParameterBinding>(go);
+                }
+                else
+                {
+                    Undo.RecordObject(binding, "Update Hapbeat Binding");
+                }
+                consumed.Add(binding);
+
                 var bso = new SerializedObject(binding);
+                bso.FindProperty("_linkedEventMap").objectReferenceValue = _eventMap;
+                bso.FindProperty("_linkedBindingId").stringValue = presetId;
                 bso.FindProperty("_sourceTransform").objectReferenceValue = srcT;
+                // Local fields: populate so the Inspector shows meaningful defaults and
+                // so the binding still behaves sanely if the user later clears the link.
                 bso.FindProperty("_sourceProperty").enumValueIndex = (int)preset.sourceProperty;
                 bso.FindProperty("_inputMin").floatValue = preset.inputMin;
                 bso.FindProperty("_inputMax").floatValue = preset.inputMax;
@@ -763,8 +804,61 @@ namespace Hapbeat.Editor
                 if (dbgProp != null) dbgProp.boolValue = preset.debugLog;
                 var dbgIntProp = bso.FindProperty("_debugLogInterval");
                 if (dbgIntProp != null) dbgIntProp.floatValue = preset.debugLogInterval;
+                var dbgChangeProp = bso.FindProperty("_debugLogChangeThreshold");
+                if (dbgChangeProp != null) dbgChangeProp.floatValue = preset.debugLogChangeThreshold;
                 bso.ApplyModifiedProperties();
+                EditorUtility.SetDirty(binding);
             }
+        }
+
+        /// <summary>
+        /// Return the first binding in <paramref name="candidates"/> whose link points to
+        /// <paramref name="map"/> + <paramref name="id"/> and is not already consumed.
+        /// </summary>
+        private static HapbeatParameterBinding FindLinkedBinding(
+            List<HapbeatParameterBinding> candidates,
+            HashSet<HapbeatParameterBinding> consumed,
+            HapbeatEventMap map,
+            string id)
+        {
+            if (candidates == null) return null;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                var b = candidates[i];
+                if (b == null || consumed.Contains(b)) continue;
+                if (ReferenceEquals(b.LinkedEventMap, map) && b.LinkedBindingId == id)
+                    return b;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Return the first unlinked binding whose sourceProperty and outputParameter match
+        /// <paramref name="preset"/>. Used to migrate pre-link bindings to linked ones
+        /// (saves users from manually deleting old duplicates before re-running Apply).
+        /// </summary>
+        private static HapbeatParameterBinding FindUpgradeCandidate(
+            List<HapbeatParameterBinding> candidates,
+            HashSet<HapbeatParameterBinding> consumed,
+            HapbeatBindingPreset preset)
+        {
+            if (candidates == null) return null;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                var b = candidates[i];
+                if (b == null || consumed.Contains(b)) continue;
+                if (b.LinkedEventMap != null) continue; // already linked to something
+                var so = new SerializedObject(b);
+                var srcPropProp = so.FindProperty("_sourceProperty");
+                var outParamProp = so.FindProperty("_outputParameter");
+                if (srcPropProp == null || outParamProp == null) continue;
+                if (srcPropProp.enumValueIndex == (int)preset.sourceProperty &&
+                    outParamProp.enumValueIndex == (int)preset.outputParameter)
+                {
+                    return b;
+                }
+            }
+            return null;
         }
 
         /// <summary>Resolve a relative Transform path. Empty or "." returns root.</summary>

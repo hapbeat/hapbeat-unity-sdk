@@ -15,6 +15,12 @@ namespace Hapbeat
         [Tooltip("All haptic event definitions for this project.")]
         public List<HapbeatEventEntry> entries = new List<HapbeatEventEntry>();
 
+        [Tooltip("Editor-only. If true, any modifications made to this EventMap while in " +
+                 "Play mode are reverted on Play exit. Useful for exploratory tuning " +
+                 "without accidentally persisting values. Leave off to keep Unity's " +
+                 "default behaviour (Play-mode edits to ScriptableObjects persist).")]
+        public bool revertPlayModeChanges = false;
+
         /// <summary>
         /// Get an entry by index, or null if out of range.
         /// </summary>
@@ -42,7 +48,9 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Get display names for all entries (useful for editor dropdowns).
+        /// Get display names for all entries (useful for editor dropdowns). Each line
+        /// is prefixed with the entry's mode icon so Command / StreamClip / StreamSource
+        /// are distinguishable at a glance.
         /// </summary>
         public string[] GetDisplayNames()
         {
@@ -50,7 +58,11 @@ namespace Hapbeat
             for (int i = 0; i < entries.Count; i++)
             {
                 var e = entries[i];
-                names[i] = string.IsNullOrEmpty(e.displayName) ? $"[{i}] {e.eventId}" : e.displayName;
+                string label = string.IsNullOrEmpty(e.displayName) ? e.eventId : e.displayName;
+                string icon = e.GetModeIcon();
+                names[i] = string.IsNullOrEmpty(icon)
+                    ? $"[{i}] {label}"
+                    : $"[{i}] {icon} {label}";
             }
             return names;
         }

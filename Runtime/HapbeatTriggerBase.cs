@@ -27,11 +27,22 @@ namespace Hapbeat
         [SerializeField]
         protected float _cooldown = 0f;
 
+        [Header("Diagnostics")]
+        [Tooltip("Log every Fire()/Stop() call and all early-return reasons to the " +
+                 "Unity console. Enable while wiring a trigger to verify the event is " +
+                 "reaching the Hapbeat trigger at all. Disable for normal operation.")]
+        [SerializeField]
+        protected bool _verboseLog = false;
+
         protected float _lastFireTime = float.NegativeInfinity;
 
         // Cached AudioBridge/Source for StreamSource mode
         private HapbeatAudioBridge _cachedAudioBridge;
         private AudioSource _cachedAudioSource;
+
+        // One-shot warning gates (so misconfiguration prints once, not every frame).
+        private bool _warnedNoManager;
+        private bool _warnedNoEventMap;
 
         /// <summary>The event map this trigger references.</summary>
         public HapbeatEventMap EventMap => _eventMap;
@@ -52,18 +63,52 @@ namespace Hapbeat
         /// </summary>
         protected void FireHaptic()
         {
-            if (!_triggerEnabled) return;
-            if (_eventMap == null) return;
+            if (_verboseLog)
+                Debug.Log($"[Hapbeat] Fire() called on {name} ({GetType().Name} #{_entryIndex})", this);
+
+            if (!_triggerEnabled)
+            {
+                if (_verboseLog) Debug.Log($"[Hapbeat] Fire rejected: trigger disabled on {name}", this);
+                return;
+            }
+            if (_eventMap == null)
+            {
+                if (!_warnedNoEventMap)
+                {
+                    Debug.LogWarning($"[Hapbeat] Fire rejected: no EventMap assigned on {name} ({GetType().Name}). " +
+                                     "Assign an event map in the Inspector.", this);
+                    _warnedNoEventMap = true;
+                }
+                return;
+            }
 
             var entry = _eventMap.GetEntry(_entryIndex);
-            if (entry == null) return;
+            if (entry == null)
+            {
+                Debug.LogWarning($"[Hapbeat] Fire rejected: entry index {_entryIndex} out of range on {name} " +
+                                 $"(EventMap has {_eventMap.entries.Count} entries)", this);
+                return;
+            }
 
             // Cooldown check
             if (_cooldown > 0f && Time.unscaledTime - _lastFireTime < _cooldown)
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] Fire rejected: cooldown ({_cooldown:F2}s) on {name}", this);
                 return;
+            }
             _lastFireTime = Time.unscaledTime;
 
-            if (HapbeatManager.Instance == null) return;
+            if (HapbeatManager.Instance == null)
+            {
+                if (!_warnedNoManager)
+                {
+                    Debug.LogWarning($"[Hapbeat] Fire rejected: no HapbeatManager in scene (required for '{entry.displayName}' on {name}). " +
+                                     "Add one via 'Hapbeat > Create Event Router' or 'GameObject > Hapbeat > Event Router'.", this);
+                    _warnedNoManager = true;
+                }
+                return;
+            }
 
             string label = string.IsNullOrEmpty(entry.displayName) ? entry.GetSummary() : entry.displayName;
             string target = entry.HasTarget ? entry.target : null;
@@ -71,16 +116,32 @@ namespace Hapbeat
             switch (entry.mode)
             {
                 case HapticMode.Command:
-                    if (string.IsNullOrEmpty(entry.eventId)) return;
+                    if (string.IsNullOrEmpty(entry.eventId))
+                    {
+                        if (_verboseLog)
+                            Debug.Log($"[Hapbeat] Fire rejected: Command mode but eventId is empty on entry '{label}'", this);
+                        return;
+                    }
+                    if (_verboseLog)
+                        Debug.Log($"[Hapbeat] Fire Command: eventId='{entry.eventId}' target='{target ?? "(broadcast)"}' gain={entry.gain:F2}", this);
                     HapbeatManager.Instance.Play(entry.eventId, entry.gain, entry.group, label, target);
                     break;
 
                 case HapticMode.StreamClip:
-                    if (entry.streamClip == null) return;
+                    if (entry.streamClip == null)
+                    {
+                        if (_verboseLog)
+                            Debug.Log($"[Hapbeat] Fire rejected: StreamClip mode but streamClip is null on entry '{label}'", this);
+                        return;
+                    }
+                    if (_verboseLog)
+                        Debug.Log($"[Hapbeat] Fire StreamClip: clip='{entry.streamClip.name}' target='{target ?? "(broadcast)"}' gain={entry.gain:F2}", this);
                     HapbeatManager.Instance.StreamAudioClip(entry.streamClip, entry.gain, target);
                     break;
 
                 case HapticMode.StreamSource:
+                    if (_verboseLog)
+                        Debug.Log($"[Hapbeat] Fire StreamSource: entry='{label}' target='{target ?? "(broadcast)"}' gain={entry.gain:F2}", this);
                     StartAudioSourceStream(entry);
                     break;
             }
@@ -91,6 +152,9 @@ namespace Hapbeat
         /// </summary>
         protected void StopHaptic()
         {
+            if (_verboseLog)
+                Debug.Log($"[Hapbeat] Stop() called on {name} ({GetType().Name} #{_entryIndex})", this);
+
             if (_eventMap == null) return;
 
             var entry = _eventMap.GetEntry(_entryIndex);
@@ -160,7 +224,33 @@ namespace Hapbeat
             _cachedAudioSource = audioSource;
 
             string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
-            Debug.Log($"[Hapbeat] \u223c StreamSource start: \"{label}\" on {audioSource.gameObject.name} (gain={entry.gain:F2})");
+
+            // Summarize attached ParameterBindings so the user can verify continuous-control
+            // wiring at trigger time (instead of having to open each binding's Inspector).
+            var bindings = audioSource.GetComponents<HapbeatParameterBinding>();
+            string bindingSummary;
+            if (bindings.Length == 0)
+            {
+                bindingSummary = "no bindings (static level)";
+            }
+            else
+            {
+                var parts = new System.Text.StringBuilder();
+                for (int i = 0; i < bindings.Length; i++)
+                {
+                    if (i > 0) parts.Append(", ");
+                    var b = bindings[i];
+                    // Use the Inspector's serialized field via SerializedObject? Avoid —
+                    // Runtime. Instead rely on the binding's startup log for full detail.
+                    parts.Append($"#{i}");
+                }
+                bindingSummary = $"{bindings.Length} binding(s): {parts}";
+            }
+
+            Debug.Log(
+                $"[Hapbeat] \u223c StreamSource start: \"{label}\" on {audioSource.gameObject.name} " +
+                $"(gain={entry.gain:F2}, loop={entry.loop}, silent={entry.silentMode}, {bindingSummary})",
+                this);
         }
 
         private void StopAudioSourceStream()
