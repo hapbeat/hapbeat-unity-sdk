@@ -20,15 +20,22 @@
 //   and the SDK never has to guess which side a Fire came from.
 //
 // Usage:
-//   1. Attach to the same GameObject as the XRGrabInteractable.
-//   2. Wire the component's UnityEvents in the Inspector.
-//   3. Clear the XRGrabInteractable.selectEntered / selectExited events so
+//   1. Open Package Manager, select "Hapbeat SDK", expand "Samples",
+//      and import "XR Helpers". The file gets copied into
+//      Assets/Samples/Hapbeat SDK/<version>/XriHelpers/ and compiles there.
+//   2. Attach HapbeatXRGrabFilter to the same GameObject as the
+//      XRGrabInteractable.
+//   3. Wire the component's UnityEvents in the Inspector.
+//   4. Clear the XRGrabInteractable.selectEntered / selectExited events so
 //      they don't fire HapbeatSequenceTrigger directly — let this filter
 //      route them.
 //
 // Note: this is NOT part of the core SDK (no XRI dependency in Runtime).
-// It's provided as a sample for projects that use XRI + Socket interactors.
-#if HAPBEAT_XRI
+// Files under the Samples~/ directory (with trailing tilde) are not compiled
+// until the user explicitly imports the sample via Package Manager, so having
+// a hard XRI reference here is safe — no project-wide scripting define or
+// global setting is required, and projects without XRI are unaffected.
+
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.XR.Interaction.Toolkit;
@@ -88,4 +95,3 @@ namespace Hapbeat.Samples.XriHelpers
         }
     }
 }
-#endif

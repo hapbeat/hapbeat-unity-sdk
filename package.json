@@ -20,6 +20,11 @@
       "displayName": "Creator Tutorial",
       "description": "既存 VR ゲームに Hapbeat を組み込むステップバイステップチュートリアル",
       "path": "Samples~/CreatorTutorial"
+    },
+    {
+      "displayName": "XR Helpers",
+      "description": "XR Interaction Toolkit 向けヘルパー。XRGrabInteractable の select イベントを hand/socket で分岐する HapbeatXRGrabFilter 等を含む。XRI がプロジェクトに入っている場合のみ import してください。",
+      "path": "Samples~/XriHelpers"
     }
   ],
   "author": {
