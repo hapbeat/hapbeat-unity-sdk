@@ -490,14 +490,20 @@ namespace Hapbeat.Editor
             {
                 case HapticMode.Command:
                     DrawCommandFields(entryProp, so);
+                    DrawKitFolderHint("clips");
                     break;
                 case HapticMode.StreamClip:
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
-                        new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16."));
+                        new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16.\nDrag from Assets/HapbeatKits/<kit>/stream-clips/."));
+                    DrawKitFolderHint("stream-clips");
                     break;
                 case HapticMode.StreamSource:
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
-                        new GUIContent("Default Clip", "Optional. Used when Batch Setup adds a new AudioSource."));
+                        new GUIContent("Default Clip",
+                            "AudioClip reference (optional). Studio exports this WAV to stream-clips/.\n" +
+                            "Batch Setup uses it as the default AudioSource clip.\n" +
+                            "Drag from Assets/HapbeatKits/<kit>/stream-clips/."));
+                    DrawKitFolderHint("stream-clips");
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("silentMode"),
                         new GUIContent("Silent Mode", "Mute speaker output. Audio captured for haptics only."));
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("loop"),
@@ -1000,6 +1006,73 @@ namespace Hapbeat.Editor
 
             // Fallback: use the dropped object's name only
             return dropped.name;
+        }
+
+        // ── Kit folder hint ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// Show a small inline hint + "Reveal" button pointing to the kit subfolder
+        /// that corresponds to the current mode (clips/ for Command, stream-clips/ for
+        /// StreamClip/StreamSource).  Searches Assets/HapbeatKits/ for installed kits
+        /// and pings the first matching subfolder in the Project window.
+        /// </summary>
+        private static void DrawKitFolderHint(string subfolder)
+        {
+            const string kitsRoot = "Assets/HapbeatKits";
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(EditorGUIUtility.labelWidth);
+            string label = subfolder == "clips"
+                ? "Look in: HapbeatKits/<kit>/clips/"
+                : "Look in: HapbeatKits/<kit>/stream-clips/";
+            GUILayout.Label(label, EditorStyles.miniLabel);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Reveal", EditorStyles.miniButton, GUILayout.Width(54)))
+                RevealKitSubfolder(kitsRoot, subfolder);
+            EditorGUILayout.EndHorizontal();
+        }
+
+        private static void RevealKitSubfolder(string kitsRoot, string subfolder)
+        {
+            // Collect all kit sub-directories under Assets/HapbeatKits/
+            string[] kitDirs = AssetDatabase.GetSubFolders(kitsRoot);
+            if (kitDirs == null || kitDirs.Length == 0)
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[Hapbeat] {kitsRoot}/ not found or empty. " +
+                    "Run Hapbeat > Setup > Create HapbeatKits Folder first, " +
+                    "then import a Kit from Studio.");
+                return;
+            }
+
+            // Find the first kit that has the requested subfolder
+            foreach (string kitDir in kitDirs)
+            {
+                string targetPath = $"{kitDir}/{subfolder}";
+                UnityEngine.Object folder =
+                    AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(targetPath);
+                if (folder != null)
+                {
+                    EditorUtility.FocusProjectWindow();
+                    Selection.activeObject = folder;
+                    EditorGUIUtility.PingObject(folder);
+                    return;
+                }
+            }
+
+            // Subfolder doesn't exist yet — ping the kits root and hint to Save/Deploy
+            string[] rootFolderArr = new[] { kitsRoot };
+            string hint = subfolder == "clips"
+                ? "No clips/ folder found. Deploy a Kit that contains Command events."
+                : "No stream-clips/ folder found. Deploy a Kit that contains StreamClip or StreamSource events.";
+            UnityEngine.Debug.LogWarning($"[Hapbeat] {hint}");
+            UnityEngine.Object kitsFolder =
+                AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(kitsRoot);
+            if (kitsFolder != null)
+            {
+                EditorUtility.FocusProjectWindow();
+                Selection.activeObject = kitsFolder;
+                EditorGUIUtility.PingObject(kitsFolder);
+            }
         }
 
         private void DrawCommandFields(SerializedProperty entryProp, SerializedObject so)
