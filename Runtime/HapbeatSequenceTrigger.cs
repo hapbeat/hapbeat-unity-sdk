@@ -60,6 +60,24 @@ namespace Hapbeat
         [SerializeField]
         private float _startShotDelay = -1f;
 
+        [Tooltip("Ignore duplicate Fire()/Stop() calls that arrive while the sequence " +
+                 "is already in the matching state.\n\n" +
+                 "Why this matters (XRI specific):\n" +
+                 "XRGrabInteractable.selectEntered fires for EVERY interactor that selects " +
+                 "— so when a shape is put into a socket, selectEntered fires a second time " +
+                 "(from the socket) and the trigger would re-fire On Start + re-start Loop, " +
+                 "clobbering any socket-side snap feedback.\n\n" +
+                 "Leave ON (default) and wire to selectEntered / selectExited OR to " +
+                 "firstSelectEntered / lastSelectExited — either wiring behaves correctly.\n\n" +
+                 "Turn OFF only if you deliberately want Fire() during Loop to re-fire the " +
+                 "On Start one-shot (uncommon).")]
+        [SerializeField]
+        private bool _guardReentry = true;
+
+        // True between Fire() and Stop(). Fire() while true is ignored when
+        // _guardReentry is on; Stop() while false is ignored likewise.
+        private bool _isActive;
+
         // Handle to a pending delayed FireHaptic, so Stop() can cancel it if the
         // user released before the delay elapsed (i.e. Loop never started).
         private Coroutine _pendingLoopStart;
@@ -111,14 +129,28 @@ namespace Hapbeat
         /// </summary>
         public void Fire()
         {
-            // Top-level log so a verbose session can unambiguously tell whether
-            // Fire() is being invoked at all (separating "UnityEvent not wired"
-            // issues from "Sequence short-circuit" issues).
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] SequenceTrigger.Fire() invoked on {name} " +
                           $"(onStart id='{_onStartEntryId}' idx={_onStartEntryIndex}, " +
                           $"loop id='{_entryId}' idx={_entryIndex}, " +
-                          $"onStop id='{_onStopEntryId}' idx={_onStopEntryIndex})", this);
+                          $"onStop id='{_onStopEntryId}' idx={_onStopEntryIndex}, active={_isActive})", this);
+
+            // Idempotent re-entry guard. See _guardReentry tooltip — XRI fires
+            // selectEntered per-interactor, so a second Fire() often arrives
+            // during the hold phase (e.g. when an object is attached to a
+            // socket). Without this guard the On Start one-shot would re-fire
+            // mid-hold, clobbering socket-side snap feedback and causing
+            // double haptics.
+            if (_guardReentry && _isActive)
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] SequenceTrigger.Fire ignored: already active on {name} " +
+                              "(second Fire during hold — likely from a secondary interactor). " +
+                              "Disable Guard Re-entry on the trigger if you want re-fires to re-trigger On Start.", this);
+                return;
+            }
+
+            _isActive = true;
             PlayOneShot(_onStartEntryId, _onStartEntryIndex, "start");
             StartLoopAfterDelay();
         }
@@ -130,10 +162,21 @@ namespace Hapbeat
         public void Stop()
         {
             if (_verboseLog)
-                Debug.Log($"[Hapbeat] SequenceTrigger.Stop() invoked on {name}", this);
-            // Cancel a pending delayed loop start (user released before the
-            // start-shot delay elapsed → the loop never kicked off, so there's
-            // nothing for StopHaptic to stop on that front).
+                Debug.Log($"[Hapbeat] SequenceTrigger.Stop() invoked on {name} (active={_isActive})", this);
+
+            // Idempotent guard: ignore Stop() calls when we're not in the
+            // hold phase. XRI fires selectExited per-interactor, so a socket
+            // picking up an object fires selectExited(hand) even while the
+            // socket is about to select the object — we don't want an
+            // on-stop one-shot to fire at that moment.
+            if (_guardReentry && !_isActive)
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] SequenceTrigger.Stop ignored: not active on {name}", this);
+                return;
+            }
+
+            _isActive = false;
             CancelPendingLoop();
             StopHaptic(); // inherited — stops the loop
             PlayOneShot(_onStopEntryId, _onStopEntryIndex, "end");
@@ -147,7 +190,14 @@ namespace Hapbeat
         public void FireWithStartGain(float gainMultiplier)
         {
             if (_verboseLog)
-                Debug.Log($"[Hapbeat] SequenceTrigger.FireWithStartGain({gainMultiplier:F2}) invoked on {name}", this);
+                Debug.Log($"[Hapbeat] SequenceTrigger.FireWithStartGain({gainMultiplier:F2}) invoked on {name} (active={_isActive})", this);
+            if (_guardReentry && _isActive)
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] SequenceTrigger.FireWithStartGain ignored: already active on {name}", this);
+                return;
+            }
+            _isActive = true;
             PlayOneShot(_onStartEntryId, _onStartEntryIndex, "start", gainMultiplier);
             StartLoopAfterDelay();
         }
@@ -233,6 +283,9 @@ namespace Hapbeat
         {
             // Don't leave a coroutine dangling past component/object teardown.
             CancelPendingLoop();
+            // Also reset active state so re-enabling doesn't leave us stuck
+            // thinking we're mid-hold.
+            _isActive = false;
         }
 
         private void PlayOneShot(string entryId, int legacyIndex, string phase, float gainMultiplier = 1f)
