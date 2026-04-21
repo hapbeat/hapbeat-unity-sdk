@@ -30,7 +30,20 @@ namespace Hapbeat.Editor
         private const string kTemplateVersion = "1";
 
         [MenuItem(kMenu, false, 100)]
-        private static void CreateFolder()
+        private static void CreateFolderMenu()
+        {
+            EnsureFolderAndReadme(openReadme: true);
+        }
+
+        /// <summary>
+        /// Create <c>Assets/HapbeatKits/</c> + README if missing. Idempotent — safe
+        /// to call multiple times; existing files are preserved.
+        /// </summary>
+        /// <param name="openReadme">If true, ping/select/open the README in the
+        /// editor after creation. Callers that show their own follow-up UI (e.g.
+        /// "Reveal stream-clips/") should pass false.</param>
+        /// <returns>True if the folder now exists.</returns>
+        internal static bool EnsureFolderAndReadme(bool openReadme)
         {
             string folderAbsPath = Path.GetFullPath(kFolderAssetPath);
             bool folderExisted = Directory.Exists(folderAbsPath);
@@ -48,20 +61,23 @@ namespace Hapbeat.Editor
 
             AssetDatabase.Refresh();
 
-            // Ping and select the README so the user sees the next step.
-            var readmeObj = AssetDatabase.LoadAssetAtPath<Object>($"{kFolderAssetPath}/{kReadmeName}");
-            if (readmeObj != null)
+            if (openReadme)
             {
-                Selection.activeObject = readmeObj;
-                EditorGUIUtility.PingObject(readmeObj);
-                AssetDatabase.OpenAsset(readmeObj);
+                var readmeObj = AssetDatabase.LoadAssetAtPath<Object>($"{kFolderAssetPath}/{kReadmeName}");
+                if (readmeObj != null)
+                {
+                    Selection.activeObject = readmeObj;
+                    EditorGUIUtility.PingObject(readmeObj);
+                    AssetDatabase.OpenAsset(readmeObj);
+                }
             }
 
             string msg = folderExisted && readmeExisted
-                ? $"Assets/HapbeatKits/ already exists. Opened README."
-                : $"Created Assets/HapbeatKits/{(readmeExisted ? "" : " + README.md")}. Open the README for the next steps.";
-
+                ? $"Assets/HapbeatKits/ already exists."
+                : $"Created Assets/HapbeatKits/{(readmeExisted ? "" : " + README.md")}.";
             Debug.Log($"[Hapbeat] {msg}");
+
+            return Directory.Exists(folderAbsPath);
         }
 
         [MenuItem("Hapbeat/Setup/Reset HapbeatKits README (overwrite)", false, 101)]

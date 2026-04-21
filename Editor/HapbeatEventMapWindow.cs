@@ -29,6 +29,19 @@ namespace Hapbeat.Editor
         // Clipboard for copy/paste
         private static HapbeatEventEntry _clipboardEntry;
 
+        /// <summary>
+        /// Display labels for <see cref="HapticMode"/>. Order MUST match the enum
+        /// declaration (Command, StreamClip, StreamSource) so the popup index
+        /// round-trips cleanly. Uses the same FIRE/CLIP/LIVE vocabulary as
+        /// hapbeat-studio's mode toggle for authoring continuity.
+        /// </summary>
+        private static readonly string[] s_ModeLabels =
+        {
+            "FIRE (Command)",
+            "CLIP (Stream Clip)",
+            "LIVE (Stream Source)",
+        };
+
         // Cached scene scan results
         private Dictionary<int, List<TriggerInfo>> _triggersByEntry = new Dictionary<int, List<TriggerInfo>>();
         private List<TriggerInfo> _orphanedTriggers = new List<TriggerInfo>();
@@ -481,9 +494,19 @@ namespace Hapbeat.Editor
                 new GUIContent("Name", "Human-readable label for this event (e.g. Grab, Click)."),
                 nameProp.stringValue);
 
-            // Mode
-            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("mode"),
-                new GUIContent("Mode", "Command: send eventId. StreamClip: stream AudioClip. StreamSource: capture AudioSource."));
+            // Mode — labelled to match Studio's FIRE / CLIP / LIVE shorthand so
+            // authors see the same terminology across both tools. The underlying
+            // enum names (Command / StreamClip / StreamSource) stay unchanged,
+            // so serialized data is unaffected.
+            var modeProp = entryProp.FindPropertyRelative("mode");
+            int newModeIdx = EditorGUILayout.Popup(
+                new GUIContent("Mode",
+                    "FIRE: send eventId, device plays pre-flashed Kit clip.\n" +
+                    "CLIP: SDK streams a Kit WAV over UDP as PCM16.\n" +
+                    "LIVE: SDK captures an AudioSource and streams it."),
+                modeProp.enumValueIndex,
+                s_ModeLabels);
+            modeProp.enumValueIndex = newModeIdx;
 
             var entry = _selectedMap.entries[_selectedEntryIndex];
 
@@ -1262,8 +1285,39 @@ namespace Hapbeat.Editor
             EditorGUILayout.EndHorizontal();
         }
 
+        /// <summary>
+        /// Ask the user whether to create <c>Assets/HapbeatKits/</c>. The folder
+        /// isn't auto-created on SDK import — so the first time a user clicks
+        /// "Reveal" before running the setup menu, they hit this dialog.
+        /// </summary>
+        /// <returns>True if the folder now exists (either pre-existing or created).</returns>
+        private static bool OfferToCreateKitsFolder(string kitsRoot)
+        {
+            if (AssetDatabase.IsValidFolder(kitsRoot)) return true;
+
+            bool confirmed = EditorUtility.DisplayDialog(
+                "Create HapbeatKits Folder?",
+                $"{kitsRoot}/ doesn't exist yet.\n\n" +
+                "This is where Hapbeat Studio writes your Kits (manifest.json + audio). " +
+                "Creating it also lays down a README with the onboarding steps.\n\n" +
+                "Create it now?",
+                "Create", "Cancel");
+            if (!confirmed) return false;
+
+            return HapbeatKitsFolderCreator.EnsureFolderAndReadme(openReadme: true);
+        }
+
         private static void RevealKitSubfolder(string kitsRoot, string subfolder)
         {
+            // If the kits root itself is missing, offer to create it.
+            bool kitsRootExists = AssetDatabase.IsValidFolder(kitsRoot);
+            if (!kitsRootExists)
+            {
+                if (!OfferToCreateKitsFolder(kitsRoot)) return;
+                kitsRootExists = AssetDatabase.IsValidFolder(kitsRoot);
+                if (!kitsRootExists) return; // user cancelled or creation failed
+            }
+
             // Empty subfolder = caller wants the kits root itself
             if (string.IsNullOrEmpty(subfolder))
             {
@@ -1273,11 +1327,7 @@ namespace Hapbeat.Editor
                     EditorUtility.FocusProjectWindow();
                     Selection.activeObject = rootObj;
                     EditorGUIUtility.PingObject(rootObj);
-                    return;
                 }
-                UnityEngine.Debug.LogWarning(
-                    $"[Hapbeat] {kitsRoot}/ not found. " +
-                    "Run Hapbeat > Setup > Create HapbeatKits Folder first.");
                 return;
             }
 
@@ -1285,10 +1335,18 @@ namespace Hapbeat.Editor
             string[] kitDirs = AssetDatabase.GetSubFolders(kitsRoot);
             if (kitDirs == null || kitDirs.Length == 0)
             {
+                // Folder exists but no kit has been deployed yet — open the root
+                // so the user can see the README / drop a kit in.
+                var rootObj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(kitsRoot);
+                if (rootObj != null)
+                {
+                    EditorUtility.FocusProjectWindow();
+                    Selection.activeObject = rootObj;
+                    EditorGUIUtility.PingObject(rootObj);
+                }
                 UnityEngine.Debug.LogWarning(
-                    $"[Hapbeat] {kitsRoot}/ not found or empty. " +
-                    "Run Hapbeat > Setup > Create HapbeatKits Folder first, " +
-                    "then import a Kit from Studio.");
+                    $"[Hapbeat] {kitsRoot}/ contains no kits yet. " +
+                    "Open Hapbeat Studio, point its working directory at this folder, then Save/Deploy a Kit.");
                 return;
             }
 
