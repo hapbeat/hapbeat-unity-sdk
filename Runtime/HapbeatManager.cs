@@ -326,7 +326,11 @@ namespace Hapbeat
         /// </summary>
         /// <param name="clip">AudioClip to stream (will be read as PCM16).</param>
         /// <param name="gain">Gain multiplier for playback on device (0.0 - 2.0).</param>
-        public void StreamAudioClip(AudioClip clip, float gain = 1.0f, string target = null)
+        /// <param name="target">Optional target filter (e.g. "player_1/pos_neck"). Null = broadcast.</param>
+        /// <param name="loop">If true, keep restarting the stream (with a fresh STREAM_BEGIN each
+        /// iteration) until <see cref="StopStream"/> is called. Useful for the hold phase of
+        /// grab/hold/release sequences.</param>
+        public void StreamAudioClip(AudioClip clip, float gain = 1.0f, string target = null, bool loop = false)
         {
             if (!EnsureConnected()) return;
             if (clip == null)
@@ -337,8 +341,9 @@ namespace Hapbeat
             if (_streamCoroutine != null)
                 StopStream();
             string targetInfo = string.IsNullOrEmpty(target) ? "broadcast" : $"target={target}";
-            Log($"\u266a StreamClip: {clip.name}, freq={clip.frequency}, ch={clip.channels}, gain={gain}, {targetInfo}");
-            _streamCoroutine = StartCoroutine(StreamAudioClipCoroutine(clip, gain, target));
+            string loopInfo = loop ? " (loop)" : "";
+            Log($"\u266a StreamClip: {clip.name}, freq={clip.frequency}, ch={clip.channels}, gain={gain}, {targetInfo}{loopInfo}");
+            _streamCoroutine = StartCoroutine(StreamAudioClipCoroutine(clip, gain, target, loop));
         }
 
         /// <summary>
@@ -363,9 +368,9 @@ namespace Hapbeat
 
         private Coroutine _streamCoroutine;
 
-        private IEnumerator StreamAudioClipCoroutine(AudioClip clip, float gain, string target = null)
+        private IEnumerator StreamAudioClipCoroutine(AudioClip clip, float gain, string target = null, bool loop = false)
         {
-            // Extract PCM data from AudioClip
+            // Extract PCM data once — reused across iterations when looping.
             float[] samples = new float[clip.samples * clip.channels];
             clip.GetData(samples, 0);
 
@@ -381,45 +386,57 @@ namespace Hapbeat
             byte channels = (byte)clip.channels;
             ushort sampleRate = (ushort)clip.frequency;
             uint totalSamples = (uint)clip.samples;
-
-            // Send STREAM_BEGIN
-            _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16, totalSamples, gain, target);
-            Log($"Stream begin: {sampleRate}Hz, {channels}ch, {totalSamples} samples, gain={gain}");
-
-            // Send STREAM_DATA in chunks
             int maxChunkSize = HapbeatProtocol.STREAM_DATA_MAX_PAYLOAD;
-            uint byteOffset = 0;
-            int remaining = pcmBytes.Length;
-
-            // Pace sending to match real-time playback + small buffer ahead
-            // bytes per second = sampleRate * channels * 2 (PCM16)
             float bytesPerSecond = sampleRate * channels * 2f;
-            float sendAheadSeconds = 0.1f; // 100ms buffer
-            float startTime = Time.realtimeSinceStartup;
+            const float sendAheadSeconds = 0.1f; // 100ms buffer
 
-            while (remaining > 0 && _client != null && _client.IsConnected)
+            int iteration = 0;
+            do
             {
-                int chunkSize = Mathf.Min(remaining, maxChunkSize);
-                _client.SendStreamData(byteOffset, pcmBytes, (int)byteOffset, chunkSize);
+                iteration++;
 
-                byteOffset += (uint)chunkSize;
-                remaining -= chunkSize;
+                // Each loop iteration starts with its own STREAM_BEGIN / STREAM_END pair.
+                // This keeps the device-side decoder in a clean state between cycles and
+                // avoids buffer-offset wraparound issues on long-running holds.
+                _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16, totalSamples, gain, target);
+                if (iteration == 1)
+                    Log($"Stream begin: {sampleRate}Hz, {channels}ch, {totalSamples} samples, gain={gain}");
 
-                // Pace: wait if we're sending too far ahead of real-time
-                float elapsedTime = Time.realtimeSinceStartup - startTime;
-                float sentDuration = byteOffset / bytesPerSecond;
-                if (sentDuration > elapsedTime + sendAheadSeconds)
+                uint byteOffset = 0;
+                int remaining = pcmBytes.Length;
+                float startTime = Time.realtimeSinceStartup;
+
+                while (remaining > 0 && _client != null && _client.IsConnected)
                 {
-                    yield return null; // wait one frame
-                }
-            }
+                    int chunkSize = Mathf.Min(remaining, maxChunkSize);
+                    _client.SendStreamData(byteOffset, pcmBytes, (int)byteOffset, chunkSize);
 
-            // Send STREAM_END
-            if (_client != null && _client.IsConnected)
-            {
-                _client.SendStreamEnd();
-                Log($"Stream complete: {byteOffset} bytes sent.");
+                    byteOffset += (uint)chunkSize;
+                    remaining -= chunkSize;
+
+                    // Pace: wait if we're sending too far ahead of real-time
+                    float elapsedTime = Time.realtimeSinceStartup - startTime;
+                    float sentDuration = byteOffset / bytesPerSecond;
+                    if (sentDuration > elapsedTime + sendAheadSeconds)
+                        yield return null;
+                }
+
+                // STREAM_END between iterations (also the terminal end for non-loop case).
+                if (_client != null && _client.IsConnected)
+                    _client.SendStreamEnd();
+
+                if (!loop) break;
+                // Bail out if the user called StopStream() during playback — StopStream
+                // invokes StopCoroutine, which normally terminates this IEnumerator, but
+                // belt-and-braces: also check _streamCoroutine here.
+                if (_streamCoroutine == null) break;
             }
+            while (loop);
+
+            if (iteration > 1)
+                Log($"Stream loop stopped after {iteration} iterations.");
+            else
+                Log($"Stream complete.");
 
             _streamCoroutine = null;
         }

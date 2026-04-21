@@ -130,7 +130,10 @@ namespace Hapbeat
         [Tooltip("Mute speaker output when streaming. Audio is captured for haptics only.")]
         public bool silentMode = true;
 
-        [Tooltip("Loop the AudioSource playback.")]
+        [Tooltip("Loop playback.\n" +
+                 "StreamClip: re-stream the clip continuously until Stop() is called " +
+                 "(used by HapbeatSequenceTrigger's Loop phase).\n" +
+                 "StreamSource: set AudioSource.loop on the captured source.")]
         public bool loop = true;
 
         [Tooltip("Parameter bindings applied on the target GameObject via Batch Setup.\n" +
@@ -158,6 +161,55 @@ namespace Hapbeat
         [Tooltip("Designer notes (not sent to devices).")]
         [TextArea(1, 3)]
         public string notes = "";
+
+        // ---- Manifest intensity cache ----
+        //
+        // Studio authors <c>parameters.intensity</c> in each Kit's manifest.json. The
+        // SDK needs to honour that value in stream modes (where the device just
+        // replays the raw PCM it received) — otherwise every stream entry effectively
+        // runs at full authored amplitude regardless of what the designer set.
+        //
+        // We cache it onto the entry (populated by the EventMap window in the editor)
+        // so the runtime player — which doesn't ship the manifest.json — still has
+        // access to the authored value. -1 means "not yet resolved" or "no matching
+        // manifest entry found" (in which case the SDK falls back to 1.0).
+        [SerializeField, HideInInspector]
+        private float _cachedManifestIntensity = -1f;
+
+        /// <summary>
+        /// Authored intensity (0..1) cached from the Kit manifest. Returns -1 if
+        /// unresolved / not yet looked up. Editor refreshes this when the EventMap
+        /// is opened or when the entry's clip / eventId changes.
+        /// </summary>
+        public float CachedManifestIntensity => _cachedManifestIntensity;
+
+        /// <summary>
+        /// Set the cached intensity. Editor-only flow writes this via SerializedProperty
+        /// so the field remains [HideInInspector]. This setter is here for edit-only
+        /// helpers that work directly on the entry instance.
+        /// </summary>
+        internal void SetCachedManifestIntensity(float value) => _cachedManifestIntensity = value;
+
+        /// <summary>
+        /// Effective gain to send over the wire: <c>gain × cached intensity</c> for
+        /// stream modes, or plain <c>gain</c> for Command (the device applies its
+        /// own flashed intensity). If the cache is unresolved (-1), stream modes
+        /// return plain <c>gain</c> and the caller should consider logging a warning.
+        /// </summary>
+        public float GetEffectiveGain()
+        {
+            switch (mode)
+            {
+                case HapticMode.StreamClip:
+                case HapticMode.StreamSource:
+                    return _cachedManifestIntensity > 0f
+                        ? gain * _cachedManifestIntensity
+                        : gain;
+                case HapticMode.Command:
+                default:
+                    return gain;
+            }
+        }
 
         // Legacy field kept for migration from old serialized data.
         [SerializeField, HideInInspector]

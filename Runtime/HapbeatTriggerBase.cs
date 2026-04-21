@@ -134,9 +134,18 @@ namespace Hapbeat
                             Debug.Log($"[Hapbeat] Fire rejected: StreamClip mode but streamClip is null on entry '{label}'", this);
                         return;
                     }
-                    if (_verboseLog)
-                        Debug.Log($"[Hapbeat] Fire StreamClip: clip='{entry.streamClip.name}' target='{target ?? "(broadcast)"}' gain={entry.gain:F2}", this);
-                    HapbeatManager.Instance.StreamAudioClip(entry.streamClip, entry.gain, target);
+                    {
+                        // Effective gain = entry.gain × manifest.intensity (cached at author-time).
+                        // See HapbeatEventEntry.GetEffectiveGain — stream modes must apply intensity
+                        // themselves because the device just replays the raw PCM it receives.
+                        float streamGain = entry.GetEffectiveGain();
+                        if (_verboseLog)
+                            Debug.Log($"[Hapbeat] Fire StreamClip: clip='{entry.streamClip.name}' " +
+                                      $"target='{target ?? "(broadcast)"}' gain={entry.gain:F2} " +
+                                      $"intensity={(entry.CachedManifestIntensity > 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
+                                      $"effective={streamGain:F2} loop={entry.loop}", this);
+                        HapbeatManager.Instance.StreamAudioClip(entry.streamClip, streamGain, target, entry.loop);
+                    }
                     break;
 
                 case HapticMode.StreamSource:
@@ -211,7 +220,9 @@ namespace Hapbeat
                 bridge = audioSource.gameObject.AddComponent<HapbeatAudioBridge>();
             }
 
-            bridge.Gain = entry.gain;
+            // Effective gain = entry.gain × manifest.intensity (cached). Stream modes
+            // must apply intensity themselves — see HapbeatEventEntry.GetEffectiveGain.
+            bridge.Gain = entry.GetEffectiveGain();
             bridge.Target = entry.HasTarget ? entry.target : null;
             bridge.SilentMode = entry.silentMode;
             audioSource.loop = entry.loop;

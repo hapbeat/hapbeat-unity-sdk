@@ -15,7 +15,7 @@ namespace Hapbeat.Editor
     /// </summary>
     public class HapbeatBatchSetupWindow : EditorWindow
     {
-        private enum TriggerType { UnityEventTrigger, CollisionTrigger }
+        private enum TriggerType { UnityEventTrigger, CollisionTrigger, SequenceTrigger }
         private TriggerType _triggerType = TriggerType.UnityEventTrigger;
 
         // --- Shared ---
@@ -28,6 +28,11 @@ namespace Hapbeat.Editor
         private HapbeatCollisionTrigger.GainMode _gainMode = HapbeatCollisionTrigger.GainMode.Fixed;
         private float _velocityThreshold = 0.5f;
         private float _maxVelocity = 5f;
+
+        // --- SequenceTrigger ---
+        // -1 means "(none)" — only the Loop phase uses the shared _entryIndex above.
+        private int _onStartEntryIndex = -1;
+        private int _onStopEntryIndex = -1;
 
         // --- Targets ---
         private List<GameObject> _targets = new List<GameObject>();
@@ -46,6 +51,9 @@ namespace Hapbeat.Editor
             public float cooldown;
             public string displayName; // for UI
             public List<WireInfo> wires;
+            // Sequence-trigger extras (-1 when not a SequenceTrigger / not set)
+            public int onStartEntryIndex;
+            public int onStopEntryIndex;
         }
 
         private struct WireInfo
@@ -104,7 +112,8 @@ namespace Hapbeat.Editor
                 DrawTriggerSettings();
                 EditorGUILayout.Space(6);
 
-                if (_triggerType == TriggerType.UnityEventTrigger)
+                if (_triggerType == TriggerType.UnityEventTrigger
+                    || _triggerType == TriggerType.SequenceTrigger)
                 {
                     AutoScanIfNeeded();
                     DrawEventWiringSection();
@@ -255,13 +264,22 @@ namespace Hapbeat.Editor
                     entryIndex = trigger.EntryIndex,
                     cooldown = 0f, // read via SerializedObject
                     displayName = name,
-                    wires = new List<WireInfo>()
+                    wires = new List<WireInfo>(),
+                    onStartEntryIndex = -1,
+                    onStopEntryIndex = -1,
                 };
 
                 // Read cooldown
                 var so = new SerializedObject(trigger);
                 var cdProp = so.FindProperty("_cooldown");
                 if (cdProp != null) info.cooldown = cdProp.floatValue;
+
+                // Sequence-trigger extras
+                if (trigger is HapbeatSequenceTrigger)
+                {
+                    info.onStartEntryIndex = so.FindProperty("_onStartEntryIndex")?.intValue ?? -1;
+                    info.onStopEntryIndex = so.FindProperty("_onStopEntryIndex")?.intValue ?? -1;
+                }
 
                 // Find wired events
                 foreach (var comp in refObj.GetComponents<Component>())
@@ -314,12 +332,19 @@ namespace Hapbeat.Editor
             string desc = _triggerType switch
             {
                 TriggerType.UnityEventTrigger =>
-                    "UnityEvent \u306b\u63a5\u7d9a\u3057\u3066\u767a\u706b\u3002\u63b4\u3080/\u96e2\u3059/\u30dc\u30bf\u30f3\u7b49\u306e\u96e2\u6563\u30a4\u30d9\u30f3\u30c8\u5411\u3051\u3002",
+                    "UnityEvent \u306b\u63a5\u7d9a\u3057\u3066\u767a\u706b\u3002\u30dc\u30bf\u30f3\u30af\u30ea\u30c3\u30af\u7b49\u306e\u5358\u767a\u30a4\u30d9\u30f3\u30c8\u5411\u3051\u3002",
                 TriggerType.CollisionTrigger =>
                     "\u7269\u7406\u884d\u7a81/\u30c8\u30ea\u30ac\u30fc\u3067\u767a\u706b\u3002\u6295\u3052\u305f\u7269\u304c\u5f53\u305f\u308b\u7b49\u306e\u7269\u7406\u63a5\u89e6\u5411\u3051\u3002",
+                TriggerType.SequenceTrigger =>
+                    "Fire()/Stop() \u306e 3 \u30d5\u30a7\u30fc\u30ba (On Start / Loop / On Stop) \u3092 1 \u3064\u306b\u307e\u3068\u3081\u305f\u30c8\u30ea\u30ac\u30fc\u3002\n" +
+                    "XR \u306e\u63b4\u3080/\u30db\u30fc\u30eb\u30c9/\u96e2\u3059 (firstSelectEntered / lastSelectExited) \u306b\u914d\u7dda\u3059\u308b\u3068\u3001\n" +
+                    "\u3064\u304b\u3080\u77ac\u9593 + \u4fdd\u6301\u4e2d\u306e\u30eb\u30fc\u30d7 + \u96e2\u3059\u4f59\u97fb\u3092 1 \u30b3\u30f3\u30dd\u30cd\u30f3\u30c8\u3067\u6271\u3048\u308b\u3002",
                 _ => ""
             };
-            EditorGUILayout.LabelField(desc, EditorStyles.miniLabel);
+            // HelpBox wraps multi-line descriptions (EditorGUILayout.LabelField
+            // reserves only singleLineHeight and clips the rest).
+            if (!string.IsNullOrEmpty(desc))
+                EditorGUILayout.HelpBox(desc, MessageType.None);
         }
 
         // =====================================================================
@@ -336,17 +361,53 @@ namespace Hapbeat.Editor
             if (_eventMap != null && _eventMap.entries.Count > 0)
             {
                 string[] names = _eventMap.GetDisplayNames();
-                _entryIndex = Mathf.Clamp(_entryIndex, 0, names.Length - 1);
-                _entryIndex = EditorGUILayout.Popup("Event", _entryIndex, names);
 
-                var entry = _eventMap.GetEntry(_entryIndex);
-                if (entry != null && !string.IsNullOrEmpty(entry.eventId))
+                if (_triggerType == TriggerType.SequenceTrigger)
                 {
-                    EditorGUI.indentLevel++;
-                    EditorGUI.BeginDisabledGroup(true);
-                    EditorGUILayout.TextField("Event ID", entry.eventId);
-                    EditorGUI.EndDisabledGroup();
-                    EditorGUI.indentLevel--;
+                    // Sequence triggers need 3 entries: On Start (optional) + Loop + On Stop (optional).
+                    _onStartEntryIndex = DrawOptionalEntryPopup(
+                        "On Start",
+                        "Optional one-shot fired by Fire() — the \"attack\" moment (grab click, enter ping).\n" +
+                        "Use Command or StreamClip mode; (none) to skip.",
+                        _onStartEntryIndex, names);
+
+                    _entryIndex = Mathf.Clamp(_entryIndex, 0, names.Length - 1);
+                    _entryIndex = EditorGUILayout.Popup(
+                        new GUIContent("Loop (hold)",
+                            "The entry that plays between Fire() and Stop(). Usually a StreamSource " +
+                            "or a StreamClip with Loop=true. Required."),
+                        _entryIndex, names);
+
+                    _onStopEntryIndex = DrawOptionalEntryPopup(
+                        "On Stop",
+                        "Optional one-shot fired by Stop() — the \"release\" moment (release thud, exit ping).\n" +
+                        "Use Command or StreamClip mode; (none) to skip.",
+                        _onStopEntryIndex, names);
+
+                    // Quick sanity hint if the Loop entry is a non-looping StreamClip
+                    var loopEntry = _eventMap.GetEntry(_entryIndex);
+                    if (loopEntry != null && loopEntry.mode == HapticMode.StreamClip && !loopEntry.loop)
+                    {
+                        EditorGUILayout.HelpBox(
+                            "Loop entry is a StreamClip without loop=true. The hold phase will end " +
+                            "when the clip finishes. Enable Loop on the entry to keep it going.",
+                            MessageType.Info);
+                    }
+                }
+                else
+                {
+                    _entryIndex = Mathf.Clamp(_entryIndex, 0, names.Length - 1);
+                    _entryIndex = EditorGUILayout.Popup("Event", _entryIndex, names);
+
+                    var entry = _eventMap.GetEntry(_entryIndex);
+                    if (entry != null && !string.IsNullOrEmpty(entry.eventId))
+                    {
+                        EditorGUI.indentLevel++;
+                        EditorGUI.BeginDisabledGroup(true);
+                        EditorGUILayout.TextField("Event ID", entry.eventId);
+                        EditorGUI.EndDisabledGroup();
+                        EditorGUI.indentLevel--;
+                    }
                 }
             }
             else
@@ -371,6 +432,21 @@ namespace Hapbeat.Editor
                     _maxVelocity = EditorGUILayout.FloatField("Max Velocity", _maxVelocity);
                 }
             }
+        }
+
+        /// <summary>
+        /// Popup that maps -1 to a leading "(none)" option. Returns -1 or the
+        /// selected entry index. Used for the SequenceTrigger's optional phases.
+        /// </summary>
+        private static int DrawOptionalEntryPopup(string label, string tooltip, int current, string[] entryNames)
+        {
+            string[] options = new string[entryNames.Length + 1];
+            options[0] = "(none)";
+            System.Array.Copy(entryNames, 0, options, 1, entryNames.Length);
+
+            int popupIdx = Mathf.Clamp(current + 1, 0, options.Length - 1);
+            int newIdx = EditorGUILayout.Popup(new GUIContent(label, tooltip), popupIdx, options);
+            return newIdx - 1;
         }
 
         // =====================================================================
@@ -637,10 +713,15 @@ namespace Hapbeat.Editor
             {
                 foreach (var rt in _refTriggers)
                 {
-                    // Add trigger component
+                    // Add trigger component — preserve the reference's exact trigger type
+                    // when supported. Default fallback is UnityEventTrigger (most common).
                     HapbeatTriggerBase trigger;
                     if (rt.triggerType == typeof(HapbeatCollisionTrigger))
                         trigger = Undo.AddComponent<HapbeatCollisionTrigger>(go);
+                    else if (rt.triggerType == typeof(HapbeatSequenceTrigger))
+                        trigger = Undo.AddComponent<HapbeatSequenceTrigger>(go);
+                    else if (rt.triggerType == typeof(HapbeatAnimatorTrigger))
+                        trigger = Undo.AddComponent<HapbeatAnimatorTrigger>(go);
                     else
                         trigger = Undo.AddComponent<HapbeatUnityEventTrigger>(go);
 
@@ -649,6 +730,14 @@ namespace Hapbeat.Editor
                     so.FindProperty("_eventMap").objectReferenceValue = rt.eventMap;
                     so.FindProperty("_entryIndex").intValue = rt.entryIndex;
                     so.FindProperty("_cooldown").floatValue = rt.cooldown;
+                    // Sequence-trigger extras
+                    if (trigger is HapbeatSequenceTrigger)
+                    {
+                        var onStart = so.FindProperty("_onStartEntryIndex");
+                        if (onStart != null) onStart.intValue = rt.onStartEntryIndex;
+                        var onStop = so.FindProperty("_onStopEntryIndex");
+                        if (onStop != null) onStop.intValue = rt.onStopEntryIndex;
+                    }
                     so.ApplyModifiedProperties();
                     added++;
 
@@ -700,6 +789,23 @@ namespace Hapbeat.Editor
                     wired += WireScannedEvents(go, trigger);
 
                     // StreamSource: ensure AudioSource exists with the clip, add bindings
+                    if (isStreamSource)
+                    {
+                        if (SetupAudioSourceForStreamSource(go, entry))
+                            sourcesAdded++;
+                        ApplyBindingPresets(go, entry);
+                    }
+                }
+                else if (_triggerType == TriggerType.SequenceTrigger)
+                {
+                    var trigger = FindOrCreate<HapbeatSequenceTrigger>(go, out bool isNew);
+                    ConfigureBase(trigger);
+                    ConfigureSequence(trigger);
+                    if (isNew) added++; else updated++;
+                    wired += WireScannedEvents(go, trigger);
+
+                    // StreamSource on the Loop (hold) phase: set up AudioSource + bindings
+                    // exactly like the single-entry UnityEventTrigger path.
                     if (isStreamSource)
                     {
                         if (SetupAudioSourceForStreamSource(go, entry))
@@ -945,7 +1051,15 @@ namespace Hapbeat.Editor
             so.ApplyModifiedProperties();
         }
 
-        private int WireScannedEvents(GameObject go, HapbeatUnityEventTrigger trigger)
+        private void ConfigureSequence(HapbeatSequenceTrigger trigger)
+        {
+            var so = new SerializedObject(trigger);
+            so.FindProperty("_onStartEntryIndex").intValue = _onStartEntryIndex;
+            so.FindProperty("_onStopEntryIndex").intValue = _onStopEntryIndex;
+            so.ApplyModifiedProperties();
+        }
+
+        private int WireScannedEvents(GameObject go, HapbeatTriggerBase trigger)
         {
             int count = 0;
             var selected = _detectedEvents.Where(e => e.selected).ToList();

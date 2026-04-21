@@ -99,7 +99,9 @@ namespace Hapbeat
 
             string label = string.IsNullOrEmpty(entry.displayName) ? entry.GetSummary() : entry.displayName;
             string target = entry.HasTarget ? entry.target : null;
-            float gain = entry.gain * gainMultiplier;
+            // Effective gain (entry.gain × manifest.intensity) for stream modes;
+            // raw gain for Command (device applies intensity internally).
+            float gain = entry.GetEffectiveGain() * gainMultiplier;
 
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] Sequence {phase}-shot: '{label}' mode={entry.mode} gain={gain:F2}", this);
@@ -121,7 +123,9 @@ namespace Hapbeat
                         if (_verboseLog) Debug.Log($"[Hapbeat] Sequence {phase}-shot: StreamClip mode but streamClip is null on entry '{label}'", this);
                         return;
                     }
-                    HapbeatManager.Instance.StreamAudioClip(entry.streamClip, gain, target);
+                    // One-shots never loop — entry.loop applies only to the Loop phase,
+                    // which goes through the inherited FireHaptic() path.
+                    HapbeatManager.Instance.StreamAudioClip(entry.streamClip, gain, target, loop: false);
                     break;
 
                 case HapticMode.StreamSource:
