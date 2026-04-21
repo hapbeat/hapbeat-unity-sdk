@@ -396,9 +396,16 @@ namespace Hapbeat
                 switch (outParam)
                 {
                     case BindingOutputParameter.StreamGain:
-                        playback.Gain = output;
+                        // Multiplicative on the entry's baseline (entry.gain ×
+                        // manifest.intensity) so author intent is preserved:
+                        //   final = entry.gain × intensity × bindingOutput
+                        // Output range typically [0,1] where 1 = authored
+                        // strength, 0 = silent. Can exceed 1 to boost past
+                        // authored; Gain setter clamps to [0, 2].
+                        playback.Gain = playback.BaselineGain * output;
                         break;
                     case BindingOutputParameter.StreamPan:
+                        // Pan is a position (-1..+1), not a multiplier — assign directly.
                         playback.Pan = output;
                         break;
                 }

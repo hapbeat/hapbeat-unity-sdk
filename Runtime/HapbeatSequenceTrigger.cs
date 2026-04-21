@@ -190,20 +190,30 @@ namespace Hapbeat
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] SequenceTrigger.Stop() invoked on {name} (active={_isActive})", this);
 
-            // Idempotent guard: ignore Stop() calls when we're not in the
-            // hold phase. XRI fires selectExited per-interactor, so a socket
-            // picking up an object fires selectExited(hand) even while the
-            // socket is about to select the object — we don't want an
-            // on-stop one-shot to fire at that moment.
+            // Always refresh the post-Stop cooldown anchor on EVERY Stop()
+            // call, even ones that will be guarded out below. Reasoning:
+            // in a SnapFit flow the shape receives two Stop calls in quick
+            // succession — first from socket.hoverEntered (drops the loop),
+            // second from lastSelectExited(hand) (ignored because already
+            // inactive). If we only updated _lastStopTime inside the
+            // "actually ran" path, the second Fire (from socket.selectEntered)
+            // would compare against the hover-time Stop which might already
+            // be past the cooldown window for a long-held object. Refreshing
+            // unconditionally keeps the cooldown anchored to the most recent
+            // "the user wants this stopped" signal.
+            _lastStopTime = Time.unscaledTime;
+
+            // Idempotent guard: ignore the Stop() body when we're not in the
+            // hold phase. Prevents firing an on-stop one-shot when no loop
+            // is running in the first place.
             if (_guardReentry && !_isActive)
             {
                 if (_verboseLog)
-                    Debug.Log($"[Hapbeat] SequenceTrigger.Stop ignored: not active on {name}", this);
+                    Debug.Log($"[Hapbeat] SequenceTrigger.Stop ignored: not active on {name} (cooldown refreshed)", this);
                 return;
             }
 
             _isActive = false;
-            _lastStopTime = Time.unscaledTime;
             CancelPendingLoop();
             StopHaptic(); // inherited — stops the loop
             PlayOneShot(_onStopEntryId, _onStopEntryIndex, "end");

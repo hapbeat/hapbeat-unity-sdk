@@ -30,8 +30,19 @@ namespace Hapbeat
         private float _pan;
         private int _stopped; // 0 = running, 1 = stopped
 
+        /// <summary>
+        /// The gain the entry authored (entry.gain × manifest.intensity),
+        /// captured at stream start. <see cref="HapbeatParameterBinding"/>
+        /// multiplies this by its modulation output so a bound stream is
+        /// <c>BaselineGain × bindingOutput</c> — author intent ("full press
+        /// = authored strength") is preserved regardless of which bindings
+        /// are attached.
+        /// </summary>
+        public float BaselineGain { get; }
+
         internal HapbeatStreamPlayback(float initialGain)
         {
+            BaselineGain = initialGain;
             Volatile.Write(ref _gain, initialGain);
             Volatile.Write(ref _pan, 0f);
             Volatile.Write(ref _stopped, 0);
