@@ -51,7 +51,7 @@ namespace Hapbeat.Samples.XriHelpers
     /// attachments — see file header for rationale.
     /// </summary>
     [RequireComponent(typeof(XRGrabInteractable))]
-    [AddComponentMenu("Hapbeat/Samples/XR Grab Filter (hand vs socket)")]
+    [AddComponentMenu("Hapbeat/Samples/Hapbeat XR Grab Filter (hand vs socket)")]
     public class HapbeatXRGrabFilter : MonoBehaviour
     {
         [Header("Hand-side events (non-socket interactors)")]
