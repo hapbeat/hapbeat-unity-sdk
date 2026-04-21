@@ -350,6 +350,19 @@ namespace Hapbeat
         /// couldn't start (not connected, null clip).</returns>
         public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float gain = 1.0f, string target = null, bool loop = false)
         {
+            return StreamAudioClip(clip, gain, gain, target, loop);
+        }
+
+        /// <summary>
+        /// Same as the 4-arg overload, but lets the caller specify an initial
+        /// <c>Gain</c> value that differs from the baseline. Used by
+        /// <see cref="HapbeatTriggerBase"/> to pre-seed the stream with a
+        /// binding-modulated gain so the first audio chunks aren't at full
+        /// baseline for ~100 ms before the binding's first <c>Update</c>
+        /// writes the modulated value (audible burst otherwise).
+        /// </summary>
+        public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop)
+        {
             if (!EnsureConnected()) return null;
             if (clip == null)
             {
@@ -361,9 +374,12 @@ namespace Hapbeat
 
             string targetInfo = string.IsNullOrEmpty(target) ? "broadcast" : $"target={target}";
             string loopInfo = loop ? " (loop)" : "";
-            Log($"\u266a StreamClip: {clip.name}, freq={clip.frequency}, ch={clip.channels}, gain={gain}, {targetInfo}{loopInfo}");
+            string gainInfo = Mathf.Approximately(baselineGain, initialGain)
+                ? $"gain={baselineGain}"
+                : $"baseline={baselineGain}, initial={initialGain}";
+            Log($"\u266a StreamClip: {clip.name}, freq={clip.frequency}, ch={clip.channels}, {gainInfo}, {targetInfo}{loopInfo}");
 
-            _activePlayback = new HapbeatStreamPlayback(gain);
+            _activePlayback = new HapbeatStreamPlayback(baselineGain, initialGain);
             _streamCoroutine = StartCoroutine(StreamAudioClipCoroutine(clip, _activePlayback, target, loop));
             return _activePlayback;
         }

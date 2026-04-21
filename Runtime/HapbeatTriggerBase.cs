@@ -241,13 +241,30 @@ namespace Hapbeat
                                 "and confirm the clip is in a deployed Kit.", this);
                             _warnedMissingIntensity = true;
                         }
+                        // Pre-seed initial gain from any sibling binding that
+                        // writes StreamGain for this entry. Without this the
+                        // stream plays at full baseline for ~100 ms (while the
+                        // first ~6 STREAM_DATA chunks go out before the first
+                        // binding.Update() runs) and users hear a burst at
+                        // stream start — especially noticeable on hover-Fire
+                        // poke buttons where the binding should start at 0.
+                        float initialGain = streamGain;
+                        foreach (var b in GetComponents<HapbeatParameterBinding>())
+                        {
+                            if (b == null) continue;
+                            if (b.LinkedOwnerEntryId != entry.id) continue;
+                            if (!b.IsStreamGainOutput) continue;
+                            initialGain = streamGain * b.EvaluateNow();
+                            break;
+                        }
+
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire StreamClip: clip='{entry.streamClip.name}' " +
                                       $"target='{target ?? "(broadcast)"}' gain={entry.gain:F2} " +
                                       $"intensity={(entry.CachedManifestIntensity > 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
-                                      $"effective={streamGain:F2} loop={entry.loop}", this);
+                                      $"effective={streamGain:F2} initial={initialGain:F2} loop={entry.loop}", this);
                         _activePlayback = HapbeatManager.Instance.StreamAudioClip(
-                            entry.streamClip, streamGain, target, entry.loop);
+                            entry.streamClip, streamGain, initialGain, target, entry.loop);
                         if (_verboseLog)
                         {
                             var bindings = GetComponents<HapbeatParameterBinding>();

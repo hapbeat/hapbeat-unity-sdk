@@ -40,9 +40,12 @@ namespace Hapbeat
         /// </summary>
         public float BaselineGain { get; }
 
-        internal HapbeatStreamPlayback(float initialGain)
+        internal HapbeatStreamPlayback(float baselineGain)
+            : this(baselineGain, baselineGain) { }
+
+        internal HapbeatStreamPlayback(float baselineGain, float initialGain)
         {
-            BaselineGain = initialGain;
+            BaselineGain = baselineGain;
             Volatile.Write(ref _gain, initialGain);
             Volatile.Write(ref _pan, 0f);
             Volatile.Write(ref _stopped, 0);

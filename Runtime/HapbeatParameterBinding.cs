@@ -501,6 +501,54 @@ namespace Hapbeat
                 this);
         }
 
+        /// <summary>
+        /// Compute the current output value WITHOUT writing to any playback.
+        /// Used by <see cref="HapbeatTriggerBase"/> at stream start to pre-seed
+        /// the initial gain so the first audio chunks go out already modulated
+        /// (otherwise ~100 ms of full-baseline audio plays before Update()
+        /// writes the first binding value → audible "burst" at stream start).
+        /// <para>
+        /// Returns 0..∞ (typically 0..1). For non-StreamGain outputs the value
+        /// is still the computed modulation factor — caller decides how to apply.
+        /// </para>
+        /// </summary>
+        public float EvaluateNow()
+        {
+            if (!_initialized) Initialize();
+            if (_sourceTransform == null) return 0f;
+            var preset = ResolveLinkedPreset();
+            var srcProp = EffectiveSourceProperty(preset);
+            float inMin = EffectiveInputMin(preset);
+            float inMax = EffectiveInputMax(preset);
+            var curveType = EffectiveCurveType(preset);
+            var customCurve = EffectiveCustomCurve(preset);
+            float outMin = EffectiveOutputMin(preset);
+            float outMax = EffectiveOutputMax(preset);
+
+            float raw = ReadSourceValue(srcProp);
+            float range = inMax - inMin;
+            float normalized = Mathf.Abs(range) > 0.0001f
+                ? Mathf.Clamp01((raw - inMin) / range)
+                : 0f;
+            float curved = ApplyCurve(normalized, curveType, customCurve);
+            return Mathf.Lerp(outMin, outMax, curved);
+        }
+
+        /// <summary>
+        /// Whether this binding's effective output parameter is
+        /// <see cref="BindingOutputParameter.StreamGain"/> — relevant to the
+        /// pre-stream-start initial-gain pre-seed path.
+        /// </summary>
+        public bool IsStreamGainOutput
+        {
+            get
+            {
+                if (!_initialized) Initialize();
+                return EffectiveOutputParameter(ResolveLinkedPreset())
+                    == BindingOutputParameter.StreamGain;
+            }
+        }
+
         private float ReadSourceValue(BindingSourceProperty srcProp)
         {
             switch (srcProp)
