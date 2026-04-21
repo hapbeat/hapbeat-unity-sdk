@@ -264,6 +264,33 @@ namespace Hapbeat
                 $"trigger={(_trigger != null ? _trigger.GetType().Name : "(none)")} " +
                 $"[{linkInfo}]",
                 this);
+
+            // Authoring safety net: the runtime write path only modulates a
+            // stream whose firing trigger matches LinkedOwnerEntryId, so a
+            // binding linked to entry A on a GameObject whose trigger fires
+            // entry B is effectively dead weight. Surface this at Start so
+            // the user notices immediately instead of discovering it via
+            // "why is nothing modulating" later.
+            string ownerId = LinkedOwnerEntryId;
+            if (!string.IsNullOrEmpty(ownerId))
+            {
+                bool anyMatch = false;
+                foreach (var t in _candidateTriggers)
+                {
+                    if (t == null) continue;
+                    if (t.EntryId == ownerId) { anyMatch = true; break; }
+                }
+                if (!anyMatch)
+                {
+                    Debug.LogWarning(
+                        $"[HapbeatBinding] {name} is linked to entry id '{ownerId.Substring(0, Mathf.Min(8, ownerId.Length))}\u2026' " +
+                        $"but no HapbeatTriggerBase on this GameObject (or its parents/children) " +
+                        $"fires that entry. The binding will have no effect.\n" +
+                        $"Fix: change the trigger's Event to the entry this binding belongs to, " +
+                        $"or re-run 'Hapbeat/Batch Setup' to align them.",
+                        this);
+                }
+            }
         }
 
         // --- Effective-value helpers: preset (if linked & resolved) wins over local. ---

@@ -74,9 +74,23 @@ namespace Hapbeat
         [SerializeField]
         private bool _guardReentry = true;
 
+        [Tooltip("Seconds after a Stop() during which incoming Fire() calls are ignored.\n\n" +
+                 "Use this for socket-attach scenarios where XRI fires a chain of " +
+                 "selectExited(hand) + selectEntered(socket) back-to-back, which would " +
+                 "otherwise cause Stop → Fire and restart the hold loop. With a small " +
+                 "cooldown (e.g. 0.15) the re-fire from the socket selection is absorbed, " +
+                 "keeping the sequence quiet until the user explicitly grabs again.\n\n" +
+                 "0 = disabled (default). Typical SnapFit setting: 0.15 \u2013 0.25.")]
+        [SerializeField, Range(0f, 1f)]
+        private float _postStopFireCooldown = 0f;
+
         // True between Fire() and Stop(). Fire() while true is ignored when
         // _guardReentry is on; Stop() while false is ignored likewise.
         private bool _isActive;
+        // Timestamp of the last Stop() that actually took effect. Used by
+        // _postStopFireCooldown to swallow the XRI-generated re-Fire that
+        // arrives atomically when a held object is dropped into a socket.
+        private float _lastStopTime = float.NegativeInfinity;
 
         // Handle to a pending delayed FireHaptic, so Stop() can cancel it if the
         // user released before the delay elapsed (i.e. Loop never started).
@@ -149,6 +163,18 @@ namespace Hapbeat
                               "Disable Guard Re-entry on the trigger if you want re-fires to re-trigger On Start.", this);
                 return;
             }
+            // Post-Stop cooldown: absorb the XRI selectEntered(socket) that
+            // typically follows selectExited(hand) within the same frame when
+            // an object is dropped into a socket. Without this the sequence
+            // Stops on hand-release then immediately Fires on socket-select,
+            // restarting the hold loop. 0 = disabled (default).
+            if (_postStopFireCooldown > 0f && Time.unscaledTime - _lastStopTime < _postStopFireCooldown)
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] SequenceTrigger.Fire ignored: within {_postStopFireCooldown:F2}s post-Stop cooldown on {name} " +
+                              "(likely the XRI hand-to-socket transfer re-fire — SnapFit workaround).", this);
+                return;
+            }
 
             _isActive = true;
             PlayOneShot(_onStartEntryId, _onStartEntryIndex, "start");
@@ -177,6 +203,7 @@ namespace Hapbeat
             }
 
             _isActive = false;
+            _lastStopTime = Time.unscaledTime;
             CancelPendingLoop();
             StopHaptic(); // inherited — stops the loop
             PlayOneShot(_onStopEntryId, _onStopEntryIndex, "end");
@@ -195,6 +222,12 @@ namespace Hapbeat
             {
                 if (_verboseLog)
                     Debug.Log($"[Hapbeat] SequenceTrigger.FireWithStartGain ignored: already active on {name}", this);
+                return;
+            }
+            if (_postStopFireCooldown > 0f && Time.unscaledTime - _lastStopTime < _postStopFireCooldown)
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] SequenceTrigger.FireWithStartGain ignored: post-Stop cooldown on {name}", this);
                 return;
             }
             _isActive = true;
