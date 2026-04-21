@@ -30,37 +30,53 @@ namespace Hapbeat
     }
 
     /// <summary>
-    /// Output parameter to write to.
+    /// Output parameter to write on the active StreamClip playback.
     /// </summary>
     public enum BindingOutputParameter
     {
-        Volume,
-        Pitch,
-        Pan,
-        BridgeGain
+        /// <summary>
+        /// Overall gain (0..2). Applied to every sample before sending. Use for
+        /// intensity modulation (e.g. stronger haptics as an object is pressed
+        /// harder or moved faster).
+        /// </summary>
+        StreamGain,
+        /// <summary>
+        /// Stereo pan (-1..+1). -1 = full left, 0 = centered, +1 = full right.
+        /// Ignored for mono clips. Uses an equal-power pan law so centered pan
+        /// preserves perceived loudness.
+        /// </summary>
+        StreamPan,
     }
 
     /// <summary>
-    /// Maps an external variable (Transform position, velocity, etc.) to an AudioSource
-    /// or HapbeatAudioBridge parameter for continuous haptic feedback control.
+    /// Maps an external variable (Transform position, velocity, …) onto the
+    /// active <see cref="HapbeatStreamPlayback"/> on a sibling
+    /// <see cref="HapbeatTriggerBase"/>. Write one parameter per component;
+    /// attach multiple instances to control multiple parameters at once.
     ///
-    /// Attach multiple instances to control multiple parameters independently.
-    /// Works with StreamSource mode — the AudioSource's parameters are captured by
-    /// HapbeatAudioBridge's OnAudioFilterRead.
+    /// <para>
+    /// Requires the trigger entry to be in <c>StreamClip</c> mode. While the
+    /// stream is active, <see cref="Update"/> reads the source value, applies
+    /// the curve + output range, and writes it into
+    /// <see cref="HapbeatStreamPlayback.Gain"/> or <see cref="HapbeatStreamPlayback.Pan"/>.
+    /// No Unity AudioSource is involved — the modulation happens entirely on
+    /// the SDK side just before samples hit the wire.
+    /// </para>
     ///
     /// <para><b>Linked vs standalone:</b></para>
     /// <para>
     /// When <see cref="_linkedEventMap"/> is set, all tuning values (inputMin/Max,
     /// curve, outputMin/Max, debug options) are read live from the matching
-    /// <see cref="HapbeatBindingPreset"/> in the EventMap — the local SerializedFields
-    /// are ignored at runtime. This lets designers tune haptics in the EventMap
-    /// during Play and see changes immediately.
+    /// <see cref="HapbeatBindingPreset"/> in the EventMap — the local
+    /// SerializedFields are ignored at runtime. This lets designers tune
+    /// haptics in the EventMap during Play and see changes immediately.
     /// </para>
     /// <para>
     /// When unlinked, the local SerializedFields are used directly (standalone mode).
     /// </para>
     ///
-    /// Example: PokeButton push depth → Volume → stronger vibration as button is pushed.
+    /// Example: held object velocity → StreamGain → stronger scrape haptic
+    /// the faster you drag it along a surface.
     /// </summary>
     [AddComponentMenu("Hapbeat/Hapbeat Parameter Binding")]
     public class HapbeatParameterBinding : MonoBehaviour
@@ -92,13 +108,12 @@ namespace Hapbeat
         private AnimationCurve _customCurve = AnimationCurve.Linear(0, 0, 1, 1);
 
         [Header("Output")]
-        [Tooltip("Which parameter to control.\n" +
-                 "Volume: AudioSource.volume (affects haptic intensity)\n" +
-                 "Pitch: AudioSource.pitch (affects vibration frequency)\n" +
-                 "Pan: AudioSource.panStereo (L/R balance)\n" +
-                 "BridgeGain: HapbeatAudioBridge.Gain (post-capture multiplier)")]
+        [Tooltip("Which stream parameter to control.\n" +
+                 "StreamGain: overall volume multiplier (0..2) on the active " +
+                 "StreamClip playback.\n" +
+                 "StreamPan: stereo pan (-1..+1). Ignored for mono clips.")]
         [SerializeField]
-        private BindingOutputParameter _outputParameter = BindingOutputParameter.Volume;
+        private BindingOutputParameter _outputParameter = BindingOutputParameter.StreamGain;
 
         [Tooltip("Output value when input is at inputMin.")]
         [SerializeField]
@@ -135,8 +150,7 @@ namespace Hapbeat
         private float _debugLogChangeThreshold = 0.02f;
 
         // Cached references
-        private AudioSource _audioSource;
-        private HapbeatAudioBridge _audioBridge;
+        private HapbeatTriggerBase _trigger;
         private Rigidbody _sourceRigidbody;
         private bool _initialized;
 
@@ -166,7 +180,6 @@ namespace Hapbeat
             if (_linkedEventMap == null || string.IsNullOrEmpty(_linkedBindingId))
                 return null;
 
-            // Cached reference still valid?
             if (_cachedPreset != null &&
                 ReferenceEquals(_cachedForMap, _linkedEventMap) &&
                 _cachedForId == _linkedBindingId)
@@ -196,35 +209,25 @@ namespace Hapbeat
 
         private float _lastDebugLogTime;
         private float _lastLoggedNormalized = float.NaN;
-        private bool _warnedNoSource;      // one-shot: source Transform unset
-        private bool _warnedNoSink;        // one-shot: no AudioSource/Bridge to write to
-        private bool _warnedPresetNotFound;// one-shot: linked preset id not found in map
+        private bool _warnedNoSource;       // one-shot: source Transform unset
+        private bool _warnedNoTrigger;      // one-shot: no sibling HapbeatTriggerBase
+        private bool _warnedPresetNotFound; // one-shot: linked preset id not found in map
 
         private void Start()
         {
             Initialize();
-            // One startup summary so the user can confirm the binding wired up correctly
-            // without enabling per-frame debugLog.
             var preset = ResolveLinkedPreset();
             string linkInfo = preset != null
-                ? $"linked(id={_linkedBindingId.Substring(0, Mathf.Min(8, _linkedBindingId.Length))}…)"
+                ? $"linked(id={_linkedBindingId.Substring(0, Mathf.Min(8, _linkedBindingId.Length))}\u2026)"
                 : (_linkedEventMap != null ? "linked(PRESET NOT FOUND)" : "standalone");
             Debug.Log(
                 $"[HapbeatBinding] Ready on {name}: " +
                 $"source={(_sourceTransform != null ? _sourceTransform.name : "(null)")} " +
                 $"property={EffectiveSourceProperty(preset)} " +
                 $"\u2192 {EffectiveOutputParameter(preset)} " +
-                $"sink={SinkDescription(preset)} " +
+                $"trigger={(_trigger != null ? _trigger.GetType().Name : "(none)")} " +
                 $"[{linkInfo}]",
                 this);
-        }
-
-        private string SinkDescription(HapbeatBindingPreset preset)
-        {
-            var outParam = EffectiveOutputParameter(preset);
-            if (outParam == BindingOutputParameter.BridgeGain)
-                return _audioBridge != null ? $"Bridge({_audioBridge.name})" : "(no HapbeatAudioBridge)";
-            return _audioSource != null ? $"AudioSource({_audioSource.name})" : "(no AudioSource)";
         }
 
         // --- Effective-value helpers: preset (if linked & resolved) wins over local. ---
@@ -264,8 +267,6 @@ namespace Hapbeat
                 return;
             }
 
-            // Resolve preset (null = standalone / preset missing). Preset values override
-            // the local SerializedFields.
             var preset = ResolveLinkedPreset();
             if (preset == null && _linkedEventMap != null && !_warnedPresetNotFound)
             {
@@ -285,38 +286,44 @@ namespace Hapbeat
             float outMin = EffectiveOutputMin(preset);
             float outMax = EffectiveOutputMax(preset);
 
-            // Read input
             float raw = ReadSourceValue(srcProp);
             CurrentInput = raw;
 
-            // Normalize to 0-1
             float range = inMax - inMin;
             float normalized = Mathf.Abs(range) > 0.0001f
                 ? Mathf.Clamp01((raw - inMin) / range)
                 : 0f;
             CurrentNormalized = normalized;
 
-            // Apply curve
             float curved = ApplyCurve(normalized, curveType, customCurve);
-
-            // Map to output range
             float output = Mathf.Lerp(outMin, outMax, curved);
             CurrentOutput = output;
 
-            // Write output (warn once if there is nothing to write to).
-            bool wrote = WriteOutput(outParam, output);
-            if (!wrote && !_warnedNoSink)
+            // Write to the trigger's active playback. If no stream is running
+            // (trigger hasn't fired, or stream already ended), silently skip —
+            // the binding just resumes writing when a fresh stream starts.
+            var playback = _trigger != null ? _trigger.ActivePlayback : null;
+            if (playback != null && !playback.IsStopped)
+            {
+                switch (outParam)
+                {
+                    case BindingOutputParameter.StreamGain:
+                        playback.Gain = output;
+                        break;
+                    case BindingOutputParameter.StreamPan:
+                        playback.Pan = output;
+                        break;
+                }
+            }
+            else if (_trigger == null && !_warnedNoTrigger)
             {
                 Debug.LogWarning(
-                    $"[HapbeatBinding] No valid sink for {outParam} on {name}. " +
-                    (outParam == BindingOutputParameter.BridgeGain
-                        ? "Add a HapbeatAudioBridge to this GameObject (or a parent/child)."
-                        : "Add an AudioSource to this GameObject (or a parent/child)."),
-                    this);
-                _warnedNoSink = true;
+                    $"[HapbeatBinding] No HapbeatTriggerBase found on {name} (or parent/child). " +
+                    "Add a HapbeatUnityEventTrigger / HapbeatSequenceTrigger / ... to this " +
+                    "GameObject so the binding has something to modulate.", this);
+                _warnedNoTrigger = true;
             }
 
-            // Debug log — only when value changed meaningfully AND throttle elapsed.
             if (EffectiveDebugLog(preset))
             {
                 float threshold = EffectiveDebugLogChangeThreshold(preset);
@@ -328,8 +335,10 @@ namespace Hapbeat
                 {
                     _lastDebugLogTime = Time.unscaledTime;
                     _lastLoggedNormalized = normalized;
+                    string streaming = playback != null && !playback.IsStopped ? "active" : "idle";
                     Debug.Log($"[HapbeatBinding] {srcProp} input={raw:F4} " +
-                              $"normalized={normalized:F2} \u2192 {outParam} output={output:F3}",
+                              $"normalized={normalized:F2} \u2192 {outParam} output={output:F3} " +
+                              $"(stream {streaming})",
                               this);
                 }
             }
@@ -337,22 +346,9 @@ namespace Hapbeat
 
         private void Initialize()
         {
-            // Prefer AudioSource with HapbeatAudioBridge (the "haptic" AudioSource)
-            _audioBridge = GetComponent<HapbeatAudioBridge>()
-                ?? GetComponentInChildren<HapbeatAudioBridge>()
-                ?? GetComponentInParent<HapbeatAudioBridge>();
-
-            if (_audioBridge != null)
-            {
-                _audioSource = _audioBridge.GetComponent<AudioSource>();
-            }
-            else
-            {
-                // Fallback: any AudioSource on hierarchy
-                _audioSource = GetComponent<AudioSource>()
-                    ?? GetComponentInParent<AudioSource>()
-                    ?? GetComponentInChildren<AudioSource>();
-            }
+            _trigger = GetComponent<HapbeatTriggerBase>()
+                ?? GetComponentInChildren<HapbeatTriggerBase>()
+                ?? GetComponentInParent<HapbeatTriggerBase>();
 
             if (_sourceTransform != null)
                 _sourceRigidbody = _sourceTransform.GetComponent<Rigidbody>();
@@ -375,6 +371,10 @@ namespace Hapbeat
             string linkInfo = preset != null
                 ? $"linked(id={_linkedBindingId})"
                 : (_linkedEventMap != null ? "linked(PRESET NOT FOUND)" : "standalone");
+            var playback = _trigger != null ? _trigger.ActivePlayback : null;
+            string playbackInfo = playback == null
+                ? "(no active stream)"
+                : $"gain={playback.Gain:F2} pan={playback.Pan:F2} stopped={playback.IsStopped}";
             Debug.Log(
                 $"[HapbeatBinding] STATE on {name}:\n" +
                 $"  mode={linkInfo}\n" +
@@ -382,7 +382,7 @@ namespace Hapbeat
                 $"  input(raw)={raw:F4}  input range=[{EffectiveInputMin(preset):F4}..{EffectiveInputMax(preset):F4}]\n" +
                 $"  current: input={CurrentInput:F4} normalized={CurrentNormalized:F2} output={CurrentOutput:F3}\n" +
                 $"  output={EffectiveOutputParameter(preset)} range=[{EffectiveOutputMin(preset):F3}..{EffectiveOutputMax(preset):F3}]\n" +
-                $"  sink={SinkDescription(preset)}",
+                $"  trigger={(_trigger != null ? _trigger.GetType().Name : "(none)")} playback={playbackInfo}",
                 this);
         }
 
@@ -427,39 +427,8 @@ namespace Hapbeat
             }
         }
 
-        /// <summary>
-        /// Writes the computed value to the configured output parameter.
-        /// Returns true if the value was written (i.e. a valid sink existed), false
-        /// otherwise. Used to trigger a one-shot misconfiguration warning.
-        /// </summary>
-        private bool WriteOutput(BindingOutputParameter outParam, float value)
-        {
-            switch (outParam)
-            {
-                case BindingOutputParameter.Volume:
-                    if (_audioSource == null) return false;
-                    _audioSource.volume = Mathf.Clamp01(value);
-                    return true;
-                case BindingOutputParameter.Pitch:
-                    if (_audioSource == null) return false;
-                    _audioSource.pitch = Mathf.Clamp(value, -3f, 3f);
-                    return true;
-                case BindingOutputParameter.Pan:
-                    if (_audioSource == null) return false;
-                    _audioSource.panStereo = Mathf.Clamp(value, -1f, 1f);
-                    return true;
-                case BindingOutputParameter.BridgeGain:
-                    if (_audioBridge == null) return false;
-                    _audioBridge.Gain = value;
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
         private void OnValidate()
         {
-            // Re-initialize caches when Inspector values change.
             _initialized = false;
             _cachedPreset = null;
             _warnedPresetNotFound = false;

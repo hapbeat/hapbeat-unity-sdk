@@ -47,7 +47,7 @@ namespace Hapbeat
         public BindingCurveType curveType = BindingCurveType.Linear;
         public AnimationCurve customCurve = AnimationCurve.Linear(0, 0, 1, 1);
 
-        public BindingOutputParameter outputParameter = BindingOutputParameter.Volume;
+        public BindingOutputParameter outputParameter = BindingOutputParameter.StreamGain;
         public float outputMin = 0f;
         public float outputMax = 1f;
 
@@ -66,15 +66,16 @@ namespace Hapbeat
     {
         /// <summary>Send eventId command. Device resolves clip locally from installed Pack.</summary>
         Command,
-        /// <summary>Stream an AudioClip over UDP as PCM16. No Pack needed on device.</summary>
+        /// <summary>Stream an AudioClip over UDP as PCM16. No Pack needed on device.
+        /// Dynamic gain / pan modulation via HapbeatParameterBinding is supported
+        /// through the returned <see cref="HapbeatStreamPlayback"/> handle.</summary>
         StreamClip,
-        /// <summary>Capture AudioSource output and stream over UDP. For real-time/spatial audio.</summary>
-        StreamSource
     }
 
     /// <summary>
     /// A single haptic event definition within a HapbeatEventMap.
-    /// Supports three modes: Command (eventId), StreamClip (AudioClip), and StreamSource (AudioSource).
+    /// Supports two modes: Command (eventId) and StreamClip (AudioClip + optional
+    /// ParameterBinding modulation for dynamic gain / pan).
     /// </summary>
     [Serializable]
     public class HapbeatEventEntry : ISerializationCallbackReceiver
@@ -103,8 +104,8 @@ namespace Hapbeat
 
         [Tooltip("How this event triggers haptic feedback.\n" +
                  "Command: send eventId, device plays local clip.\n" +
-                 "StreamClip: stream AudioClip over UDP.\n" +
-                 "StreamSource: capture AudioSource output and stream.")]
+                 "StreamClip: stream AudioClip over UDP. Supports runtime " +
+                 "modulation via HapbeatParameterBinding (StreamGain / StreamPan).")]
         public HapticMode mode = HapticMode.Command;
 
         // ---- Event ID (Command mode) ----
@@ -118,28 +119,21 @@ namespace Hapbeat
         [Tooltip("Event name within the category (e.g. hit, click, grab).")]
         public string eventName = "";
 
-        // ---- StreamClip / StreamSource mode ----
+        // ---- StreamClip mode ----
 
-        [Tooltip("AudioClip.\n" +
-                 "StreamClip mode: streamed over UDP as PCM16.\n" +
-                 "StreamSource mode: used as the default AudioSource clip when adding AudioSource via Batch Setup.")]
+        [Tooltip("AudioClip streamed over UDP as PCM16 (StreamClip mode only).")]
         public AudioClip streamClip;
 
-        // ---- StreamSource mode ----
-
-        [Tooltip("Mute speaker output when streaming. Audio is captured for haptics only.")]
-        public bool silentMode = true;
-
-        [Tooltip("Loop playback.\n" +
-                 "StreamClip: re-stream the clip continuously until Stop() is called " +
-                 "(used by HapbeatSequenceTrigger's Loop phase).\n" +
-                 "StreamSource: set AudioSource.loop on the captured source.\n\n" +
+        [Tooltip("Loop playback. Re-streams the clip continuously until Stop() is " +
+                 "called (used by HapbeatSequenceTrigger's Loop phase and by " +
+                 "continuously-modulated effects like drag / scrape).\n\n" +
                  "Default is off so a typical StreamClip entry fires as a one-shot. " +
-                 "Turn on only for sustained / hold-style effects.")]
+                 "Turn on for sustained / hold-style effects.")]
         public bool loop = false;
 
         [Tooltip("Parameter bindings applied on the target GameObject via Batch Setup.\n" +
-                 "Each binding creates a HapbeatParameterBinding component.")]
+                 "Each binding creates a HapbeatParameterBinding component that " +
+                 "modulates StreamGain / StreamPan on the active StreamClip playback.")]
         public List<HapbeatBindingPreset> bindings = new List<HapbeatBindingPreset>();
 
         // ---- Gain ----
@@ -203,7 +197,6 @@ namespace Hapbeat
             switch (mode)
             {
                 case HapticMode.StreamClip:
-                case HapticMode.StreamSource:
                     return _cachedManifestIntensity > 0f
                         ? gain * _cachedManifestIntensity
                         : gain;
@@ -256,8 +249,6 @@ namespace Hapbeat
             {
                 case HapticMode.StreamClip:
                     return streamClip != null ? streamClip.name : "(no clip)";
-                case HapticMode.StreamSource:
-                    return "AudioSource";
                 default:
                     return eventId;
             }
@@ -269,17 +260,15 @@ namespace Hapbeat
         ///   <list type="bullet">
         ///     <item>&gt; — Command (fire a device-side clip by eventId)</item>
         ///     <item>♪ — StreamClip (stream a Unity AudioClip over UDP)</item>
-        ///     <item>~ — StreamSource (capture a live AudioSource)</item>
         ///   </list>
         /// </summary>
         public string GetModeIcon()
         {
             switch (mode)
             {
-                case HapticMode.StreamClip:   return "\u266a";  // ♪
-                case HapticMode.StreamSource: return "~";
-                case HapticMode.Command:      return ">";
-                default:                      return "\u25cf";  // ● fallback
+                case HapticMode.StreamClip: return "\u266a";  // ♪
+                case HapticMode.Command:    return ">";
+                default:                    return "\u25cf";  // ● fallback
             }
         }
 

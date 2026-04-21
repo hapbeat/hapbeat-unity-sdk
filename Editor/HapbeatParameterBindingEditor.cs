@@ -99,7 +99,10 @@ namespace Hapbeat.Editor
                 EditorGUILayout.Space(4);
                 EditorGUILayout.LabelField("Output", EditorStyles.boldLabel);
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("_outputParameter"),
-                    new GUIContent("Parameter", "Volume: AudioSource.volume (haptic intensity)\nPitch: AudioSource.pitch (vibration frequency)\nPan: AudioSource.panStereo (L/R)\nBridgeGain: HapbeatAudioBridge.Gain"));
+                    new GUIContent("Parameter",
+                        "StreamGain: overall volume multiplier on the active StreamClip " +
+                        "playback (0..2). Use for intensity modulation.\n" +
+                        "StreamPan: stereo pan (-1..+1). Ignored for mono clips."));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("_outputMin"),
                     new GUIContent("Output Min", "Output value when input = inputMin."));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("_outputMax"),

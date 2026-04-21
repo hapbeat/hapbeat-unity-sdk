@@ -59,7 +59,8 @@ namespace Hapbeat.Editor
                 DrawEntryDropdown(eventMap, serializedObject.FindProperty("_entryIndex"),
                     "Loop (hold)",
                     "Continuous haptic that plays between Fire() and Stop(). " +
-                    "Normally a StreamSource or a StreamClip with loop=true.",
+                    "Normally a StreamClip with loop=true, optionally driven by a " +
+                    "HapbeatParameterBinding for dynamic gain / pan modulation.",
                     allowNone: false);
 
                 DrawEntryDropdown(eventMap, _onStopProp,
@@ -90,7 +91,7 @@ namespace Hapbeat.Editor
                     "Fire() \u306f On Start \u306e\u4e00\u767a\u30b7\u30e7\u30c3\u30c8\u3092\u9001\u308a\u3001\u305d\u306e\u307e\u307e Loop \u3092\u958b\u59cb\u3057\u307e\u3059\u3002\n" +
                     "Stop() \u306f Loop \u3092\u6b62\u3081\u3001On Stop \u306e\u4e00\u767a\u30b7\u30e7\u30c3\u30c8\u3092\u9001\u308a\u307e\u3059\u3002\n\n" +
                     "\u4f7f\u308f\u306a\u3044\u30d5\u30a7\u30fc\u30ba\u306f \u300c(none)\u300d \u306b\u3057\u307e\u3059\u3002\n" +
-                    "On Start / On Stop \u306f Command \u307e\u305f\u306f StreamClip \u306b\u3057\u307e\u3059 \u2014 StreamSource \u306f\u4e00\u767a\u7528\u9014\u306b\u306f\u4e0d\u9069\u3002",
+                    "On Start / On Stop \u306f Command \u307e\u305f\u306f StreamClip \u306e\u4e00\u767a\u3067\u4f7f\u3044\u307e\u3059\u3002",
                     MessageType.Info);
 
                 EditorGUILayout.HelpBox(

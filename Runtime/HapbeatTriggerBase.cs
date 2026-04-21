@@ -5,7 +5,10 @@ namespace Hapbeat
     /// <summary>
     /// Abstract base for all Hapbeat trigger components.
     /// References a HapbeatEventMap and a specific entry index.
-    /// Supports Command, StreamClip, and StreamSource modes.
+    /// Supports Command and StreamClip modes. When a StreamClip entry fires,
+    /// the resulting <see cref="HapbeatStreamPlayback"/> handle is exposed via
+    /// <see cref="ActivePlayback"/> so <see cref="HapbeatParameterBinding"/>
+    /// components can modulate gain / pan in real time.
     /// </summary>
     public abstract class HapbeatTriggerBase : MonoBehaviour
     {
@@ -36,9 +39,9 @@ namespace Hapbeat
 
         protected float _lastFireTime = float.NegativeInfinity;
 
-        // Cached AudioBridge/Source for StreamSource mode
-        private HapbeatAudioBridge _cachedAudioBridge;
-        private AudioSource _cachedAudioSource;
+        // Handle to the currently-playing StreamClip (if any). Exposed so
+        // HapbeatParameterBinding can modulate gain / pan each frame.
+        private HapbeatStreamPlayback _activePlayback;
 
         // One-shot warning gates (so misconfiguration prints once, not every frame).
         private bool _warnedNoManager;
@@ -58,8 +61,25 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Active StreamClip playback handle, or null if nothing is streaming.
+        /// Used by <see cref="HapbeatParameterBinding"/> to write Gain / Pan
+        /// each frame. Cleared automatically when the stream stops.
+        /// </summary>
+        public HapbeatStreamPlayback ActivePlayback
+        {
+            get
+            {
+                // Clear the cached handle once the stream has ended so bindings
+                // don't keep writing into a zombie object.
+                if (_activePlayback != null && _activePlayback.IsStopped)
+                    _activePlayback = null;
+                return _activePlayback;
+            }
+        }
+
+        /// <summary>
         /// Fire the haptic event referenced by this trigger.
-        /// Behavior depends on the entry's mode (Command, StreamClip, StreamSource).
+        /// Behavior depends on the entry's mode (Command or StreamClip).
         /// </summary>
         protected void FireHaptic()
         {
@@ -144,14 +164,20 @@ namespace Hapbeat
                                       $"target='{target ?? "(broadcast)"}' gain={entry.gain:F2} " +
                                       $"intensity={(entry.CachedManifestIntensity > 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
                                       $"effective={streamGain:F2} loop={entry.loop}", this);
-                        HapbeatManager.Instance.StreamAudioClip(entry.streamClip, streamGain, target, entry.loop);
+                        _activePlayback = HapbeatManager.Instance.StreamAudioClip(
+                            entry.streamClip, streamGain, target, entry.loop);
+                        // Summarize parameter bindings that will modulate this stream so
+                        // the user can verify wiring at trigger time.
+                        if (_verboseLog)
+                        {
+                            var bindings = GetComponents<HapbeatParameterBinding>();
+                            Debug.Log(
+                                $"[Hapbeat] \u266a StreamClip start: \"{label}\" " +
+                                $"(effective gain={streamGain:F2}, loop={entry.loop}, " +
+                                $"{bindings.Length} binding(s))",
+                                this);
+                        }
                     }
-                    break;
-
-                case HapticMode.StreamSource:
-                    if (_verboseLog)
-                        Debug.Log($"[Hapbeat] Fire StreamSource: entry='{label}' target='{target ?? "(broadcast)"}' gain={entry.gain:F2}", this);
-                    StartAudioSourceStream(entry);
                     break;
             }
         }
@@ -180,108 +206,14 @@ namespace Hapbeat
                     break;
 
                 case HapticMode.StreamClip:
+                    // Stop via the playback handle if it's still alive (which
+                    // also lets bindings notice via IsStopped), then tell the
+                    // manager so it tears down the coroutine.
+                    _activePlayback?.Stop();
                     HapbeatManager.Instance.StopStream();
-                    break;
-
-                case HapticMode.StreamSource:
-                    StopAudioSourceStream();
+                    _activePlayback = null;
                     break;
             }
-        }
-
-        /// <summary>
-        /// Find the Hapbeat-tagged AudioSource (one with HapbeatAudioBridge) and start streaming.
-        /// Falls back to any AudioSource if no bridge exists yet.
-        /// </summary>
-        private void StartAudioSourceStream(HapbeatEventEntry entry)
-        {
-            // Priority 1: existing HapbeatAudioBridge identifies the target AudioSource
-            var bridge = GetComponent<HapbeatAudioBridge>() ?? GetComponentInChildren<HapbeatAudioBridge>();
-            AudioSource audioSource;
-
-            if (bridge != null)
-            {
-                audioSource = bridge.GetComponent<AudioSource>();
-                if (audioSource == null)
-                {
-                    Debug.LogWarning($"[Hapbeat] StreamSource: HapbeatAudioBridge on {bridge.gameObject.name} has no AudioSource.");
-                    return;
-                }
-            }
-            else
-            {
-                // Fallback: find any AudioSource and add a bridge to it
-                audioSource = GetComponent<AudioSource>() ?? GetComponentInChildren<AudioSource>();
-                if (audioSource == null)
-                {
-                    Debug.LogWarning($"[Hapbeat] StreamSource: No AudioSource found on {gameObject.name} or children.");
-                    return;
-                }
-                bridge = audioSource.gameObject.AddComponent<HapbeatAudioBridge>();
-            }
-
-            // Effective gain = entry.gain × manifest.intensity (cached). Stream modes
-            // must apply intensity themselves — see HapbeatEventEntry.GetEffectiveGain.
-            float effectiveGain = entry.GetEffectiveGain();
-            bridge.Gain = effectiveGain;
-            bridge.Target = entry.HasTarget ? entry.target : null;
-            bridge.SilentMode = entry.silentMode;
-            audioSource.loop = entry.loop;
-            bridge.StartStreaming();
-
-            if (!audioSource.isPlaying)
-                audioSource.Play();
-
-            _cachedAudioBridge = bridge;
-            _cachedAudioSource = audioSource;
-
-            string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
-
-            // Summarize attached ParameterBindings so the user can verify continuous-control
-            // wiring at trigger time (instead of having to open each binding's Inspector).
-            var bindings = audioSource.GetComponents<HapbeatParameterBinding>();
-            string bindingSummary;
-            if (bindings.Length == 0)
-            {
-                bindingSummary = "no bindings (static level)";
-            }
-            else
-            {
-                var parts = new System.Text.StringBuilder();
-                for (int i = 0; i < bindings.Length; i++)
-                {
-                    if (i > 0) parts.Append(", ");
-                    var b = bindings[i];
-                    // Use the Inspector's serialized field via SerializedObject? Avoid —
-                    // Runtime. Instead rely on the binding's startup log for full detail.
-                    parts.Append($"#{i}");
-                }
-                bindingSummary = $"{bindings.Length} binding(s): {parts}";
-            }
-
-            // Include both raw and effective gain so the user can see at a glance
-            // whether manifest intensity is being applied. "intensity=?" means the
-            // cache is unresolved — deploy the Kit from Studio and Refresh the
-            // EventMap (↻ toolbar) to populate it.
-            string intensityPart = entry.CachedManifestIntensity > 0f
-                ? $"intensity={entry.CachedManifestIntensity:F2}"
-                : "intensity=? (not cached)";
-            Debug.Log(
-                $"[Hapbeat] \u223c StreamSource start: \"{label}\" on {audioSource.gameObject.name} " +
-                $"(gain={entry.gain:F2} \u00d7 {intensityPart} \u2192 effective={effectiveGain:F2}, " +
-                $"loop={entry.loop}, silent={entry.silentMode}, {bindingSummary})",
-                this);
-        }
-
-        private void StopAudioSourceStream()
-        {
-            if (_cachedAudioBridge != null && _cachedAudioBridge.IsStreaming)
-            {
-                _cachedAudioBridge.StopStreaming();
-                Debug.Log($"[Hapbeat] \u223c StreamSource stop");
-            }
-            if (_cachedAudioSource != null && _cachedAudioSource.isPlaying)
-                _cachedAudioSource.Stop();
         }
     }
 }

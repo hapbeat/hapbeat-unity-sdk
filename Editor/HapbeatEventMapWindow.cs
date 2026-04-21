@@ -57,15 +57,13 @@ namespace Hapbeat.Editor
 
         /// <summary>
         /// Display labels for <see cref="HapticMode"/>. Order MUST match the enum
-        /// declaration (Command, StreamClip, StreamSource) so the popup index
-        /// round-trips cleanly. Uses the same FIRE/CLIP/LIVE vocabulary as
-        /// hapbeat-studio's mode toggle for authoring continuity.
+        /// declaration (Command, StreamClip) so the popup index round-trips
+        /// cleanly.
         /// </summary>
         private static readonly string[] s_ModeLabels =
         {
             "FIRE (Command)",
             "CLIP (Stream Clip)",
-            "LIVE (Stream Source)",
         };
 
         // Cached scene scan results
@@ -814,7 +812,6 @@ namespace Hapbeat.Editor
                         break;
                     }
                 case HapticMode.StreamClip:
-                case HapticMode.StreamSource:
                     {
                         var clipProp = entryProp.FindPropertyRelative("streamClip");
                         var old = clipProp.objectReferenceValue;
@@ -948,7 +945,6 @@ namespace Hapbeat.Editor
                 menu.AddSeparator("");
                 menu.AddItem(new GUIContent("Set Mode/FIRE (Command)"), false, () => BatchSetMode(selected, HapticMode.Command));
                 menu.AddItem(new GUIContent("Set Mode/CLIP (Stream Clip)"), false, () => BatchSetMode(selected, HapticMode.StreamClip));
-                menu.AddItem(new GUIContent("Set Mode/LIVE (Stream Source)"), false, () => BatchSetMode(selected, HapticMode.StreamSource));
                 menu.AddSeparator("");
                 menu.AddItem(new GUIContent("Set Gain.../0.5"), false, () => BatchSetGain(selected, 0.5f));
                 menu.AddItem(new GUIContent("Set Gain.../1.0"), false, () => BatchSetGain(selected, 1.0f));
@@ -1008,7 +1004,7 @@ namespace Hapbeat.Editor
         /// <summary>
         /// Full deep copy of a <see cref="HapbeatEventEntry"/>. Covers ALL
         /// user-visible fields (mode / displayName / eventId parts / streamClip /
-        /// loop / silentMode / bindings / gain / target / group / notes) so clipboard
+        /// loop / bindings / gain / target / group / notes) so clipboard
         /// operations and duplicate/batch-duplicate don't silently drop data.
         ///
         /// Binding GUIDs are regenerated so duplicated presets don't alias back to
@@ -1025,7 +1021,6 @@ namespace Hapbeat.Editor
                 category = src.category,
                 eventName = src.eventName,
                 streamClip = src.streamClip,
-                silentMode = src.silentMode,
                 loop = src.loop,
                 bindings = CloneBindings(src.bindings),
                 gain = src.gain,
@@ -1362,7 +1357,6 @@ namespace Hapbeat.Editor
             dst.eventName = _clipboardEntry.eventName;
             dst.streamClip = _clipboardEntry.streamClip;
             dst.loop = _clipboardEntry.loop;
-            dst.silentMode = _clipboardEntry.silentMode;
             dst.bindings = CloneBindings(_clipboardEntry.bindings);
             dst.gain = _clipboardEntry.gain;
             dst.target = _clipboardEntry.target;
@@ -1408,7 +1402,7 @@ namespace Hapbeat.Editor
 
             // Mode — labelled to match Studio's FIRE / CLIP / LIVE shorthand so
             // authors see the same terminology across both tools. The underlying
-            // enum names (Command / StreamClip / StreamSource) stay unchanged,
+            // enum names (Command / StreamClip) stay unchanged,
             // so serialized data is unaffected.
             var modeProp = entryProp.FindPropertyRelative("mode");
             int newModeIdx = EditorGUILayout.Popup(
@@ -1436,25 +1430,16 @@ namespace Hapbeat.Editor
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
                         new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16.\nDrag from your HapbeatKits/<kit>/stream-clips/ folder."));
                     DrawKitFolderHint("stream-clips");
-                    // Loop is meaningful for StreamClip now — used by HapbeatSequenceTrigger's
-                    // hold phase so a short clip repeats until Stop() is called.
+                    // Loop is meaningful for StreamClip — used by HapbeatSequenceTrigger's
+                    // hold phase so a short clip repeats until Stop() is called, and by
+                    // continuously-modulated effects (drag/scrape) driven by bindings.
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("loop"),
                         new GUIContent("Loop",
                             "Keep re-streaming this clip until Stop() is called.\n" +
-                            "Use for HapbeatSequenceTrigger's hold phase (grab/hold/release).\n" +
+                            "Use for HapbeatSequenceTrigger's hold phase, and for " +
+                            "continuously-modulated effects (drag / scrape) whose gain " +
+                            "is driven by a HapbeatParameterBinding.\n" +
                             "Leave off for one-shot impacts."));
-                    break;
-                case HapticMode.StreamSource:
-                    EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
-                        new GUIContent("Default Clip",
-                            "AudioClip reference (optional). Studio exports this WAV to stream-clips/.\n" +
-                            "Batch Setup uses it as the default AudioSource clip.\n" +
-                            "Drag from your HapbeatKits/<kit>/stream-clips/ folder."));
-                    DrawKitFolderHint("stream-clips");
-                    EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("silentMode"),
-                        new GUIContent("Silent Mode", "Mute speaker output. Audio captured for haptics only."));
-                    EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("loop"),
-                        new GUIContent("Loop", "Loop the AudioSource playback."));
                     DrawBindingsList(entryProp);
                     break;
             }
@@ -1463,8 +1448,8 @@ namespace Hapbeat.Editor
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("gain"),
                 new GUIContent("Gain",
                     "Master gain multiplier for this entry. 0.0 = silent, 1.0 = normal, 2.0 = maximum.\n\n" +
-                    "For StreamSource: multiplied on top of Binding outputs.\n" +
-                    "Example: Binding Volume output = 1.0, Gain = 0.5 → device receives audio × 0.5"));
+                    "For StreamClip with bindings: multiplied with the binding's StreamGain output.\n" +
+                    "Example: Binding StreamGain = 1.0, entry Gain = 0.5 → stream is sent at 0.5 × samples"));
 
             // --- Targeting ---
             EditorGUILayout.Space(4);
@@ -1604,10 +1589,9 @@ namespace Hapbeat.Editor
         /// Buttons fire on <b>MouseDown</b> (press), not MouseUp (release), so feedback
         /// feels instant when tuning haptic intensity.
         ///
-        /// For StreamSource entries, test-play falls back to streaming the configured
-        /// <c>streamClip</c> (if any) since there's no live AudioSource to capture from
-        /// during test-play — the in-scene trigger is still the primary way to exercise
-        /// StreamSource with its parameter bindings.
+        /// For StreamClip entries with parameter bindings, test-play streams
+        /// the clip with the entry's effective gain; runtime modulation from
+        /// bindings only takes effect in Play mode via the in-scene trigger.
         /// </summary>
         private static void DrawTestPlayBar(HapbeatEventEntry entry)
         {
@@ -1626,7 +1610,7 @@ namespace Hapbeat.Editor
 
             // Extra warning for stream modes with no matching manifest intensity —
             // the designer's authored intensity is being silently ignored.
-            bool missingIntensity = (entry.mode == HapticMode.StreamClip || entry.mode == HapticMode.StreamSource)
+            bool missingIntensity = entry.mode == HapticMode.StreamClip
                 && entry.streamClip != null
                 && entry.CachedManifestIntensity <= 0f;
 
@@ -1807,28 +1791,6 @@ namespace Hapbeat.Editor
                     }
                     break;
 
-                case HapticMode.StreamSource:
-                    {
-                        // No live AudioSource at edit-time. Fall back to streaming the configured
-                        // clip so the designer can still audition the audio content quickly.
-                        if (entry.streamClip == null)
-                        {
-                            Debug.LogWarning(
-                                "[Hapbeat] Test-play: StreamSource entry has no streamClip to preview. " +
-                                "Assign one in the entry, or test in a scene with a live AudioSource.");
-                            return;
-                        }
-                        float eff = entry.GetEffectiveGain();
-                        if (entry.CachedManifestIntensity <= 0f)
-                            Debug.LogWarning(
-                                $"[Hapbeat] Test-play StreamSource: manifest intensity not found for '{entry.streamClip.name}'. " +
-                                $"Sending gain={eff:F2} without intensity factor.");
-                        if (usePlayPath)
-                            HapbeatManager.Instance.StreamAudioClip(entry.streamClip, eff, target, entry.loop);
-                        else
-                            HapbeatEditorTransport.StartStream(entry.streamClip, eff, target, entry.loop);
-                    }
-                    break;
             }
         }
 
@@ -1855,7 +1817,6 @@ namespace Hapbeat.Editor
                     }
                     break;
                 case HapticMode.StreamClip:
-                case HapticMode.StreamSource:
                     if (usePlayPath)
                         HapbeatManager.Instance.StopStream();
                     else
@@ -1890,7 +1851,7 @@ namespace Hapbeat.Editor
                 newProp.FindPropertyRelative("inputMin").floatValue = 0f;
                 newProp.FindPropertyRelative("inputMax").floatValue = 1f;
                 newProp.FindPropertyRelative("curveType").enumValueIndex = (int)BindingCurveType.Linear;
-                newProp.FindPropertyRelative("outputParameter").enumValueIndex = (int)BindingOutputParameter.Volume;
+                newProp.FindPropertyRelative("outputParameter").enumValueIndex = (int)BindingOutputParameter.StreamGain;
                 newProp.FindPropertyRelative("outputMin").floatValue = 0f;
                 newProp.FindPropertyRelative("outputMax").floatValue = 1f;
                 newProp.FindPropertyRelative("debugLog").boolValue = false;
@@ -1955,11 +1916,11 @@ namespace Hapbeat.Editor
 
                 EditorGUILayout.PropertyField(outProp,
                     new GUIContent("Output",
-                        "Volume: AudioSource.volume (0-1). Applied BEFORE capture.\n" +
-                        "Pitch: AudioSource.pitch (-3 to 3). Vibration frequency.\n" +
-                        "Pan: AudioSource.panStereo (-1 to 1). L/R balance.\n" +
-                        "BridgeGain: HapbeatAudioBridge.Gain (0-2). Applied AFTER capture.\n\n" +
-                        "Final device value = audio × Volume × BridgeGain × entry.gain"));
+                        "StreamGain: overall volume multiplier on the active StreamClip " +
+                        "playback (0..2). Use for intensity modulation.\n" +
+                        "StreamPan: stereo pan (-1..+1). Ignored for mono clips.\n\n" +
+                        "Final device samples = audio × StreamGain × entry.gain × " +
+                        "(per-channel pan coefficients)"));
                 EditorGUILayout.BeginHorizontal();
                 EditorGUILayout.PrefixLabel(new GUIContent("Output Range",
                     "Target values at input min/max."));
@@ -2468,7 +2429,7 @@ namespace Hapbeat.Editor
         /// <summary>
         /// Show a small inline hint + "Reveal" button pointing to the kit subfolder
         /// that corresponds to the current mode (clips/ for Command, stream-clips/ for
-        /// StreamClip/StreamSource).  Searches Assets/HapbeatKits/ for installed kits
+        /// StreamClip).  Searches Assets/HapbeatKits/ for installed kits
         /// and pings the first matching subfolder in the Project window.
         /// </summary>
         private static void DrawKitFolderHint(string subfolder)
@@ -2580,7 +2541,7 @@ namespace Hapbeat.Editor
             // Subfolder doesn't exist yet — ping the kits root and hint to Save/Deploy
             string hint = subfolder == "clips"
                 ? "No clips/ folder found. Deploy a Kit that contains Command events."
-                : "No stream-clips/ folder found. Deploy a Kit that contains StreamClip or StreamSource events.";
+                : "No stream-clips/ folder found. Deploy a Kit that contains StreamClip events.";
             UnityEngine.Debug.LogWarning($"[Hapbeat] {hint}");
             UnityEngine.Object kitsFolder =
                 AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(kitsRoot);
@@ -2704,7 +2665,7 @@ namespace Hapbeat.Editor
 
             foreach (var comp in go.GetComponents<Component>())
             {
-                if (comp == null || comp is HapbeatTriggerBase || comp is HapbeatEvent || comp is HapbeatAudioBridge)
+                if (comp == null || comp is HapbeatTriggerBase || comp is HapbeatEvent)
                     continue;
 
                 string compName = comp.GetType().Name;

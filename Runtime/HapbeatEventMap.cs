@@ -49,7 +49,7 @@ namespace Hapbeat
 
         /// <summary>
         /// Get display names for all entries (useful for editor dropdowns). Each line
-        /// is prefixed with the entry's mode icon so Command / StreamClip / StreamSource
+        /// is prefixed with the entry's mode icon so Command / StreamClip
         /// are distinguishable at a glance.
         /// </summary>
         public string[] GetDisplayNames()

@@ -12,9 +12,11 @@ namespace Hapbeat
     ///   <item><b>On Start</b> — impact moment (grab click, attach, enter).
     ///     Typically Command or StreamClip, not looping.</item>
     ///   <item><b>Loop</b> — continuous sustain (held rumble, drag scrape).
-    ///     Typically StreamSource or a looping StreamClip. Uses the inherited
-    ///     <c>_entryIndex</c> field so it plugs into the same FireHaptic /
-    ///     StopHaptic pipeline as <see cref="HapbeatUnityEventTrigger"/>.</item>
+    ///     A looping StreamClip entry. Attach a HapbeatParameterBinding to
+    ///     modulate its gain / pan from game state (velocity, position …)
+    ///     while the loop is running. Uses the inherited <c>_entryIndex</c>
+    ///     field so it plugs into the same FireHaptic / StopHaptic pipeline
+    ///     as <see cref="HapbeatUnityEventTrigger"/>.</item>
     ///   <item><b>On Stop</b> — release moment (release thud, exit ping).
     ///     Typically Command or StreamClip, not looping.</item>
     /// </list>
@@ -29,14 +31,12 @@ namespace Hapbeat
     {
         [Header("Sequence")]
         [Tooltip("Event map entry played as a one-shot when Fire() is called. " +
-                 "-1 = none. Use Command or StreamClip mode — StreamSource mode " +
-                 "doesn't make sense for a one-shot.")]
+                 "-1 = none.")]
         [SerializeField]
         private int _onStartEntryIndex = -1;
 
         [Tooltip("Event map entry played as a one-shot when Stop() is called. " +
-                 "-1 = none. Use Command or StreamClip mode — StreamSource mode " +
-                 "doesn't make sense for a one-shot.")]
+                 "-1 = none.")]
         [SerializeField]
         private int _onStopEntryIndex = -1;
 
@@ -243,13 +243,6 @@ namespace Hapbeat
                     // One-shots never loop — entry.loop applies only to the Loop phase,
                     // which goes through the inherited FireHaptic() path.
                     HapbeatManager.Instance.StreamAudioClip(entry.streamClip, gain, target, loop: false);
-                    break;
-
-                case HapticMode.StreamSource:
-                    Debug.LogWarning(
-                        $"[Hapbeat] Sequence {phase}-shot: entry '{label}' is StreamSource mode, which is " +
-                        $"not supported for one-shots (it needs an AudioSource to capture from). " +
-                        $"Use Command or StreamClip for the {phase}-shot entry.", this);
                     break;
             }
         }

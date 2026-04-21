@@ -10,7 +10,7 @@ namespace Hapbeat.Editor
     /// <summary>
     /// Editor-only lookup for the <c>parameters.intensity</c> value authored in a
     /// Kit's <c>manifest.json</c>, keyed either by eventId (for Command mode) or
-    /// by AudioClip asset path (for StreamClip / StreamSource).
+    /// by AudioClip asset path (for StreamClip).
     ///
     /// Why this exists:
     /// <list type="bullet">
@@ -53,11 +53,10 @@ namespace Hapbeat.Editor
         /// Matching rule:
         /// <list type="bullet">
         ///   <item><b>Command</b>: match by <c>eventId</c>.</item>
-        ///   <item><b>StreamClip / StreamSource</b>: match by <c>streamClip</c>'s asset
+        ///   <item><b>StreamClip</b>: match by <c>streamClip</c>'s asset
         ///     path against <c>&lt;kit&gt;/&lt;manifest.clip&gt;</c>. If that fails
         ///     (no clip set, or clip not found in any manifest), fall back to matching
-        ///     by <c>eventId</c> — this covers StreamSource entries that don't have a
-        ///     default clip but still have the Kit event's intensity authored in Studio.</item>
+        ///     by <c>eventId</c>.</item>
         /// </list>
         /// </summary>
         public static bool TryGetIntensity(HapbeatEventEntry entry, out float intensity)
@@ -72,7 +71,7 @@ namespace Hapbeat.Editor
                 return TryMatchByEventId(all, entry.eventId, out intensity);
             }
 
-            // StreamClip / StreamSource — prefer clip-path match (more specific).
+            // StreamClip — prefer clip-path match (more specific).
             if (entry.streamClip != null)
             {
                 string clipAssetPath = AssetDatabase.GetAssetPath(entry.streamClip);
@@ -91,10 +90,8 @@ namespace Hapbeat.Editor
                 }
             }
 
-            // Fallback: StreamSource entries frequently have no default streamClip
-            // (they capture a live AudioSource instead), but the Kit event may
-            // still have an intensity authored in Studio. Match by eventId if the
-            // user set category/eventName on the entry.
+            // Fallback: match by eventId if the user set category/eventName on
+            // the entry but the clip asset path didn't resolve.
             if (!string.IsNullOrEmpty(entry.eventId))
                 return TryMatchByEventId(all, entry.eventId, out intensity);
 

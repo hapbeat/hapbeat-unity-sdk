@@ -11,7 +11,15 @@ namespace Hapbeat.Editor
     /// <summary>
     /// Batch setup tool for adding/updating/removing Hapbeat triggers on multiple GameObjects.
     /// Scans target objects to discover available UnityEvent fields on any component.
-    /// Supports both HapbeatUnityEventTrigger and HapbeatCollisionTrigger.
+    /// Supports HapbeatUnityEventTrigger, HapbeatCollisionTrigger and HapbeatSequenceTrigger.
+    ///
+    /// <para>
+    /// Reference workflow: drop a GameObject that already has a Hapbeat trigger
+    /// into the <b>Reference</b> field and its settings are imported into the
+    /// manual UI below — event map, entry, wiring selections, and all. Edit
+    /// what you want to differ (e.g. change the entry from "grab" to "snap")
+    /// and press Apply. Clear the reference with the × button next to it.
+    /// </para>
     /// </summary>
     public class HapbeatBatchSetupWindow : EditorWindow
     {
@@ -36,35 +44,21 @@ namespace Hapbeat.Editor
         // -1 = auto (use On Start clip duration). See HapbeatSequenceTrigger._startShotDelay.
         private float _startShotDelay = -1f;
 
+        // --- Apply policy ---
+        // When true, any existing HapbeatTriggerBase on a target GameObject (and
+        // UnityEvent wires pointing to them) is removed before Apply adds the new
+        // trigger. Avoids the "selectEntered has two Fire calls" duplication that
+        // otherwise happens when re-applying with a different entry.
+        private bool _replaceExisting = true;
+
         // --- Targets ---
         private List<GameObject> _targets = new List<GameObject>();
         private Vector2 _targetScrollPos;
         private Vector2 _mainScrollPos;
 
-        // --- Clone from reference ---
+        // --- Reference (import source) ---
         private GameObject _referenceObject;
-        private List<CloneTriggerInfo> _refTriggers = new List<CloneTriggerInfo>();
-
-        private struct CloneTriggerInfo
-        {
-            public System.Type triggerType;
-            public HapbeatEventMap eventMap;
-            public int entryIndex;
-            public float cooldown;
-            public string displayName; // for UI
-            public List<WireInfo> wires;
-            // Sequence-trigger extras (-1 when not a SequenceTrigger / not set)
-            public int onStartEntryIndex;
-            public int onStopEntryIndex;
-            public float startShotDelay; // -1 = auto
-        }
-
-        private struct WireInfo
-        {
-            public string componentType; // fully qualified
-            public string fieldPath;
-            public string methodName;
-        }
+        private string _referenceSummary = "";
 
         // --- Scanned events ---
         private List<DetectedEventGroup> _detectedEvents = new List<DetectedEventGroup>();
@@ -104,23 +98,18 @@ namespace Hapbeat.Editor
 
             DrawTargetSection();
             EditorGUILayout.Space(6);
-            DrawCloneSection();
+            DrawReferenceSection();
+            EditorGUILayout.Space(6);
+            DrawTriggerTypeSection();
+            EditorGUILayout.Space(6);
+            DrawTriggerSettings();
             EditorGUILayout.Space(6);
 
-            // Manual setup (only when not using clone)
-            if (_referenceObject == null)
+            if (_triggerType == TriggerType.UnityEventTrigger
+                || _triggerType == TriggerType.SequenceTrigger)
             {
-                DrawTriggerTypeSection();
-                EditorGUILayout.Space(6);
-                DrawTriggerSettings();
-                EditorGUILayout.Space(6);
-
-                if (_triggerType == TriggerType.UnityEventTrigger
-                    || _triggerType == TriggerType.SequenceTrigger)
-                {
-                    AutoScanIfNeeded();
-                    DrawEventWiringSection();
-                }
+                AutoScanIfNeeded();
+                DrawEventWiringSection();
             }
 
             EditorGUILayout.Space(10);
@@ -137,7 +126,6 @@ namespace Hapbeat.Editor
         {
             EditorGUILayout.LabelField("Target GameObjects", EditorStyles.boldLabel);
 
-            // Drag & drop area (generous height)
             var dropRect = GUILayoutUtility.GetRect(0, 50, GUILayout.ExpandWidth(true));
             var dropStyle = new GUIStyle(EditorStyles.helpBox)
             {
@@ -147,7 +135,6 @@ namespace Hapbeat.Editor
             GUI.Box(dropRect, "Drag & Drop GameObjects here", dropStyle);
             HandleDragDrop(dropRect);
 
-            // Buttons
             EditorGUILayout.BeginHorizontal();
             int selCount = Selection.gameObjects?.Length ?? 0;
             if (GUILayout.Button($"Add from Selection ({selCount})", GUILayout.Height(20)))
@@ -161,7 +148,6 @@ namespace Hapbeat.Editor
                 _targets.Clear();
             EditorGUILayout.EndHorizontal();
 
-            // Target list (compact scroll)
             if (_targets.Count > 0)
             {
                 _targetScrollPos = EditorGUILayout.BeginScrollView(
@@ -207,117 +193,145 @@ namespace Hapbeat.Editor
         }
 
         // =====================================================================
-        // Clone from Reference
+        // Reference (import source)
+        //
+        // The Reference field lets the user pick a GameObject that already has
+        // a Hapbeat trigger set up and IMPORT its configuration into the manual
+        // UI below. After import the user can tweak any field (e.g. swap the
+        // event) and run Apply — the tweaked copy lands on the targets.
+        //
+        // This replaces the old "Clone" button that applied the ref's settings
+        // verbatim with no chance to edit first — its main pain-point per user
+        // feedback.
         // =====================================================================
 
-        private void DrawCloneSection()
+        private void DrawReferenceSection()
         {
-            EditorGUILayout.LabelField("Clone from Reference", EditorStyles.boldLabel);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField("Reference (import source)", EditorStyles.boldLabel);
+                GUILayout.FlexibleSpace();
+                if (_referenceObject != null)
+                {
+                    if (GUILayout.Button("\u00d7 Clear", EditorStyles.miniButton, GUILayout.Width(60)))
+                    {
+                        _referenceObject = null;
+                        _referenceSummary = "";
+                    }
+                }
+            }
 
             var newRef = (GameObject)EditorGUILayout.ObjectField(
-                new GUIContent("Reference", "Drag an object that already has Hapbeat triggers.\nIts full trigger + wiring setup will be cloned to all targets."),
+                new GUIContent("Reference",
+                    "Drag an object that already has a Hapbeat trigger to import its full " +
+                    "batch-setup configuration (trigger type, event map, entry, cooldown, " +
+                    "wire selections, sequence phases) into the fields below.\n\n" +
+                    "After import you can tweak anything and run Apply — the modified copy " +
+                    "is written to the targets. Use \u00d7 Clear to remove the link."),
                 _referenceObject, typeof(GameObject), true);
 
             if (newRef != _referenceObject)
             {
                 _referenceObject = newRef;
-                _refTriggers.Clear();
                 if (newRef != null)
-                    ScanReferenceTriggers(newRef);
+                    ImportFromReference(newRef);
+                else
+                    _referenceSummary = "";
             }
 
-            if (_referenceObject != null && _refTriggers.Count > 0)
-            {
-                EditorGUI.indentLevel++;
-                foreach (var rt in _refTriggers)
-                {
-                    string wires = rt.wires.Count > 0
-                        ? string.Join(", ", rt.wires.ConvertAll(w => w.fieldPath.Replace("m_", "").Replace("First", "").Replace("Last", "")))
-                        : "(manual)";
-                    EditorGUILayout.LabelField($"{rt.displayName}  \u2192  {wires}", EditorStyles.miniLabel);
-                }
-                EditorGUI.indentLevel--;
-            }
-            else if (_referenceObject != null)
-            {
-                EditorGUILayout.HelpBox("No Hapbeat triggers found on reference object.", MessageType.Info);
-                _referenceObject = null;
-            }
-            else
-            {
-                EditorGUILayout.LabelField("Set a reference to clone its triggers, or configure manually below.", EditorStyles.miniLabel);
-            }
+            if (!string.IsNullOrEmpty(_referenceSummary))
+                EditorGUILayout.HelpBox(_referenceSummary, MessageType.Info);
         }
 
-        private void ScanReferenceTriggers(GameObject refObj)
+        /// <summary>
+        /// Import the first HapbeatTriggerBase on <paramref name="refObj"/> into
+        /// the window's manual-entry fields (trigger type, event map, entry,
+        /// cooldown, sequence phases, wire selections). Subsequent triggers are
+        /// ignored with a warning — batch setup operates on one trigger at a time.
+        /// </summary>
+        private void ImportFromReference(GameObject refObj)
         {
-            _refTriggers.Clear();
-            foreach (var trigger in refObj.GetComponents<HapbeatTriggerBase>())
+            var triggers = refObj.GetComponents<HapbeatTriggerBase>();
+            if (triggers == null || triggers.Length == 0)
             {
-                if (trigger == null || trigger.EventMap == null) continue;
-                var entry = trigger.EventMap.GetEntry(trigger.EntryIndex);
-                string name = entry != null && !string.IsNullOrEmpty(entry.displayName)
-                    ? entry.displayName
-                    : entry != null ? entry.GetSummary() : $"[{trigger.EntryIndex}]";
+                _referenceSummary = "\u26a0 Reference has no Hapbeat triggers to import.";
+                return;
+            }
 
-                var info = new CloneTriggerInfo
-                {
-                    triggerType = trigger.GetType(),
-                    eventMap = trigger.EventMap,
-                    entryIndex = trigger.EntryIndex,
-                    cooldown = 0f, // read via SerializedObject
-                    displayName = name,
-                    wires = new List<WireInfo>(),
-                    onStartEntryIndex = -1,
-                    onStopEntryIndex = -1,
-                };
+            var first = triggers[0];
+            var so = new SerializedObject(first);
 
-                // Read cooldown
-                var so = new SerializedObject(trigger);
-                var cdProp = so.FindProperty("_cooldown");
-                if (cdProp != null) info.cooldown = cdProp.floatValue;
+            if (first is HapbeatCollisionTrigger)
+                _triggerType = TriggerType.CollisionTrigger;
+            else if (first is HapbeatSequenceTrigger)
+                _triggerType = TriggerType.SequenceTrigger;
+            else
+                _triggerType = TriggerType.UnityEventTrigger;
 
-                // Sequence-trigger extras
-                if (trigger is HapbeatSequenceTrigger)
-                {
-                    info.onStartEntryIndex = so.FindProperty("_onStartEntryIndex")?.intValue ?? -1;
-                    info.onStopEntryIndex = so.FindProperty("_onStopEntryIndex")?.intValue ?? -1;
-                    info.startShotDelay = so.FindProperty("_startShotDelay")?.floatValue ?? -1f;
-                }
-                else
-                {
-                    info.startShotDelay = -1f;
-                }
+            _eventMap = first.EventMap;
+            _entryIndex = first.EntryIndex;
+            var cdProp = so.FindProperty("_cooldown");
+            _cooldown = cdProp != null ? cdProp.floatValue : 0f;
 
-                // Find wired events
-                foreach (var comp in refObj.GetComponents<Component>())
+            if (first is HapbeatSequenceTrigger)
+            {
+                _onStartEntryIndex = so.FindProperty("_onStartEntryIndex")?.intValue ?? -1;
+                _onStopEntryIndex = so.FindProperty("_onStopEntryIndex")?.intValue ?? -1;
+                _startShotDelay = so.FindProperty("_startShotDelay")?.floatValue ?? -1f;
+            }
+
+            if (first is HapbeatCollisionTrigger coll)
+            {
+                var cso = new SerializedObject(coll);
+                _collisionEvent = (HapbeatCollisionTrigger.TriggerEvent)
+                    cso.FindProperty("_triggerEvent").enumValueIndex;
+                _gainMode = (HapbeatCollisionTrigger.GainMode)
+                    cso.FindProperty("_gainMode").enumValueIndex;
+                _velocityThreshold = cso.FindProperty("_velocityThreshold")?.floatValue ?? 0.5f;
+                _maxVelocity = cso.FindProperty("_maxVelocity")?.floatValue ?? 5f;
+            }
+
+            // Import wire selections: for every UnityEvent on refObj that points
+            // at `first`, mark the matching DetectedEventGroup as selected with
+            // the corresponding method. We can't fully pre-populate
+            // _detectedEvents yet (that needs target-side scan), so we stash the
+            // ref's wires in EditorPrefs so AutoScanIfNeeded picks them up.
+            var refWires = new Dictionary<string, int>(); // "ComponentFullName|fieldName" → method index
+            foreach (var comp in refObj.GetComponents<Component>())
+            {
+                if (comp == null || comp is HapbeatTriggerBase) continue;
+                var cso = new SerializedObject(comp);
+                var iter = cso.GetIterator();
+                while (iter.NextVisible(true))
                 {
-                    if (comp == null || comp is HapbeatTriggerBase) continue;
-                    var cso = new SerializedObject(comp);
-                    var iter = cso.GetIterator();
-                    while (iter.NextVisible(true))
+                    var callsProp = FindCalls(iter);
+                    if (callsProp == null) continue;
+                    for (int c = 0; c < callsProp.arraySize; c++)
                     {
-                        if (iter.propertyType != SerializedPropertyType.Generic || iter.depth > 2) continue;
-                        var calls = FindCalls(iter);
-                        if (calls == null) continue;
-                        for (int c = 0; c < calls.arraySize; c++)
+                        var call = callsProp.GetArrayElementAtIndex(c);
+                        if (call.FindPropertyRelative("m_Target").objectReferenceValue == first)
                         {
-                            var call = calls.GetArrayElementAtIndex(c);
-                            if (call.FindPropertyRelative("m_Target").objectReferenceValue == trigger)
-                            {
-                                info.wires.Add(new WireInfo
-                                {
-                                    componentType = comp.GetType().FullName,
-                                    fieldPath = iter.name,
-                                    methodName = call.FindPropertyRelative("m_MethodName").stringValue
-                                });
-                            }
+                            string method = call.FindPropertyRelative("m_MethodName").stringValue;
+                            int methodIdx = Array.IndexOf(WireMethods, method);
+                            if (methodIdx < 0) methodIdx = 0;
+                            refWires[$"{comp.GetType().FullName}|{iter.name}"] = methodIdx;
                         }
                     }
                 }
-
-                _refTriggers.Add(info);
             }
+
+            // Persist so the target-scan can match on next frame.
+            SavePrefWires(refWires);
+            _lastTargetHash = 0; // force a fresh scan
+            _detectedEvents.Clear();
+
+            string skip = triggers.Length > 1
+                ? $" (and {triggers.Length - 1} more trigger(s) ignored — import operates on one)"
+                : "";
+            _referenceSummary =
+                $"Imported: {first.GetType().Name}, " +
+                $"{(_eventMap != null ? _eventMap.name : "no map")} / entry #{_entryIndex}, " +
+                $"{refWires.Count} wire(s){skip}";
         }
 
         private SerializedProperty FindCalls(SerializedProperty prop)
@@ -340,17 +354,15 @@ namespace Hapbeat.Editor
             string desc = _triggerType switch
             {
                 TriggerType.UnityEventTrigger =>
-                    "UnityEvent \u306b\u63a5\u7d9a\u3057\u3066\u767a\u706b\u3002\u30dc\u30bf\u30f3\u30af\u30ea\u30c3\u30af\u7b49\u306e\u5358\u767a\u30a4\u30d9\u30f3\u30c8\u5411\u3051\u3002",
+                    "UnityEvent に接続して発火。ボタンクリック等の単発イベント向け。",
                 TriggerType.CollisionTrigger =>
-                    "\u7269\u7406\u884d\u7a81/\u30c8\u30ea\u30ac\u30fc\u3067\u767a\u706b\u3002\u6295\u3052\u305f\u7269\u304c\u5f53\u305f\u308b\u7b49\u306e\u7269\u7406\u63a5\u89e6\u5411\u3051\u3002",
+                    "物理衝突/トリガーで発火。投げた物が当たる等の物理接触向け。",
                 TriggerType.SequenceTrigger =>
-                    "Fire()/Stop() \u306e 3 \u30d5\u30a7\u30fc\u30ba (On Start / Loop / On Stop) \u3092 1 \u3064\u306b\u307e\u3068\u3081\u305f\u30c8\u30ea\u30ac\u30fc\u3002\n" +
-                    "XR \u306e\u63b4\u3080/\u30db\u30fc\u30eb\u30c9/\u96e2\u3059 (firstSelectEntered / lastSelectExited) \u306b\u914d\u7dda\u3059\u308b\u3068\u3001\n" +
-                    "\u3064\u304b\u3080\u77ac\u9593 + \u4fdd\u6301\u4e2d\u306e\u30eb\u30fc\u30d7 + \u96e2\u3059\u4f59\u97fb\u3092 1 \u30b3\u30f3\u30dd\u30cd\u30f3\u30c8\u3067\u6271\u3048\u308b\u3002",
+                    "Fire()/Stop() の 3 フェーズ (On Start / Loop / On Stop) を 1 つにまとめたトリガー。\n" +
+                    "XR の掴む/ホールド/離す (firstSelectEntered / lastSelectExited) に配線すると、\n" +
+                    "つかむ瞬間 + 保持中のループ + 離す余韻を 1 コンポーネントで扱える。",
                 _ => ""
             };
-            // HelpBox wraps multi-line descriptions (EditorGUILayout.LabelField
-            // reserves only singleLineHeight and clips the rest).
             if (!string.IsNullOrEmpty(desc))
                 EditorGUILayout.HelpBox(desc, MessageType.None);
         }
@@ -372,7 +384,6 @@ namespace Hapbeat.Editor
 
                 if (_triggerType == TriggerType.SequenceTrigger)
                 {
-                    // Sequence triggers need 3 entries: On Start (optional) + Loop + On Stop (optional).
                     _onStartEntryIndex = DrawOptionalEntryPopup(
                         "On Start",
                         "Optional one-shot fired by Fire() — the \"attack\" moment (grab click, enter ping).\n" +
@@ -382,8 +393,9 @@ namespace Hapbeat.Editor
                     _entryIndex = Mathf.Clamp(_entryIndex, 0, names.Length - 1);
                     _entryIndex = EditorGUILayout.Popup(
                         new GUIContent("Loop (hold)",
-                            "The entry that plays between Fire() and Stop(). Usually a StreamSource " +
-                            "or a StreamClip with Loop=true. Required."),
+                            "The entry that plays between Fire() and Stop(). Usually a " +
+                            "StreamClip with Loop=true and (optionally) parameter bindings " +
+                            "for dynamic modulation. Required."),
                         _entryIndex, names);
 
                     _onStopEntryIndex = DrawOptionalEntryPopup(
@@ -392,13 +404,8 @@ namespace Hapbeat.Editor
                         "Use Command or StreamClip mode; (none) to skip.",
                         _onStopEntryIndex, names);
 
-                    // Start-shot → loop delay (workaround for device-firmware
-                    // rapid-stream-transition issue; see
-                    // instructions-stream-transition-truncation for plan to
-                    // remove once firmware is fixed).
                     DrawStartShotDelayField();
 
-                    // Quick sanity hint if the Loop entry is a non-looping StreamClip
                     var loopEntry = _eventMap.GetEntry(_entryIndex);
                     if (loopEntry != null && loopEntry.mode == HapticMode.StreamClip && !loopEntry.loop)
                     {
@@ -427,8 +434,8 @@ namespace Hapbeat.Editor
             else
             {
                 EditorGUILayout.HelpBox(
-                    _eventMap == null ? "Event Map \u3092\u8a2d\u5b9a\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
-                                      : "Event Map \u306b\u30a8\u30f3\u30c8\u30ea\u304c\u3042\u308a\u307e\u305b\u3093\u3002",
+                    _eventMap == null ? "Event Map を設定してください。"
+                                      : "Event Map にエントリがありません。",
                     MessageType.Warning);
             }
 
@@ -446,6 +453,15 @@ namespace Hapbeat.Editor
                     _maxVelocity = EditorGUILayout.FloatField("Max Velocity", _maxVelocity);
                 }
             }
+
+            _replaceExisting = EditorGUILayout.ToggleLeft(
+                new GUIContent("Replace existing Hapbeat triggers on target",
+                    "When Apply runs, remove any existing Hapbeat triggers (and their " +
+                    "UnityEvent wires / parameter bindings) on each target GameObject " +
+                    "before adding the new one.\n\n" +
+                    "Recommended when changing an entry — otherwise the old trigger " +
+                    "and its wires stick around and you get duplicate haptics."),
+                _replaceExisting);
         }
 
         /// <summary>
@@ -526,13 +542,12 @@ namespace Hapbeat.Editor
             if (_detectedEvents.Count == 0)
             {
                 EditorGUILayout.LabelField(
-                    _targets.Any(t => t != null) ? "UnityEvent \u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
-                                                 : "\u30bf\u30fc\u30b2\u30c3\u30c8\u3092\u8ffd\u52a0\u3059\u308b\u3068\u81ea\u52d5\u30b9\u30ad\u30e3\u30f3\u3057\u307e\u3059\u3002",
+                    _targets.Any(t => t != null) ? "UnityEvent が見つかりませんでした。"
+                                                 : "ターゲットを追加すると自動スキャンします。",
                     EditorStyles.miniLabel);
                 return;
             }
 
-            // Compact scrollable list (~8 rows)
             _eventScrollPos = EditorGUILayout.BeginScrollView(
                 _eventScrollPos, GUILayout.MaxHeight(160));
             for (int i = 0; i < _detectedEvents.Count; i++)
@@ -555,7 +570,6 @@ namespace Hapbeat.Editor
             }
             EditorGUILayout.EndScrollView();
 
-            // Quick select/deselect
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("Select All", EditorStyles.miniButton))
             {
@@ -578,6 +592,9 @@ namespace Hapbeat.Editor
 
         private void ScanTargetsForEvents(List<GameObject> targets)
         {
+            // Prefer reference-imported selections when they exist; fall back to
+            // the user's prior persisted picks otherwise.
+            var refSelections = LoadPrefWires();
             var savedSelections = LoadEventSelections();
             var groups = new Dictionary<string, DetectedEventGroup>();
 
@@ -586,7 +603,7 @@ namespace Hapbeat.Editor
                 foreach (var comp in go.GetComponents<Component>())
                 {
                     if (comp == null) continue;
-                    if (comp is HapbeatTriggerBase || comp is HapbeatEvent || comp is HapbeatAudioBridge)
+                    if (comp is HapbeatTriggerBase || comp is HapbeatEvent)
                         continue;
 
                     string typeName = comp.GetType().Name;
@@ -614,17 +631,25 @@ namespace Hapbeat.Editor
                         }
                         else
                         {
-                            // Restore selection from saved prefs, or auto-select common ones
                             bool sel;
-                            if (savedSelections.ContainsKey(key))
-                                sel = savedSelections[key];
+                            int methodIdx;
+                            if (refSelections.TryGetValue(key, out int refMethod))
+                            {
+                                sel = true;
+                                methodIdx = refMethod;
+                            }
+                            else if (savedSelections.TryGetValue(key, out bool savedSel))
+                            {
+                                sel = savedSel;
+                                methodIdx = fieldName.Contains("Exited") ? 1 : 0;
+                            }
                             else
+                            {
                                 sel = fieldName == "m_SelectEntered"
                                    || fieldName == "m_SelectExited"
                                    || fieldName == "m_OnClick";
-
-                            // Default method: Stop for "exited" events, Fire otherwise
-                            int defaultMethod = fieldName.Contains("Exited") ? 1 : 0;
+                                methodIdx = fieldName.Contains("Exited") ? 1 : 0;
+                            }
 
                             groups[key] = new DetectedEventGroup
                             {
@@ -633,7 +658,7 @@ namespace Hapbeat.Editor
                                 fieldPath = fieldName,
                                 objectCount = 1,
                                 selected = sel,
-                                methodIndex = defaultMethod
+                                methodIndex = methodIdx
                             };
                         }
                     }
@@ -684,6 +709,35 @@ namespace Hapbeat.Editor
             catch { return new Dictionary<string, bool>(); }
         }
 
+        // --- Transient ref-wire selections (only used until the next import) ---
+
+        private const string kRefWiresKey = "HapbeatBatchSetup_RefWires";
+
+        private void SavePrefWires(Dictionary<string, int> wires)
+        {
+            var b = new List<bool>();
+            var keys = new List<string>();
+            var methods = new List<int>();
+            foreach (var kv in wires) { keys.Add(kv.Key); methods.Add(kv.Value); }
+            var sd = new SerializableIntDict { keys = keys, values = methods };
+            EditorPrefs.SetString(kRefWiresKey, JsonUtility.ToJson(sd));
+        }
+
+        private Dictionary<string, int> LoadPrefWires()
+        {
+            string json = EditorPrefs.GetString(kRefWiresKey, "");
+            if (string.IsNullOrEmpty(json)) return new Dictionary<string, int>();
+            try
+            {
+                var sd = JsonUtility.FromJson<SerializableIntDict>(json);
+                var d = new Dictionary<string, int>();
+                for (int i = 0; i < Mathf.Min(sd.keys.Count, sd.values.Count); i++)
+                    d[sd.keys[i]] = sd.values[i];
+                return d;
+            }
+            catch { return new Dictionary<string, int>(); }
+        }
+
         [Serializable]
         private class SerializableDict
         {
@@ -704,6 +758,13 @@ namespace Hapbeat.Editor
             }
         }
 
+        [Serializable]
+        private class SerializableIntDict
+        {
+            public List<string> keys = new List<string>();
+            public List<int> values = new List<int>();
+        }
+
         // =====================================================================
         // Actions
         // =====================================================================
@@ -711,24 +772,15 @@ namespace Hapbeat.Editor
         private void DrawActions()
         {
             var validTargets = _targets.Where(t => t != null).ToList();
-            bool isCloneMode = _referenceObject != null && _refTriggers.Count > 0;
             bool canApply = validTargets.Count > 0
-                && (isCloneMode || (_eventMap != null && _eventMap.entries.Count > 0));
+                && _eventMap != null && _eventMap.entries.Count > 0;
 
             var origColor = GUI.backgroundColor;
 
             EditorGUI.BeginDisabledGroup(!canApply);
             GUI.backgroundColor = new Color(0.4f, 0.8f, 0.4f);
-            string applyLabel = isCloneMode
-                ? $"Clone to {validTargets.Count} objects"
-                : $"Apply ({validTargets.Count} objects)";
-            if (GUILayout.Button(applyLabel, GUILayout.Height(26)))
-            {
-                if (isCloneMode)
-                    CloneApply(validTargets);
-                else
-                    ApplyBatch(validTargets);
-            }
+            if (GUILayout.Button($"Apply ({validTargets.Count} objects)", GUILayout.Height(26)))
+                ApplyBatch(validTargets);
             GUI.backgroundColor = origColor;
             EditorGUI.EndDisabledGroup();
 
@@ -742,8 +794,9 @@ namespace Hapbeat.Editor
             EditorGUI.EndDisabledGroup();
 
             EditorGUILayout.LabelField(
-                isCloneMode ? "Clone: reference object \u306e\u5168\u30c8\u30ea\u30ac\u30fc + \u914d\u7dda\u3092\u8907\u88fd\u3002  Cleanup: Hapbeat \u5168\u9664\u53bb\u3002"
-                            : "Apply: \u540c\u3058\u7a2e\u5225+Entry \u306f\u4e0a\u66f8\u304d\u3002  Cleanup: Hapbeat \u5168\u9664\u53bb\u3002",
+                _replaceExisting
+                    ? "Apply: 既存の Hapbeat トリガーを一度削除してから追加 (重複防止)。  Cleanup: Hapbeat 全除去。"
+                    : "Apply: 同じ種別+Entry は上書き、違えば並列追加。  Cleanup: Hapbeat 全除去。",
                 EditorStyles.miniLabel);
         }
 
@@ -751,100 +804,45 @@ namespace Hapbeat.Editor
         // Apply
         // =====================================================================
 
-        private void CloneApply(List<GameObject> targets)
-        {
-            Undo.SetCurrentGroupName("Hapbeat Clone");
-            int undoGroup = Undo.GetCurrentGroup();
-            int added = 0, wired = 0;
-
-            foreach (var go in targets)
-            {
-                foreach (var rt in _refTriggers)
-                {
-                    // Add trigger component — preserve the reference's exact trigger type
-                    // when supported. Default fallback is UnityEventTrigger (most common).
-                    HapbeatTriggerBase trigger;
-                    if (rt.triggerType == typeof(HapbeatCollisionTrigger))
-                        trigger = Undo.AddComponent<HapbeatCollisionTrigger>(go);
-                    else if (rt.triggerType == typeof(HapbeatSequenceTrigger))
-                        trigger = Undo.AddComponent<HapbeatSequenceTrigger>(go);
-                    else if (rt.triggerType == typeof(HapbeatAnimatorTrigger))
-                        trigger = Undo.AddComponent<HapbeatAnimatorTrigger>(go);
-                    else
-                        trigger = Undo.AddComponent<HapbeatUnityEventTrigger>(go);
-
-                    // Configure
-                    var so = new SerializedObject(trigger);
-                    so.FindProperty("_eventMap").objectReferenceValue = rt.eventMap;
-                    so.FindProperty("_entryIndex").intValue = rt.entryIndex;
-                    so.FindProperty("_cooldown").floatValue = rt.cooldown;
-                    // Sequence-trigger extras
-                    if (trigger is HapbeatSequenceTrigger)
-                    {
-                        var onStart = so.FindProperty("_onStartEntryIndex");
-                        if (onStart != null) onStart.intValue = rt.onStartEntryIndex;
-                        var onStop = so.FindProperty("_onStopEntryIndex");
-                        if (onStop != null) onStop.intValue = rt.onStopEntryIndex;
-                        var delay = so.FindProperty("_startShotDelay");
-                        if (delay != null) delay.floatValue = rt.startShotDelay;
-                    }
-                    so.ApplyModifiedProperties();
-                    added++;
-
-                    // Wire events — find matching components on target
-                    foreach (var wire in rt.wires)
-                    {
-                        foreach (var comp in go.GetComponents<Component>())
-                        {
-                            if (comp == null || comp.GetType().FullName != wire.componentType) continue;
-                            var cso = new SerializedObject(comp);
-                            wired += EnsureWired(cso, wire.fieldPath, trigger, wire.methodName);
-                            cso.ApplyModifiedProperties();
-                        }
-                    }
-
-                    // StreamSource: also set up AudioSource and bindings from EventEntry presets
-                    var refEntry = rt.eventMap != null ? rt.eventMap.GetEntry(rt.entryIndex) : null;
-                    if (refEntry != null && refEntry.mode == HapticMode.StreamSource)
-                    {
-                        SetupAudioSourceForStreamSource(go, refEntry);
-                        ApplyBindingPresets(go, refEntry);
-                    }
-                }
-            }
-
-            Undo.CollapseUndoOperations(undoGroup);
-            string msg = $"{added} triggers added, {wired} events wired";
-            Debug.Log($"[Hapbeat Clone] {msg}");
-            EditorUtility.DisplayDialog("Hapbeat Clone", msg, "OK");
-        }
-
         private void ApplyBatch(List<GameObject> targets)
         {
             Undo.SetCurrentGroupName("Hapbeat Batch Setup");
             int undoGroup = Undo.GetCurrentGroup();
-            int added = 0, updated = 0, wired = 0, sourcesAdded = 0;
+            int added = 0, updated = 0, wired = 0, wiresRemoved = 0, componentsRemoved = 0;
 
-            // Check if selected entry is StreamSource
             var entry = _eventMap != null ? _eventMap.GetEntry(_entryIndex) : null;
-            bool isStreamSource = entry != null && entry.mode == HapticMode.StreamSource;
 
             foreach (var go in targets)
             {
+                // Replace mode: drop existing Hapbeat triggers + their wires +
+                // linked parameter bindings before adding the new trigger. This
+                // is the fix for "selectEntered now has two Fire calls" after
+                // re-running Apply with a different entry.
+                if (_replaceExisting)
+                {
+                    var existingTriggers = new List<HapbeatTriggerBase>(go.GetComponents<HapbeatTriggerBase>());
+                    foreach (var tr in existingTriggers)
+                        wiresRemoved += RemoveWiring(go, tr);
+                    foreach (var binding in go.GetComponents<HapbeatParameterBinding>())
+                    {
+                        Undo.DestroyObjectImmediate(binding);
+                        componentsRemoved++;
+                    }
+                    foreach (var tr in existingTriggers)
+                    {
+                        Undo.DestroyObjectImmediate(tr);
+                        componentsRemoved++;
+                    }
+                }
+
                 if (_triggerType == TriggerType.UnityEventTrigger)
                 {
                     var trigger = FindOrCreate<HapbeatUnityEventTrigger>(go, out bool isNew);
                     ConfigureBase(trigger);
                     if (isNew) added++; else updated++;
                     wired += WireScannedEvents(go, trigger);
-
-                    // StreamSource: ensure AudioSource exists with the clip, add bindings
-                    if (isStreamSource)
-                    {
-                        if (SetupAudioSourceForStreamSource(go, entry))
-                            sourcesAdded++;
+                    if (entry != null && entry.mode == HapticMode.StreamClip)
                         ApplyBindingPresets(go, entry);
-                    }
                 }
                 else if (_triggerType == TriggerType.SequenceTrigger)
                 {
@@ -853,15 +851,8 @@ namespace Hapbeat.Editor
                     ConfigureSequence(trigger);
                     if (isNew) added++; else updated++;
                     wired += WireScannedEvents(go, trigger);
-
-                    // StreamSource on the Loop (hold) phase: set up AudioSource + bindings
-                    // exactly like the single-entry UnityEventTrigger path.
-                    if (isStreamSource)
-                    {
-                        if (SetupAudioSourceForStreamSource(go, entry))
-                            sourcesAdded++;
+                    if (entry != null && entry.mode == HapticMode.StreamClip)
                         ApplyBindingPresets(go, entry);
-                    }
                 }
                 else
                 {
@@ -875,7 +866,8 @@ namespace Hapbeat.Editor
             Undo.CollapseUndoOperations(undoGroup);
             string msg = $"{added} added, {updated} updated"
                 + (wired > 0 ? $", {wired} events wired" : "")
-                + (sourcesAdded > 0 ? $", {sourcesAdded} AudioSources added" : "");
+                + (_replaceExisting && componentsRemoved > 0 ? $", {componentsRemoved} replaced" : "")
+                + (_replaceExisting && wiresRemoved > 0 ? $", {wiresRemoved} old wires removed" : "");
             Debug.Log($"[Hapbeat Batch Setup] {msg}");
             EditorUtility.DisplayDialog("Hapbeat Batch Setup", msg, "OK");
         }
@@ -890,14 +882,6 @@ namespace Hapbeat.Editor
         ///      sourceProperty and outputParameter match the preset. Upgrade it by
         ///      setting the link.
         ///   3. <b>New</b> — add a new binding.
-        ///
-        /// Each existing binding is only reused once per Apply invocation.
-        ///
-        /// The resulting component is LINKED to the preset via
-        /// <c>_linkedEventMap + _linkedBindingId</c> — tuning values (inputMin/Max,
-        /// curve, outputMin/Max, debug options) are read live from the preset at
-        /// runtime. The local SerializedFields are also populated as a visible cache
-        /// and as a fallback for when the link is later cleared.
         /// </summary>
         private void ApplyBindingPresets(GameObject go, HapbeatEventEntry entry)
         {
@@ -908,10 +892,8 @@ namespace Hapbeat.Editor
 
             foreach (var preset in entry.bindings)
             {
-                // Touch the id getter so lazy-assigned GUIDs get persisted.
-                string presetId = preset.id;
+                string presetId = preset.id; // lazy-assign GUIDs
 
-                // Resolve source Transform
                 Transform srcT = ResolveTransformPath(go.transform, preset.sourceTransformPath);
                 if (srcT == null)
                 {
@@ -919,30 +901,20 @@ namespace Hapbeat.Editor
                     continue;
                 }
 
-                // Phase 1: already linked to this preset
                 var binding = FindLinkedBinding(existing, consumed, _eventMap, presetId);
-
-                // Phase 2: upgrade an unlinked binding that looks like a match
                 if (binding == null)
                     binding = FindUpgradeCandidate(existing, consumed, preset);
 
-                // Phase 3: new
                 if (binding == null)
-                {
                     binding = Undo.AddComponent<HapbeatParameterBinding>(go);
-                }
                 else
-                {
                     Undo.RecordObject(binding, "Update Hapbeat Binding");
-                }
                 consumed.Add(binding);
 
                 var bso = new SerializedObject(binding);
                 bso.FindProperty("_linkedEventMap").objectReferenceValue = _eventMap;
                 bso.FindProperty("_linkedBindingId").stringValue = presetId;
                 bso.FindProperty("_sourceTransform").objectReferenceValue = srcT;
-                // Local fields: populate so the Inspector shows meaningful defaults and
-                // so the binding still behaves sanely if the user later clears the link.
                 bso.FindProperty("_sourceProperty").enumValueIndex = (int)preset.sourceProperty;
                 bso.FindProperty("_inputMin").floatValue = preset.inputMin;
                 bso.FindProperty("_inputMax").floatValue = preset.inputMax;
@@ -967,10 +939,6 @@ namespace Hapbeat.Editor
             }
         }
 
-        /// <summary>
-        /// Return the first binding in <paramref name="candidates"/> whose link points to
-        /// <paramref name="map"/> + <paramref name="id"/> and is not already consumed.
-        /// </summary>
         private static HapbeatParameterBinding FindLinkedBinding(
             List<HapbeatParameterBinding> candidates,
             HashSet<HapbeatParameterBinding> consumed,
@@ -988,11 +956,6 @@ namespace Hapbeat.Editor
             return null;
         }
 
-        /// <summary>
-        /// Return the first unlinked binding whose sourceProperty and outputParameter match
-        /// <paramref name="preset"/>. Used to migrate pre-link bindings to linked ones
-        /// (saves users from manually deleting old duplicates before re-running Apply).
-        /// </summary>
         private static HapbeatParameterBinding FindUpgradeCandidate(
             List<HapbeatParameterBinding> candidates,
             HashSet<HapbeatParameterBinding> consumed,
@@ -1003,7 +966,7 @@ namespace Hapbeat.Editor
             {
                 var b = candidates[i];
                 if (b == null || consumed.Contains(b)) continue;
-                if (b.LinkedEventMap != null) continue; // already linked to something
+                if (b.LinkedEventMap != null) continue;
                 var so = new SerializedObject(b);
                 var srcPropProp = so.FindProperty("_sourceProperty");
                 var outParamProp = so.FindProperty("_outputParameter");
@@ -1017,51 +980,10 @@ namespace Hapbeat.Editor
             return null;
         }
 
-        /// <summary>Resolve a relative Transform path. Empty or "." returns root.</summary>
         private static Transform ResolveTransformPath(Transform root, string path)
         {
             if (string.IsNullOrEmpty(path) || path == ".") return root;
             return root.Find(path);
-        }
-
-        /// <summary>
-        /// Ensure the target GameObject has a Hapbeat-dedicated AudioSource (tagged with HapbeatAudioBridge).
-        /// If a HapbeatAudioBridge already exists, reuse its AudioSource.
-        /// Otherwise, add a new AudioSource + HapbeatAudioBridge pair — even if other AudioSources exist.
-        /// Returns true if a new AudioSource was added.
-        /// </summary>
-        private bool SetupAudioSourceForStreamSource(GameObject go, HapbeatEventEntry entry)
-        {
-            // Find existing Hapbeat-tagged AudioSource (one with HapbeatAudioBridge)
-            AudioSource audioSource = null;
-            foreach (var bridge in go.GetComponents<HapbeatAudioBridge>())
-            {
-                audioSource = bridge.GetComponent<AudioSource>();
-                if (audioSource != null) break;
-            }
-
-            bool wasAdded = false;
-            if (audioSource == null)
-            {
-                // Always add a new dedicated AudioSource (even if other AudioSources exist on the GameObject)
-                audioSource = Undo.AddComponent<AudioSource>(go);
-                audioSource.playOnAwake = false;
-                audioSource.spatialBlend = 1f; // default to 3D
-                // Immediately add HapbeatAudioBridge to mark this AudioSource as the haptic one
-                var newBridge = Undo.AddComponent<HapbeatAudioBridge>(go);
-                newBridge.AudioSourceAutoAdded = true; // mark for cleanup
-                wasAdded = true;
-            }
-            else
-            {
-                Undo.RecordObject(audioSource, "Configure AudioSource");
-            }
-
-            if (entry.streamClip != null && audioSource.clip == null)
-                audioSource.clip = entry.streamClip;
-
-            audioSource.loop = entry.loop;
-            return wasAdded;
         }
 
         private T FindOrCreate<T>(GameObject go, out bool isNew) where T : HapbeatTriggerBase
@@ -1176,67 +1098,43 @@ namespace Hapbeat.Editor
 
         private void CleanupBatch(List<GameObject> targets)
         {
-            if (!EditorUtility.DisplayDialog("\u26a0 Hapbeat Cleanup",
-                $"\u26a0 \u3053\u306e\u64cd\u4f5c\u306f\u7834\u58ca\u7684\u3067\u3059\u3002\n\n" +
-                $"\u5bfe\u8c61: {targets.Count} \u500b\u306e GameObject\n\n" +
-                "\u9664\u53bb\u3055\u308c\u308b\u3082\u306e:\n" +
-                "\u30fb HapbeatTriggerBase \u30b3\u30f3\u30dd\u30fc\u30cd\u30f3\u30c8 (UnityEventTrigger, CollisionTrigger \u7b49)\n" +
-                "\u30fb HapbeatParameterBinding\n" +
-                "\u30fb HapbeatAudioBridge\n" +
-                "\u30fb HapbeatEvent\n" +
-                "\u30fb Batch Setup \u304c\u81ea\u52d5\u8ffd\u52a0\u3057\u305f AudioSource (\u30de\u30fc\u30ab\u30fc\u5bfe\u8c61\u306e\u307f)\n" +
-                "\u30fb \u4e0a\u8a18\u306b\u5411\u3051\u305f UnityEvent \u63a5\u7d9a\n\n" +
-                "\u4fa1\u5024\u3042\u308b\u8a2d\u5b9a\u3092\u5931\u3046\u53ef\u80fd\u6027\u304c\u3042\u308a\u307e\u3059\u3002\n" +
-                "Ctrl+Z \u3067 Undo \u53ef\u80fd\u3067\u3059\u304c\u3001\u78ba\u8a8d\u3057\u3066\u304b\u3089\u5b9f\u884c\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
-                "\u5b9f\u884c", "\u30ad\u30e3\u30f3\u30bb\u30eb"))
+            if (!EditorUtility.DisplayDialog("⚠ Hapbeat Cleanup",
+                $"⚠ この操作は破壊的です。\n\n" +
+                $"対象: {targets.Count} 個の GameObject\n\n" +
+                "除去されるもの:\n" +
+                "・ HapbeatTriggerBase コンポーネント (UnityEventTrigger, CollisionTrigger 等)\n" +
+                "・ HapbeatParameterBinding\n" +
+                "・ HapbeatEvent\n" +
+                "・ 上記に向けた UnityEvent 接続\n\n" +
+                "価値ある設定を失う可能性があります。\n" +
+                "Ctrl+Z で Undo 可能ですが、確認してから実行してください。",
+                "実行", "キャンセル"))
                 return;
 
             Undo.SetCurrentGroupName("Hapbeat Cleanup");
             int undoGroup = Undo.GetCurrentGroup();
-            int removedComps = 0, removedWires = 0, removedAudio = 0;
+            int removedComps = 0, removedWires = 0;
 
             foreach (var go in targets)
             {
-                // Collect all Hapbeat-owned components
                 var hapComps = new List<Component>();
-                hapComps.AddRange(go.GetComponents<HapbeatTriggerBase>());       // UnityEventTrigger, CollisionTrigger, AnimatorTrigger
-                hapComps.AddRange(go.GetComponents<HapbeatParameterBinding>()); // Parameter bindings
-                hapComps.AddRange(go.GetComponents<HapbeatAudioBridge>());      // Audio bridges (possibly multiple)
+                hapComps.AddRange(go.GetComponents<HapbeatTriggerBase>());
+                hapComps.AddRange(go.GetComponents<HapbeatParameterBinding>());
                 var he = go.GetComponent<HapbeatEvent>();
                 if (he != null) hapComps.Add(he);
 
-                // Only remove AudioSources that were explicitly auto-added by Batch Setup
-                // (identified by HapbeatAudioBridge.AudioSourceAutoAdded flag).
-                var audioSourcesToRemove = new List<AudioSource>();
-                foreach (var bridge in go.GetComponents<HapbeatAudioBridge>())
-                {
-                    if (!bridge.AudioSourceAutoAdded) continue;
-                    var src = bridge.GetComponent<AudioSource>();
-                    if (src != null) audioSourcesToRemove.Add(src);
-                }
-
-                // Remove event wiring that points to any Hapbeat component
                 foreach (var hc in hapComps)
                     removedWires += RemoveWiring(go, hc);
 
-                // Destroy Hapbeat components
                 foreach (var hc in hapComps)
                 {
                     Undo.DestroyObjectImmediate(hc);
                     removedComps++;
                 }
-
-                // Destroy paired AudioSources (after bridges are gone)
-                foreach (var src in audioSourcesToRemove)
-                {
-                    if (src == null) continue;
-                    Undo.DestroyObjectImmediate(src);
-                    removedAudio++;
-                }
             }
 
             Undo.CollapseUndoOperations(undoGroup);
-            string msg = $"{removedComps} components, {removedAudio} AudioSources, {removedWires} wires removed";
+            string msg = $"{removedComps} components, {removedWires} wires removed";
             Debug.Log($"[Hapbeat Cleanup] {msg}");
             EditorUtility.DisplayDialog("Hapbeat Cleanup", msg, "OK");
         }
@@ -1248,7 +1146,7 @@ namespace Hapbeat.Editor
             {
                 if (comp == null || comp == triggerTarget) continue;
                 if (comp is HapbeatTriggerBase || comp is HapbeatEvent
-                    || comp is HapbeatAudioBridge || comp is HapbeatParameterBinding)
+                    || comp is HapbeatParameterBinding)
                     continue;
 
                 var so = new SerializedObject(comp);
