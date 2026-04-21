@@ -133,8 +133,10 @@ namespace Hapbeat
         [Tooltip("Loop playback.\n" +
                  "StreamClip: re-stream the clip continuously until Stop() is called " +
                  "(used by HapbeatSequenceTrigger's Loop phase).\n" +
-                 "StreamSource: set AudioSource.loop on the captured source.")]
-        public bool loop = true;
+                 "StreamSource: set AudioSource.loop on the captured source.\n\n" +
+                 "Default is off so a typical StreamClip entry fires as a one-shot. " +
+                 "Turn on only for sustained / hold-style effects.")]
+        public bool loop = false;
 
         [Tooltip("Parameter bindings applied on the target GameObject via Batch Setup.\n" +
                  "Each binding creates a HapbeatParameterBinding component.")]

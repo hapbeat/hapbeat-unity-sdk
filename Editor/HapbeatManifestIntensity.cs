@@ -52,9 +52,12 @@ namespace Hapbeat.Editor
         /// Look up the manifest intensity for a <see cref="HapbeatEventEntry"/>.
         /// Matching rule:
         /// <list type="bullet">
-        ///   <item><b>Command</b>: match <c>eventId</c>.</item>
-        ///   <item><b>StreamClip / StreamSource</b>: match by <c>streamClip</c>'s asset path
-        ///     against <c>&lt;kit&gt;/&lt;manifest.clip&gt;</c>.</item>
+        ///   <item><b>Command</b>: match by <c>eventId</c>.</item>
+        ///   <item><b>StreamClip / StreamSource</b>: match by <c>streamClip</c>'s asset
+        ///     path against <c>&lt;kit&gt;/&lt;manifest.clip&gt;</c>. If that fails
+        ///     (no clip set, or clip not found in any manifest), fall back to matching
+        ///     by <c>eventId</c> — this covers StreamSource entries that don't have a
+        ///     default clip but still have the Kit event's intensity authored in Studio.</item>
         /// </list>
         /// </summary>
         public static bool TryGetIntensity(HapbeatEventEntry entry, out float intensity)
@@ -66,36 +69,51 @@ namespace Hapbeat.Editor
 
             if (entry.mode == HapticMode.Command)
             {
-                if (string.IsNullOrEmpty(entry.eventId)) return false;
-                foreach (var ev in all)
-                {
-                    if (ev.eventId == entry.eventId)
-                    {
-                        intensity = ev.intensity;
-                        return true;
-                    }
-                }
-                return false;
+                return TryMatchByEventId(all, entry.eventId, out intensity);
             }
-            else // StreamClip / StreamSource
-            {
-                if (entry.streamClip == null) return false;
-                string clipAssetPath = AssetDatabase.GetAssetPath(entry.streamClip);
-                if (string.IsNullOrEmpty(clipAssetPath)) return false;
-                // Normalize separators
-                string clipPath = clipAssetPath.Replace('\\', '/');
 
-                foreach (var ev in all)
+            // StreamClip / StreamSource — prefer clip-path match (more specific).
+            if (entry.streamClip != null)
+            {
+                string clipAssetPath = AssetDatabase.GetAssetPath(entry.streamClip);
+                if (!string.IsNullOrEmpty(clipAssetPath))
                 {
-                    string expected = $"{ev.kitRelPath}/{ev.clipRelPath}".Replace('\\', '/');
-                    if (clipPath == expected)
+                    string clipPath = clipAssetPath.Replace('\\', '/');
+                    foreach (var ev in all)
                     {
-                        intensity = ev.intensity;
-                        return true;
+                        string expected = $"{ev.kitRelPath}/{ev.clipRelPath}".Replace('\\', '/');
+                        if (clipPath == expected)
+                        {
+                            intensity = ev.intensity;
+                            return true;
+                        }
                     }
                 }
-                return false;
             }
+
+            // Fallback: StreamSource entries frequently have no default streamClip
+            // (they capture a live AudioSource instead), but the Kit event may
+            // still have an intensity authored in Studio. Match by eventId if the
+            // user set category/eventName on the entry.
+            if (!string.IsNullOrEmpty(entry.eventId))
+                return TryMatchByEventId(all, entry.eventId, out intensity);
+
+            return false;
+        }
+
+        private static bool TryMatchByEventId(List<ManifestEvent> all, string eventId, out float intensity)
+        {
+            intensity = 1f;
+            if (string.IsNullOrEmpty(eventId)) return false;
+            foreach (var ev in all)
+            {
+                if (ev.eventId == eventId)
+                {
+                    intensity = ev.intensity;
+                    return true;
+                }
+            }
+            return false;
         }
 
         // ── Manifest parsing ────────────────────────────────────────────────

@@ -33,6 +33,8 @@ namespace Hapbeat.Editor
         // -1 means "(none)" — only the Loop phase uses the shared _entryIndex above.
         private int _onStartEntryIndex = -1;
         private int _onStopEntryIndex = -1;
+        // -1 = auto (use On Start clip duration). See HapbeatSequenceTrigger._startShotDelay.
+        private float _startShotDelay = -1f;
 
         // --- Targets ---
         private List<GameObject> _targets = new List<GameObject>();
@@ -54,6 +56,7 @@ namespace Hapbeat.Editor
             // Sequence-trigger extras (-1 when not a SequenceTrigger / not set)
             public int onStartEntryIndex;
             public int onStopEntryIndex;
+            public float startShotDelay; // -1 = auto
         }
 
         private struct WireInfo
@@ -279,6 +282,11 @@ namespace Hapbeat.Editor
                 {
                     info.onStartEntryIndex = so.FindProperty("_onStartEntryIndex")?.intValue ?? -1;
                     info.onStopEntryIndex = so.FindProperty("_onStopEntryIndex")?.intValue ?? -1;
+                    info.startShotDelay = so.FindProperty("_startShotDelay")?.floatValue ?? -1f;
+                }
+                else
+                {
+                    info.startShotDelay = -1f;
                 }
 
                 // Find wired events
@@ -384,6 +392,12 @@ namespace Hapbeat.Editor
                         "Use Command or StreamClip mode; (none) to skip.",
                         _onStopEntryIndex, names);
 
+                    // Start-shot → loop delay (workaround for device-firmware
+                    // rapid-stream-transition issue; see
+                    // instructions-stream-transition-truncation for plan to
+                    // remove once firmware is fixed).
+                    DrawStartShotDelayField();
+
                     // Quick sanity hint if the Loop entry is a non-looping StreamClip
                     var loopEntry = _eventMap.GetEntry(_entryIndex);
                     if (loopEntry != null && loopEntry.mode == HapticMode.StreamClip && !loopEntry.loop)
@@ -432,6 +446,40 @@ namespace Hapbeat.Editor
                     _maxVelocity = EditorGUILayout.FloatField("Max Velocity", _maxVelocity);
                 }
             }
+        }
+
+        /// <summary>
+        /// Compact row for the "Start → Loop delay" field. Lets the user switch
+        /// between auto (-1, = on-start clip duration), no-delay (0), and an
+        /// explicit positive value without juggling a popup + float field.
+        /// </summary>
+        private void DrawStartShotDelayField()
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                bool isAuto = _startShotDelay < 0f;
+                var label = new GUIContent("Start → Loop Delay",
+                    "Seconds to wait between the On Start one-shot and the Loop phase.\n" +
+                    "Auto = match the On Start clip's duration (so the one-shot finishes before " +
+                    "the loop stream takes over on the device).\n" +
+                    "Workaround for a device-firmware rapid-stream-transition issue.");
+                bool newIsAuto = EditorGUILayout.ToggleLeft(label, isAuto, GUILayout.Width(200));
+                if (newIsAuto != isAuto)
+                {
+                    _startShotDelay = newIsAuto ? -1f : 0f;
+                    isAuto = newIsAuto;
+                }
+
+                using (new EditorGUI.DisabledScope(isAuto))
+                {
+                    float shown = isAuto ? 0f : Mathf.Max(0f, _startShotDelay);
+                    float edited = EditorGUILayout.FloatField(shown);
+                    if (!isAuto) _startShotDelay = Mathf.Max(0f, edited);
+                    EditorGUILayout.LabelField("s", GUILayout.Width(16));
+                }
+            }
+            if (_startShotDelay < 0f)
+                EditorGUILayout.LabelField("  (auto = On Start clip duration)", EditorStyles.miniLabel);
         }
 
         /// <summary>
@@ -737,6 +785,8 @@ namespace Hapbeat.Editor
                         if (onStart != null) onStart.intValue = rt.onStartEntryIndex;
                         var onStop = so.FindProperty("_onStopEntryIndex");
                         if (onStop != null) onStop.intValue = rt.onStopEntryIndex;
+                        var delay = so.FindProperty("_startShotDelay");
+                        if (delay != null) delay.floatValue = rt.startShotDelay;
                     }
                     so.ApplyModifiedProperties();
                     added++;
@@ -1056,6 +1106,8 @@ namespace Hapbeat.Editor
             var so = new SerializedObject(trigger);
             so.FindProperty("_onStartEntryIndex").intValue = _onStartEntryIndex;
             so.FindProperty("_onStopEntryIndex").intValue = _onStopEntryIndex;
+            var delayProp = so.FindProperty("_startShotDelay");
+            if (delayProp != null) delayProp.floatValue = _startShotDelay;
             so.ApplyModifiedProperties();
         }
 

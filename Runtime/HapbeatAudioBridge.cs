@@ -90,6 +90,14 @@ namespace Hapbeat
         private int _channels;
         private uint _byteOffset;
 
+        // Cached AudioSource reference. Used from the audio thread in
+        // OnAudioFilterRead to apply the source's volume/mute — Unity's audio
+        // pipeline applies those AFTER OnAudioFilterRead, so data arriving at
+        // the filter stage has NOT had volume applied yet. Without the manual
+        // multiplication below, HapbeatParameterBinding → AudioSource.volume
+        // would silently have no effect on the haptic stream.
+        private AudioSource _audioSource;
+
         // Audio thread → send buffer (lock-free ring)
         private float[] _ringBuffer;
         private int _ringSize;
@@ -99,6 +107,11 @@ namespace Hapbeat
         // Send thread
         private Thread _sendThread;
         private volatile bool _sendRunning;
+
+        private void Awake()
+        {
+            _audioSource = GetComponent<AudioSource>();
+        }
 
         private void OnEnable()
         {
@@ -160,7 +173,18 @@ namespace Hapbeat
 
         /// <summary>
         /// Unity のオーディオスレッドから呼ばれる。
-        /// AudioSource が処理した音声データ（Volume, Pan, Spatialize 適用済み）を受け取る。
+        /// <para>
+        /// <b>重要</b>: Unity の OnAudioFilterRead はフィルタ段であり、
+        /// <c>AudioSource.volume</c> / <c>mute</c> / <c>panStereo</c> などのプロパティは
+        /// このコールバックが返った<i>後</i>に適用される。したがって <c>data</c> には
+        /// ボリューム適用前の生サンプルが入っている。
+        /// </para>
+        /// <para>
+        /// <c>HapbeatParameterBinding</c> が <c>Volume</c> 出力で <c>audioSource.volume</c>
+        /// を書き換えても、そのままではキャプチャ後の ring buffer に反映されない。
+        /// ここで手動で <c>audioSource.volume</c>（および <c>mute</c>）を乗算することで、
+        /// binding からの連続制御が触覚ストリームに正しく届くようにしている。
+        /// </para>
         /// </summary>
         private void OnAudioFilterRead(float[] data, int channels)
         {
@@ -174,18 +198,37 @@ namespace Hapbeat
 
             _channels = channels;
 
-            // Capture: write to ring buffer (before any muting)
-            for (int i = 0; i < data.Length; i++)
-            {
-                int nextWrite = (_writePos + 1) % _ringSize;
-                if (nextWrite == _readPos)
-                    break; // buffer full, drop samples
+            // Manually apply AudioSource.volume / mute so HapbeatParameterBinding's
+            // Volume output actually reaches the haptic stream. See xmldoc above.
+            float sourceVolume = 1f;
+            if (_audioSource != null)
+                sourceVolume = _audioSource.mute ? 0f : _audioSource.volume;
 
-                _ringBuffer[_writePos] = data[i];
-                _writePos = nextWrite;
+            // Capture: write to ring buffer (volume-scaled, pre-mute)
+            if (sourceVolume >= 0.9999f)
+            {
+                // Fast path — avoid per-sample multiply when volume is effectively 1.0
+                for (int i = 0; i < data.Length; i++)
+                {
+                    int nextWrite = (_writePos + 1) % _ringSize;
+                    if (nextWrite == _readPos) break; // buffer full, drop samples
+                    _ringBuffer[_writePos] = data[i];
+                    _writePos = nextWrite;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < data.Length; i++)
+                {
+                    int nextWrite = (_writePos + 1) % _ringSize;
+                    if (nextWrite == _readPos) break;
+                    _ringBuffer[_writePos] = data[i] * sourceVolume;
+                    _writePos = nextWrite;
+                }
             }
 
-            // Mute speaker output (data is zeroed AFTER capture)
+            // Mute speaker output (data is zeroed AFTER capture so muting the
+            // speaker doesn't also silence the haptic stream).
             if (_silentMode)
                 System.Array.Clear(data, 0, data.Length);
         }

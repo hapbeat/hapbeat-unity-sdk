@@ -222,7 +222,8 @@ namespace Hapbeat
 
             // Effective gain = entry.gain × manifest.intensity (cached). Stream modes
             // must apply intensity themselves — see HapbeatEventEntry.GetEffectiveGain.
-            bridge.Gain = entry.GetEffectiveGain();
+            float effectiveGain = entry.GetEffectiveGain();
+            bridge.Gain = effectiveGain;
             bridge.Target = entry.HasTarget ? entry.target : null;
             bridge.SilentMode = entry.silentMode;
             audioSource.loop = entry.loop;
@@ -258,9 +259,17 @@ namespace Hapbeat
                 bindingSummary = $"{bindings.Length} binding(s): {parts}";
             }
 
+            // Include both raw and effective gain so the user can see at a glance
+            // whether manifest intensity is being applied. "intensity=?" means the
+            // cache is unresolved — deploy the Kit from Studio and Refresh the
+            // EventMap (↻ toolbar) to populate it.
+            string intensityPart = entry.CachedManifestIntensity > 0f
+                ? $"intensity={entry.CachedManifestIntensity:F2}"
+                : "intensity=? (not cached)";
             Debug.Log(
                 $"[Hapbeat] \u223c StreamSource start: \"{label}\" on {audioSource.gameObject.name} " +
-                $"(gain={entry.gain:F2}, loop={entry.loop}, silent={entry.silentMode}, {bindingSummary})",
+                $"(gain={entry.gain:F2} \u00d7 {intensityPart} \u2192 effective={effectiveGain:F2}, " +
+                $"loop={entry.loop}, silent={entry.silentMode}, {bindingSummary})",
                 this);
         }
 

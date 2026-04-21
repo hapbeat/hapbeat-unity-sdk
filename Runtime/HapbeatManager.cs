@@ -385,58 +385,61 @@ namespace Hapbeat
 
             byte channels = (byte)clip.channels;
             ushort sampleRate = (ushort)clip.frequency;
-            uint totalSamples = (uint)clip.samples;
             int maxChunkSize = HapbeatProtocol.STREAM_DATA_MAX_PAYLOAD;
             float bytesPerSecond = sampleRate * channels * 2f;
             const float sendAheadSeconds = 0.1f; // 100ms buffer
 
+            // Seamless loop: emit a SINGLE STREAM_BEGIN up front (with totalSamples=0
+            // meaning "unknown length" for looping streams), then keep feeding STREAM_DATA
+            // with a monotonically-increasing global byte offset across loop iterations.
+            // The device-side decoder sees one continuous stream — no silent gap at the
+            // seam that would otherwise happen if we re-sent BEGIN/END between loops.
+            uint reportedTotalSamples = loop ? 0u : (uint)clip.samples;
+            _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16,
+                reportedTotalSamples, gain, target);
+            Log(loop
+                ? $"Stream begin (loop): {sampleRate}Hz, {channels}ch, gain={gain}"
+                : $"Stream begin: {sampleRate}Hz, {channels}ch, {clip.samples} samples, gain={gain}");
+
+            uint globalByteOffset = 0;
+            float startTime = Time.realtimeSinceStartup;
             int iteration = 0;
+
             do
             {
                 iteration++;
-
-                // Each loop iteration starts with its own STREAM_BEGIN / STREAM_END pair.
-                // This keeps the device-side decoder in a clean state between cycles and
-                // avoids buffer-offset wraparound issues on long-running holds.
-                _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16, totalSamples, gain, target);
-                if (iteration == 1)
-                    Log($"Stream begin: {sampleRate}Hz, {channels}ch, {totalSamples} samples, gain={gain}");
-
-                uint byteOffset = 0;
+                int localOffset = 0;
                 int remaining = pcmBytes.Length;
-                float startTime = Time.realtimeSinceStartup;
 
                 while (remaining > 0 && _client != null && _client.IsConnected)
                 {
                     int chunkSize = Mathf.Min(remaining, maxChunkSize);
-                    _client.SendStreamData(byteOffset, pcmBytes, (int)byteOffset, chunkSize);
+                    _client.SendStreamData(globalByteOffset, pcmBytes, localOffset, chunkSize);
 
-                    byteOffset += (uint)chunkSize;
+                    globalByteOffset += (uint)chunkSize;
+                    localOffset += chunkSize;
                     remaining -= chunkSize;
 
                     // Pace: wait if we're sending too far ahead of real-time
                     float elapsedTime = Time.realtimeSinceStartup - startTime;
-                    float sentDuration = byteOffset / bytesPerSecond;
+                    float sentDuration = globalByteOffset / bytesPerSecond;
                     if (sentDuration > elapsedTime + sendAheadSeconds)
                         yield return null;
                 }
 
-                // STREAM_END between iterations (also the terminal end for non-loop case).
-                if (_client != null && _client.IsConnected)
-                    _client.SendStreamEnd();
-
                 if (!loop) break;
-                // Bail out if the user called StopStream() during playback — StopStream
-                // invokes StopCoroutine, which normally terminates this IEnumerator, but
-                // belt-and-braces: also check _streamCoroutine here.
+                // Bail out if the user called StopStream() during playback.
                 if (_streamCoroutine == null) break;
             }
             while (loop);
 
-            if (iteration > 1)
-                Log($"Stream loop stopped after {iteration} iterations.");
-            else
-                Log($"Stream complete.");
+            // Single STREAM_END at the very end (on natural finish or on StopStream).
+            if (_client != null && _client.IsConnected)
+                _client.SendStreamEnd();
+
+            Log(iteration > 1
+                ? $"Stream loop stopped after {iteration} iterations ({globalByteOffset} bytes sent)."
+                : $"Stream complete ({globalByteOffset} bytes sent).");
 
             _streamCoroutine = null;
         }

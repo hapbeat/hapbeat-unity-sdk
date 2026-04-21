@@ -45,7 +45,11 @@ namespace Hapbeat.Editor
         private bool _dragConfirmed;
         private int _dropSlotIndex = -1; // 0..entries.Count, slot to insert BEFORE
         private readonly List<Rect> _rowRects = new List<Rect>(); // cached per repaint
-        private const float DragThresholdPx = 4f;
+        // Larger threshold than Unity's built-in 4-5px: with 4px, accidental mouse
+        // jitter during a plain click would trigger a row reorder, silently
+        // shuffling entries. 10px is well past typical click-jitter while still
+        // feeling responsive for an intentional drag.
+        private const float DragThresholdPx = 10f;
 
         // Multi-selection in Table mode (Ctrl-click / Shift-click).
         private readonly HashSet<int> _tableMultiSelected = new HashSet<int>();
@@ -334,7 +338,18 @@ namespace Hapbeat.Editor
         /// the same logical position. Selection follows the moved item.
         ///
         /// All scene triggers bound to this map also have their stored entry
-        /// indices remapped so wirings survive the reorder.
+        /// indices remapped so wirings survive the reorder. Scene scan includes
+        /// INACTIVE GameObjects so triggers on disabled branches aren't silently
+        /// left pointing at the wrong entry.
+        ///
+        /// All sub-operations (map edit + per-trigger remap) are collapsed into
+        /// a single Undo step so Ctrl+Z reverts everything at once.
+        ///
+        /// <para><b>Known limitation</b>: triggers that live only in prefab assets
+        /// (not instantiated in any open scene) are not reached by this remap —
+        /// see the warning logged when that case is suspected. Re-author those
+        /// triggers manually or load the prefab into a scene before reordering.
+        /// </para>
         /// </summary>
         private void ApplyReorder(int from, int toSlot)
         {
@@ -349,6 +364,8 @@ namespace Hapbeat.Editor
             int newIndex = (toSlot > from) ? toSlot - 1 : toSlot;
 
             // Build an oldIndex → newIndex map so we can rewrite scene triggers.
+            // Meaning: a trigger whose stored _entryIndex == i should be updated
+            // to map[i] after the reorder to still point at the same entry object.
             var map = new int[count];
             for (int i = 0; i < count; i++)
             {
@@ -358,6 +375,11 @@ namespace Hapbeat.Editor
                 if (adjusted >= newIndex) adjusted += 1; // inserting at newIndex shifts at/after up
                 map[i] = adjusted;
             }
+
+            // Group every sub-Undo step under one label so the user only has to
+            // press Ctrl+Z once to revert the entire reorder + remap.
+            Undo.SetCurrentGroupName("Reorder Hapbeat Event Entries");
+            int undoGroup = Undo.GetCurrentGroup();
 
             Undo.RecordObject(_selectedMap, "Reorder Hapbeat Event Entries");
             var item = _selectedMap.entries[from];
@@ -369,40 +391,62 @@ namespace Hapbeat.Editor
 
             // Remap all scene triggers that reference this map so their bindings
             // continue to point at the same logical entry after the reorder.
-            RemapTriggerEntryIndices(map);
+            int remappedCount = RemapTriggerEntryIndices(map);
+
+            Undo.CollapseUndoOperations(undoGroup);
 
             // Trigger→entry bindings are keyed by index, so the scene view
             // needs to be rescanned to re-associate them.
             ScanScene();
+
+            // Always log reorders (not just when triggers were touched) so an
+            // accidental drag leaves an audit trail the user can spot + Ctrl-Z.
+            var entryLabel = string.IsNullOrEmpty(item.displayName) ? item.GetSummary() : item.displayName;
+            Debug.Log($"[Hapbeat] Reordered entry '{entryLabel}' (was #{from}, now #{newIndex})" +
+                      (remappedCount > 0
+                          ? $"; remapped {remappedCount} scene trigger reference(s). Press Ctrl+Z to undo."
+                          : ". Press Ctrl+Z to undo."));
         }
 
         /// <summary>
-        /// Walk every <see cref="HapbeatTriggerBase"/> in open scenes and rewrite
-        /// their serialized <c>_entryIndex</c> (and sequence-trigger on-start /
-        /// on-stop indices) using the supplied old→new index map.
+        /// Walk every <see cref="HapbeatTriggerBase"/> in open scenes (including
+        /// those on INACTIVE GameObjects, so disabled branches stay in sync) and
+        /// rewrite their serialized <c>_entryIndex</c> (plus SequenceTrigger's
+        /// on-start / on-stop indices) using the supplied old→new index map.
+        ///
+        /// Returns the number of individual property writes performed.
         /// </summary>
-        private void RemapTriggerEntryIndices(int[] oldToNew)
+        private int RemapTriggerEntryIndices(int[] oldToNew)
         {
-            var triggers = FindObjectsByType<HapbeatTriggerBase>(FindObjectsSortMode.None);
+            // FindObjectsInactive.Include is critical: triggers on disabled
+            // GameObjects are otherwise invisible to the editor's default scene
+            // scan, and would drift silently after a reorder.
+            var triggers = FindObjectsByType<HapbeatTriggerBase>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+            int totalWrites = 0;
+
             foreach (var trig in triggers)
             {
                 if (trig == null || trig.EventMap != _selectedMap) continue;
 
                 var so = new SerializedObject(trig);
-                bool changed = false;
+                int writesHere = 0;
 
-                changed |= RemapIntProperty(so.FindProperty("_entryIndex"), oldToNew);
-                // HapbeatSequenceTrigger adds two more entry-index fields.
-                changed |= RemapIntProperty(so.FindProperty("_onStartEntryIndex"), oldToNew);
-                changed |= RemapIntProperty(so.FindProperty("_onStopEntryIndex"), oldToNew);
+                writesHere += RemapIntProperty(so.FindProperty("_entryIndex"), oldToNew) ? 1 : 0;
+                // HapbeatSequenceTrigger adds two more entry-index fields. FindProperty
+                // returns null for trigger types that don't have them — handled inside.
+                writesHere += RemapIntProperty(so.FindProperty("_onStartEntryIndex"), oldToNew) ? 1 : 0;
+                writesHere += RemapIntProperty(so.FindProperty("_onStopEntryIndex"), oldToNew) ? 1 : 0;
 
-                if (changed)
+                if (writesHere > 0)
                 {
                     Undo.RecordObject(trig, "Remap Hapbeat Trigger Index");
                     so.ApplyModifiedProperties();
                     EditorUtility.SetDirty(trig);
+                    totalWrites += writesHere;
                 }
             }
+            return totalWrites;
         }
 
         private static bool RemapIntProperty(SerializedProperty prop, int[] oldToNew)
@@ -420,14 +464,27 @@ namespace Hapbeat.Editor
         {
             EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
 
-            // Event Map selector — responsive width: shrinks when the toolbar is
-            // narrow so the rest of the controls stay visible. Label also shrinks
-            // via MaxWidth so narrow windows don't waste space on it.
-            EditorGUILayout.LabelField("Event Map:",
-                GUILayout.MinWidth(40), GUILayout.MaxWidth(70));
+            // Explicit width calculation based on window width, since GUILayout's
+            // MinWidth/MaxWidth/ExpandWidth/FlexibleSpace interaction with the
+            // EditorStyles.toolbar style doesn't reliably shrink ObjectField when
+            // the window is narrow (the IMGUI competition logic keeps ObjectField
+            // pinned to its preferred width). By computing widths ourselves, the
+            // toolbar remains fully visible even at ~380px window widths.
+            float winW = position.width;
+            // Fixed right-side area: Batch(80) + Scan(80) + ↻(24) + List(42) + Table(48) + gaps(~14) + margin
+            const float rightFixedW = 288f;
+            // When _selectedMap is null, the ↻ button doesn't render — shave off its 24px.
+            float rightFixed = _selectedMap == null ? rightFixedW - 24f : rightFixedW;
+            // Add trailing +/- (24+24) and endcap spacing
+            rightFixed += 52f;
+
+            float leftRoom = Mathf.Max(80f, winW - rightFixed);
+            float labelW = Mathf.Clamp(leftRoom * 0.25f, 35f, 70f);
+            float objW = Mathf.Clamp(leftRoom - labelW - 4f, 60f, 240f);
+
+            EditorGUILayout.LabelField("Event Map:", GUILayout.Width(labelW));
             var newMap = (HapbeatEventMap)EditorGUILayout.ObjectField(
-                _selectedMap, typeof(HapbeatEventMap), false,
-                GUILayout.MinWidth(60), GUILayout.MaxWidth(220), GUILayout.ExpandWidth(true));
+                _selectedMap, typeof(HapbeatEventMap), false, GUILayout.Width(objW));
             if (newMap != _selectedMap)
             {
                 _selectedMap = newMap;
@@ -463,7 +520,6 @@ namespace Hapbeat.Editor
             // View mode toggle (List | Table)
             using (new EditorGUI.DisabledScope(_selectedMap == null))
             {
-                GUILayout.Space(4);
                 bool listSel = _viewMode == ViewMode.List;
                 bool tableSel = _viewMode == ViewMode.Table;
                 // Use miniButtonLeft/Right for a segmented look.
@@ -476,7 +532,6 @@ namespace Hapbeat.Editor
                 if (GUILayout.Button("Table", EditorStyles.miniButtonRight, GUILayout.Width(48)))
                     SetViewMode(ViewMode.Table);
                 GUI.backgroundColor = prevCol;
-                GUILayout.Space(4);
             }
 
             if (_selectedMap != null && GUILayout.Button("+", EditorStyles.toolbarButton, GUILayout.Width(24)))
@@ -942,24 +997,75 @@ namespace Hapbeat.Editor
             foreach (int i in sorted)
             {
                 if (i < 0 || i >= _selectedMap.entries.Count) continue;
-                var src = _selectedMap.entries[i];
-                var dup = new HapbeatEventEntry
-                {
-                    mode = src.mode,
-                    displayName = src.displayName + " (copy)",
-                    category = src.category,
-                    eventName = src.eventName,
-                    streamClip = src.streamClip,
-                    gain = src.gain,
-                    target = src.target,
-                    group = src.group,
-                    notes = src.notes,
-                };
+                var dup = CloneEntry(_selectedMap.entries[i], displayNameSuffix: " (copy)");
                 _selectedMap.entries.Insert(i + 1, dup);
             }
             EditorUtility.SetDirty(_selectedMap);
             _tableMultiSelected.Clear();
             ScanScene();
+        }
+
+        /// <summary>
+        /// Full deep copy of a <see cref="HapbeatEventEntry"/>. Covers ALL
+        /// user-visible fields (mode / displayName / eventId parts / streamClip /
+        /// loop / silentMode / bindings / gain / target / group / notes) so clipboard
+        /// operations and duplicate/batch-duplicate don't silently drop data.
+        ///
+        /// Binding GUIDs are regenerated so duplicated presets don't alias back to
+        /// the source — otherwise a runtime <see cref="HapbeatParameterBinding"/>
+        /// linked to the source preset would also pick up the duplicate.
+        /// </summary>
+        private static HapbeatEventEntry CloneEntry(HapbeatEventEntry src, string displayNameSuffix)
+        {
+            if (src == null) return null;
+            return new HapbeatEventEntry
+            {
+                mode = src.mode,
+                displayName = src.displayName + displayNameSuffix,
+                category = src.category,
+                eventName = src.eventName,
+                streamClip = src.streamClip,
+                silentMode = src.silentMode,
+                loop = src.loop,
+                bindings = CloneBindings(src.bindings),
+                gain = src.gain,
+                target = src.target,
+                group = src.group,
+                notes = src.notes,
+            };
+        }
+
+        /// <summary>
+        /// Deep-copy a list of binding presets. Each copy gets a fresh GUID so
+        /// runtime links (HapbeatParameterBinding._linkedBindingId) don't end up
+        /// aliasing to the wrong source after a duplicate.
+        /// </summary>
+        private static List<HapbeatBindingPreset> CloneBindings(List<HapbeatBindingPreset> src)
+        {
+            if (src == null) return new List<HapbeatBindingPreset>();
+            var result = new List<HapbeatBindingPreset>(src.Count);
+            foreach (var b in src)
+            {
+                if (b == null) continue;
+                var copy = new HapbeatBindingPreset
+                {
+                    sourceTransformPath = b.sourceTransformPath,
+                    sourceProperty = b.sourceProperty,
+                    inputMin = b.inputMin,
+                    inputMax = b.inputMax,
+                    curveType = b.curveType,
+                    customCurve = b.customCurve != null ? new AnimationCurve(b.customCurve.keys) : null,
+                    outputParameter = b.outputParameter,
+                    outputMin = b.outputMin,
+                    outputMax = b.outputMax,
+                    debugLog = b.debugLog,
+                    debugLogInterval = b.debugLogInterval,
+                    debugLogChangeThreshold = b.debugLogChangeThreshold,
+                };
+                copy.RegenerateId();
+                result.Add(copy);
+            }
+            return result;
         }
 
         private void BatchDelete(List<int> indices)
@@ -1239,19 +1345,7 @@ namespace Hapbeat.Editor
         private void CopyEntry(int index)
         {
             if (_selectedMap == null || index < 0 || index >= _selectedMap.entries.Count) return;
-            var src = _selectedMap.entries[index];
-            _clipboardEntry = new HapbeatEventEntry
-            {
-                mode = src.mode,
-                displayName = src.displayName,
-                category = src.category,
-                eventName = src.eventName,
-                streamClip = src.streamClip,
-                gain = src.gain,
-                target = src.target,
-                group = src.group,
-                notes = src.notes
-            };
+            _clipboardEntry = CloneEntry(_selectedMap.entries[index], displayNameSuffix: "");
         }
 
         private void PasteEntry(int index)
@@ -1260,14 +1354,19 @@ namespace Hapbeat.Editor
             if (index < 0 || index >= _selectedMap.entries.Count) return;
             Undo.RecordObject(_selectedMap, "Paste Hapbeat Event Entry");
             var dst = _selectedMap.entries[index];
+            // Paste everything that defines the event's BEHAVIOUR. Keep the
+            // destination's displayName/notes so the user preserves the row's
+            // identity / documentation.
             dst.mode = _clipboardEntry.mode;
             dst.category = _clipboardEntry.category;
             dst.eventName = _clipboardEntry.eventName;
             dst.streamClip = _clipboardEntry.streamClip;
+            dst.loop = _clipboardEntry.loop;
+            dst.silentMode = _clipboardEntry.silentMode;
+            dst.bindings = CloneBindings(_clipboardEntry.bindings);
             dst.gain = _clipboardEntry.gain;
             dst.target = _clipboardEntry.target;
             dst.group = _clipboardEntry.group;
-            // Don't paste displayName or notes — keep the target entry's identity
             EditorUtility.SetDirty(_selectedMap);
         }
 
@@ -1275,19 +1374,7 @@ namespace Hapbeat.Editor
         {
             if (_selectedMap == null || index < 0 || index >= _selectedMap.entries.Count) return;
             Undo.RecordObject(_selectedMap, "Duplicate Hapbeat Event Entry");
-            var src = _selectedMap.entries[index];
-            var dup = new HapbeatEventEntry
-            {
-                mode = src.mode,
-                displayName = src.displayName + " (copy)",
-                category = src.category,
-                eventName = src.eventName,
-                streamClip = src.streamClip,
-                gain = src.gain,
-                target = src.target,
-                group = src.group,
-                notes = src.notes
-            };
+            var dup = CloneEntry(_selectedMap.entries[index], displayNameSuffix: " (copy)");
             _selectedMap.entries.Insert(index + 1, dup);
             _selectedEntryIndex = index + 1;
             EditorUtility.SetDirty(_selectedMap);
@@ -1547,39 +1634,31 @@ namespace Hapbeat.Editor
                 ? HapbeatManager.Instance.IsStreaming
                 : HapbeatEditorTransport.IsStreaming;
 
-            // Compact manual-rect layout — keeps buttons visible even on narrow panels.
-            // At very narrow widths, buttons degrade to icon-only (▶ / ■) with the
-            // action hint moved to the tooltip, so they're always visible.
-            const float btnGap = 2f;
-            const float padding = 4f;
-            const float btnH = 18f;
-            const float boxH = 22f;
+            // Single-row bar: [Test Play] [Stop]  inline-hint
+            // The bar is sized from the CURRENT layout context (the detail scroll
+            // view), so boxRect.width is the detail panel's usable width — NOT
+            // position.width. That's what makes the bar respond when the user
+            // drags the middle splitter to resize the detail panel.
+            const float btnGap = 4f;
+            const float padding = 2f;
+            const float btnH = 20f;
+            const float boxH = 24f;
 
             var boxRect = GUILayoutUtility.GetRect(0, boxH, GUILayout.ExpandWidth(true));
-            if (Event.current.type == EventType.Repaint)
-                EditorStyles.helpBox.Draw(boxRect, GUIContent.none, 0);
 
+            // Compact mode: when the detail panel is narrow, collapse button labels
+            // to icon-only so both buttons always remain visible. Threshold chosen
+            // so the hint text still has ~80px of room before we go compact.
             bool compact = boxRect.width < 260f;
-            float btnPlayW = compact ? 28f : 84f;
-            float btnStopW = compact ? 24f : 44f;
-
+            float btnPlayW = compact ? 30f : 88f;
+            float btnStopW = compact ? 30f : 48f;
             string playLabel = compact ? "\u25b6" : "\u25b6 Test Play";
             string stopLabel = compact ? "\u25a0" : "\u25a0 Stop";
 
-            // Vertically centered button row.
+            // Vertically centered button row, pinned to the left side of the panel.
             float btnY = boxRect.y + (boxRect.height - btnH) * 0.5f;
-            var stopRect = new Rect(boxRect.xMax - padding - btnStopW, btnY, btnStopW, btnH);
-            var playRect = new Rect(stopRect.x - btnGap - btnPlayW, btnY, btnPlayW, btnH);
-            var labelRect = new Rect(boxRect.x + padding, boxRect.y,
-                Mathf.Max(10f, playRect.x - boxRect.x - padding * 2), boxRect.height);
-
-            // Middle-align the label vertically so it visually sits on the button line.
-            var labelStyle = new GUIStyle(EditorStyles.miniLabel)
-            {
-                clipping = TextClipping.Clip,
-                alignment = TextAnchor.MiddleLeft,
-            };
-            GUI.Label(labelRect, DescribeEntryForTestPlay(entry), labelStyle);
+            var playRect = new Rect(boxRect.x + padding, btnY, btnPlayW, btnH);
+            var stopRect = new Rect(playRect.xMax + btnGap, btnY, btnStopW, btnH);
 
             // ▶ Test Play — fires on MouseDown (press) so feedback feels instant.
             // We intercept the event BEFORE GUI.Button sees it (GUI.Button fires on
@@ -1599,30 +1678,49 @@ namespace Hapbeat.Editor
                 canFire, null,
                 () => TestStopEntry(entry));
 
+            // Inline hint / status text — rendered on the SAME row as the buttons
+            // (right of them) so the bar never takes a second line's worth of height.
+            // Priority: connection hint > missing intensity > streaming indicator.
+            string inlineHint = null;
+            Color hintColor = Color.gray;
+            string fullHintTooltip = null;
+
             if (!string.IsNullOrEmpty(hint))
             {
-                var style = new GUIStyle(EditorStyles.miniLabel) { fontStyle = FontStyle.Italic };
-                EditorGUILayout.LabelField(hint, style);
+                inlineHint = hint;
+                fullHintTooltip = hint;
+                hintColor = new Color(0.95f, 0.85f, 0.55f);
             }
             else if (missingIntensity)
             {
-                var style = new GUIStyle(EditorStyles.miniLabel)
-                {
-                    wordWrap = true,
-                    normal = { textColor = new Color(1f, 0.8f, 0.4f) },
-                };
-                EditorGUILayout.LabelField(
-                    "\u26a0 manifest intensity not found for this clip \u2014 using gain as-is. " +
-                    "Deploy the Kit from Studio, or Refresh the EventMap (↻ toolbar).",
-                    style);
+                string msg = "\u26a0 manifest intensity not found \u2014 using gain as-is";
+                inlineHint = msg;
+                fullHintTooltip = msg +
+                    "\n\nDeploy the Kit from Studio, or Refresh the EventMap (↻ toolbar).";
+                hintColor = new Color(1f, 0.8f, 0.4f);
             }
             else if (isStreaming)
             {
-                var style = new GUIStyle(EditorStyles.miniLabel)
+                inlineHint = "\u266a Streaming\u2026  (Stop to end)";
+                fullHintTooltip = inlineHint;
+                hintColor = new Color(0.4f, 0.85f, 0.5f);
+            }
+
+            if (inlineHint != null)
+            {
+                float hintX = stopRect.xMax + 6f;
+                float hintW = Mathf.Max(0f, boxRect.xMax - hintX - 2f);
+                if (hintW > 8f)
                 {
-                    normal = { textColor = new Color(0.4f, 0.85f, 0.5f) },
-                };
-                EditorGUILayout.LabelField("\u266a Streaming\u2026  (Stop to end)", style);
+                    var hintRect = new Rect(hintX, boxRect.y, hintW, boxRect.height);
+                    var hintStyle = new GUIStyle(EditorStyles.miniLabel)
+                    {
+                        clipping = TextClipping.Clip,
+                        alignment = TextAnchor.MiddleLeft,
+                        normal = { textColor = hintColor },
+                    };
+                    GUI.Label(hintRect, new GUIContent(inlineHint, fullHintTooltip), hintStyle);
+                }
             }
         }
 
@@ -1657,50 +1755,6 @@ namespace Hapbeat.Editor
                 GUI.Button(rect, content);
                 GUI.backgroundColor = prev;
             }
-        }
-
-        private static string DescribeEntryForTestPlay(HapbeatEventEntry entry)
-        {
-            string target = entry.HasTarget ? entry.target : "broadcast";
-            switch (entry.mode)
-            {
-                case HapticMode.Command:
-                    return string.IsNullOrEmpty(entry.eventId)
-                        ? "(Command: no eventId)"
-                        : $"Command  \u2192  {entry.eventId}   gain={entry.gain:F2}  target={target}";
-                case HapticMode.StreamClip:
-                    {
-                        if (entry.streamClip == null) return "(StreamClip: no clip)";
-                        string intensityPart = FormatIntensityForSummary(entry);
-                        float eff = entry.GetEffectiveGain();
-                        return $"StreamClip  \u2192  {entry.streamClip.name}   " +
-                               $"gain={entry.gain:F2}{intensityPart}  eff={eff:F2}  " +
-                               $"loop={entry.loop}  target={target}";
-                    }
-                case HapticMode.StreamSource:
-                    {
-                        if (entry.streamClip == null)
-                            return "(StreamSource: no clip \u2014 test-play uses entry.streamClip as a stand-in)";
-                        string intensityPart = FormatIntensityForSummary(entry);
-                        float eff = entry.GetEffectiveGain();
-                        return $"StreamSource (clip preview)  \u2192  {entry.streamClip.name}   " +
-                               $"gain={entry.gain:F2}{intensityPart}  eff={eff:F2}  " +
-                               $"loop={entry.loop}";
-                    }
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// "× intensity=0.75" or "× intensity=?" (when unresolved). Command mode
-        /// returns empty — device applies its own flashed intensity.
-        /// </summary>
-        private static string FormatIntensityForSummary(HapbeatEventEntry entry)
-        {
-            if (entry.mode == HapticMode.Command) return "";
-            return entry.CachedManifestIntensity > 0f
-                ? $" \u00d7 intensity={entry.CachedManifestIntensity:F2}"
-                : " \u00d7 intensity=?";
         }
 
         private static void TestPlayEntry(HapbeatEventEntry entry)

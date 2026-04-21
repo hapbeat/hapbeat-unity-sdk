@@ -195,8 +195,12 @@ namespace Hapbeat.Editor
                 bytesPerSecond = (ushort)clip.frequency * (byte)clip.channels * 2f,
             };
 
+            // Seamless loop: single STREAM_BEGIN with totalSamples=0 (unknown length)
+            // when looping, then keep feeding STREAM_DATA with monotonically advancing
+            // offsets across iterations. See the matching comment in HapbeatManager.
+            uint reportedTotalSamples = loop ? 0u : _stream.totalSamples;
             _client.SendStreamBegin(_stream.sampleRate, _stream.channels,
-                HapbeatProtocol.AUDIO_FORMAT_PCM16, _stream.totalSamples, _stream.gain, _stream.target);
+                HapbeatProtocol.AUDIO_FORMAT_PCM16, reportedTotalSamples, _stream.gain, _stream.target);
 
             Debug.Log($"[Hapbeat:Editor] \u266a StreamClip \"{clip.name}\" " +
                       $"{_stream.sampleRate}Hz/{_stream.channels}ch gain={gain:F2} " +
