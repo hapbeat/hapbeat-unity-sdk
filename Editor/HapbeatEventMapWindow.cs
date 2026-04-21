@@ -1,6 +1,8 @@
 #if UNITY_EDITOR
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 
@@ -490,7 +492,10 @@ namespace Hapbeat.Editor
             {
                 case HapticMode.Command:
                     DrawCommandFields(entryProp, so);
-                    DrawKitFolderHint("clips");
+                    DrawKitEventIdDropdown(
+                        entryProp.FindPropertyRelative("category"),
+                        entryProp.FindPropertyRelative("eventName"),
+                        so);
                     break;
                 case HapticMode.StreamClip:
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
@@ -1008,6 +1013,232 @@ namespace Hapbeat.Editor
             return dropped.name;
         }
 
+        // ── Kit manifest scanner ─────────────────────────────────────────────
+
+        /// <summary>
+        /// Cached event metadata parsed from all kits' manifest.json files under
+        /// Assets/HapbeatKits/. Invalidated on a short TTL and whenever a user
+        /// clicks "Refresh" in the Event ID dropdown.
+        /// </summary>
+        private struct KitManifestEvent
+        {
+            public string kitId;       // folder name under HapbeatKits/, e.g. "hand-demo-kit"
+            public string eventId;     // full ID, e.g. "impact.hit-soft"
+            public string mode;        // "command" (default) / "stream_clip" / "stream_source"
+            public string description; // optional description from manifest
+        }
+
+        private static List<KitManifestEvent> _cachedKitEvents;
+        private static double _cachedKitEventsTime = -1;
+        private const double KitEventCacheTtl = 3.0;
+
+        private static List<KitManifestEvent> LoadKitManifestEvents()
+        {
+            double now = EditorApplication.timeSinceStartup;
+            if (_cachedKitEvents != null && now - _cachedKitEventsTime < KitEventCacheTtl)
+                return _cachedKitEvents;
+
+            var result = new List<KitManifestEvent>();
+            const string kitsRoot = "Assets/HapbeatKits";
+            if (AssetDatabase.IsValidFolder(kitsRoot))
+            {
+                foreach (string kitDir in AssetDatabase.GetSubFolders(kitsRoot))
+                {
+                    string manifestAssetPath = $"{kitDir}/manifest.json";
+                    // AssetPath → absolute path ("Assets/..." is relative to project)
+                    string absPath = Path.Combine(
+                        Application.dataPath,
+                        manifestAssetPath.Substring("Assets/".Length));
+                    if (!File.Exists(absPath)) continue;
+                    try
+                    {
+                        string json = File.ReadAllText(absPath);
+                        string kitId = Path.GetFileName(kitDir);
+                        ParseManifestEventsInto(json, kitId, result);
+                    }
+                    catch (System.Exception e)
+                    {
+                        UnityEngine.Debug.LogWarning(
+                            $"[Hapbeat] Failed to parse {manifestAssetPath}: {e.Message}");
+                    }
+                }
+            }
+
+            _cachedKitEvents = result;
+            _cachedKitEventsTime = now;
+            return result;
+        }
+
+        private static void InvalidateKitManifestCache()
+        {
+            _cachedKitEvents = null;
+            _cachedKitEventsTime = -1;
+        }
+
+        /// <summary>
+        /// Extract the top-level "events" object from a manifest.json and push each
+        /// entry's id/mode/description into <paramref name="output"/>. Uses brace-depth
+        /// tracking rather than a JSON library so the SDK stays dependency-free.
+        /// </summary>
+        private static void ParseManifestEventsInto(string json, string kitId, List<KitManifestEvent> output)
+        {
+            // Locate the "events" : { ... } block at the top level.
+            var eventsMatch = Regex.Match(json, "\"events\"\\s*:\\s*\\{");
+            if (!eventsMatch.Success) return;
+
+            int blockStart = eventsMatch.Index + eventsMatch.Length;
+            int blockEnd = FindMatchingBrace(json, blockStart);
+            if (blockEnd < 0) return;
+
+            string block = json.Substring(blockStart, blockEnd - blockStart);
+
+            // Walk top-level keys inside the events block.
+            int pos = 0;
+            while (pos < block.Length)
+            {
+                var keyMatch = Regex.Match(
+                    block.Substring(pos), "\"([^\"]+)\"\\s*:\\s*\\{");
+                if (!keyMatch.Success) break;
+
+                string eventId = keyMatch.Groups[1].Value;
+                int entryStart = pos + keyMatch.Index + keyMatch.Length;
+                int entryEnd = FindMatchingBrace(block, entryStart);
+                if (entryEnd < 0) break;
+
+                string entryBody = block.Substring(entryStart, entryEnd - entryStart);
+
+                string mode = "command"; // default per pack-format spec (absent mode = command)
+                var modeMatch = Regex.Match(entryBody, "\"mode\"\\s*:\\s*\"([^\"]+)\"");
+                if (modeMatch.Success) mode = modeMatch.Groups[1].Value;
+
+                string description = "";
+                var descMatch = Regex.Match(entryBody, "\"description\"\\s*:\\s*\"([^\"]*)\"");
+                if (descMatch.Success) description = descMatch.Groups[1].Value;
+
+                output.Add(new KitManifestEvent
+                {
+                    kitId = kitId,
+                    eventId = eventId,
+                    mode = mode,
+                    description = description,
+                });
+
+                pos = entryEnd + 1;
+            }
+        }
+
+        /// <summary>
+        /// Given the index of the character AFTER an opening "{", return the index
+        /// of its matching "}" (brace-balanced). Returns -1 if unbalanced.
+        /// Naively ignores string-literal escaping; acceptable for well-formed Studio output.
+        /// </summary>
+        private static int FindMatchingBrace(string s, int openAfterIdx)
+        {
+            int depth = 1;
+            int i = openAfterIdx;
+            bool inString = false;
+            while (i < s.Length && depth > 0)
+            {
+                char c = s[i];
+                if (c == '"' && (i == 0 || s[i - 1] != '\\')) inString = !inString;
+                else if (!inString)
+                {
+                    if (c == '{') depth++;
+                    else if (c == '}') depth--;
+                }
+                if (depth > 0) i++;
+            }
+            return depth == 0 ? i : -1;
+        }
+
+        // ── Event ID dropdown (Command mode) ─────────────────────────────────
+
+        /// <summary>
+        /// Adds a "From Kit ▾" dropdown below the Event ID row that lists every
+        /// command-mode event found in Assets/HapbeatKits/*/manifest.json. Picking
+        /// an entry splits it into category + name and writes both fields.
+        /// </summary>
+        private static void DrawKitEventIdDropdown(
+            SerializedProperty categoryProp,
+            SerializedProperty eventNameProp,
+            SerializedObject so)
+        {
+            var events = LoadKitManifestEvents()
+                .Where(e => e.mode == "command")
+                .ToList();
+
+            string curId = BuildEventId(categoryProp.stringValue, eventNameProp.stringValue);
+
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.Space(EditorGUIUtility.labelWidth);
+
+            GUILayout.Label(
+                events.Count == 0
+                    ? "No Kit events found. Deploy a Kit from Studio."
+                    : $"{events.Count} event(s) from {events.Select(e => e.kitId).Distinct().Count()} kit(s)",
+                EditorStyles.miniLabel);
+            GUILayout.FlexibleSpace();
+
+            if (GUILayout.Button("From Kit \u25be", EditorStyles.miniButton, GUILayout.Width(80)))
+            {
+                var menu = new GenericMenu();
+                if (events.Count == 0)
+                {
+                    menu.AddDisabledItem(new GUIContent("No Kit manifests found"));
+                    menu.AddSeparator("");
+                    menu.AddItem(new GUIContent("Open HapbeatKits folder"), false, () =>
+                        RevealKitSubfolder("Assets/HapbeatKits", ""));
+                }
+                else
+                {
+                    // Group by kit id, kits alphabetical, events alphabetical within kit
+                    foreach (var group in events.GroupBy(e => e.kitId).OrderBy(g => g.Key))
+                    {
+                        foreach (var ev in group.OrderBy(e => e.eventId))
+                        {
+                            string menuPath = $"{group.Key}/{ev.eventId}";
+                            bool isCurrent = ev.eventId == curId;
+                            // capture-by-value for the closure
+                            string capturedId = ev.eventId;
+                            menu.AddItem(new GUIContent(menuPath), isCurrent, () =>
+                            {
+                                SplitEventId(capturedId, out string cat, out string name);
+                                categoryProp.stringValue = cat;
+                                eventNameProp.stringValue = name;
+                                so.ApplyModifiedProperties();
+                            });
+                        }
+                    }
+                    menu.AddSeparator("");
+                    menu.AddItem(new GUIContent("Refresh"), false, InvalidateKitManifestCache);
+                }
+                menu.ShowAsContext();
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        private static string BuildEventId(string cat, string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "";
+            if (string.IsNullOrEmpty(cat)) return name;
+            return $"{cat}.{name}";
+        }
+
+        private static void SplitEventId(string eventId, out string cat, out string name)
+        {
+            int dot = eventId.IndexOf('.');
+            if (dot > 0)
+            {
+                cat = eventId.Substring(0, dot);
+                name = eventId.Substring(dot + 1);
+            }
+            else
+            {
+                cat = "";
+                name = eventId;
+            }
+        }
+
         // ── Kit folder hint ──────────────────────────────────────────────────
 
         /// <summary>
@@ -1033,6 +1264,23 @@ namespace Hapbeat.Editor
 
         private static void RevealKitSubfolder(string kitsRoot, string subfolder)
         {
+            // Empty subfolder = caller wants the kits root itself
+            if (string.IsNullOrEmpty(subfolder))
+            {
+                var rootObj = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(kitsRoot);
+                if (rootObj != null)
+                {
+                    EditorUtility.FocusProjectWindow();
+                    Selection.activeObject = rootObj;
+                    EditorGUIUtility.PingObject(rootObj);
+                    return;
+                }
+                UnityEngine.Debug.LogWarning(
+                    $"[Hapbeat] {kitsRoot}/ not found. " +
+                    "Run Hapbeat > Setup > Create HapbeatKits Folder first.");
+                return;
+            }
+
             // Collect all kit sub-directories under Assets/HapbeatKits/
             string[] kitDirs = AssetDatabase.GetSubFolders(kitsRoot);
             if (kitDirs == null || kitDirs.Length == 0)
@@ -1060,7 +1308,6 @@ namespace Hapbeat.Editor
             }
 
             // Subfolder doesn't exist yet — ping the kits root and hint to Save/Deploy
-            string[] rootFolderArr = new[] { kitsRoot };
             string hint = subfolder == "clips"
                 ? "No clips/ folder found. Deploy a Kit that contains Command events."
                 : "No stream-clips/ folder found. Deploy a Kit that contains StreamClip or StreamSource events.";
