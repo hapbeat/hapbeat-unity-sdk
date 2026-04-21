@@ -454,6 +454,55 @@ namespace Hapbeat.Editor
         ///
         /// Returns the number of individual property writes performed.
         /// </summary>
+        /// <summary>
+        /// Sync every scene trigger's <c>_entryIndex</c> display cache from its
+        /// stable id. Use after structural mutations that invalidate list
+        /// positions (insert / delete) but have no meaningful oldToNew map.
+        /// Triggers without a stable id are left alone (legacy — unsafe to guess).
+        /// Returns the number of triggers whose cache was updated.
+        /// </summary>
+        private int SyncTriggerIndexCaches()
+        {
+            if (_selectedMap == null) return 0;
+
+            var triggers = FindObjectsByType<HapbeatTriggerBase>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+            int totalWrites = 0;
+
+            foreach (var trig in triggers)
+            {
+                if (trig == null || trig.EventMap != _selectedMap) continue;
+
+                var so = new SerializedObject(trig);
+                int writesHere = 0;
+
+                writesHere += SyncIndexFromIdOnly(so, "_entryId", "_entryIndex") ? 1 : 0;
+                writesHere += SyncIndexFromIdOnly(so, "_onStartEntryId", "_onStartEntryIndex") ? 1 : 0;
+                writesHere += SyncIndexFromIdOnly(so, "_onStopEntryId", "_onStopEntryIndex") ? 1 : 0;
+
+                if (writesHere > 0)
+                {
+                    Undo.RecordObject(trig, "Sync Hapbeat Trigger Index Cache");
+                    so.ApplyModifiedProperties();
+                    EditorUtility.SetDirty(trig);
+                    totalWrites += writesHere;
+                }
+            }
+            return totalWrites;
+        }
+
+        private bool SyncIndexFromIdOnly(SerializedObject so, string idPropName, string indexPropName)
+        {
+            var idProp = so.FindProperty(idPropName);
+            var indexProp = so.FindProperty(indexPropName);
+            if (idProp == null || indexProp == null) return false;
+            if (string.IsNullOrEmpty(idProp.stringValue)) return false;
+            int newIdx = _selectedMap.IndexOfId(idProp.stringValue);
+            if (newIdx < 0 || newIdx == indexProp.intValue) return false;
+            indexProp.intValue = newIdx;
+            return true;
+        }
+
         private int RemapTriggerEntryIndices(int[] oldToNew)
         {
             // FindObjectsInactive.Include is critical: triggers on disabled
@@ -1070,6 +1119,7 @@ namespace Hapbeat.Editor
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
             _tableMultiSelected.Clear();
+            SyncTriggerIndexCaches();
             ScanScene();
             RefreshIntensityCache();
         }
@@ -1411,6 +1461,12 @@ namespace Hapbeat.Editor
             // New entry starts with _cachedManifestIntensity = -1 so its stream
             // mode would silently ignore Studio-authored intensity until refreshed.
             RefreshIntensityCache();
+            // Insert shifts every existing entry at/after `index` down by one.
+            // Runtime resolution is id-based so this doesn't break wiring, but
+            // the display cache on scene triggers would go stale until next
+            // Inspector touch. Sync now so EventMap's wiring column + triggers'
+            // serialized cache agree with the new list position.
+            SyncTriggerIndexCaches();
         }
 
         private void DeleteEntry(int index)
@@ -1421,6 +1477,7 @@ namespace Hapbeat.Editor
             _selectedEntryIndex = Mathf.Min(_selectedEntryIndex, _selectedMap.entries.Count - 1);
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
+            SyncTriggerIndexCaches();
             ScanScene();
         }
 
@@ -1453,6 +1510,7 @@ namespace Hapbeat.Editor
             // Pasted category/eventName/clip may point at a different manifest
             // entry than before — recompute the intensity cache.
             RefreshIntensityCache();
+            SyncTriggerIndexCaches();
         }
 
         private void DuplicateEntry(int index)
@@ -1467,6 +1525,7 @@ namespace Hapbeat.Editor
             // Belt-and-suspenders: CloneEntry already copies the cache, but
             // rescan in case the duplicate's fields drifted since last refresh.
             RefreshIntensityCache();
+            SyncTriggerIndexCaches();
         }
 
         private void DrawSelectedEntryDetail()
@@ -2717,7 +2776,9 @@ namespace Hapbeat.Editor
 
             if (_selectedMap == null) return;
 
-            var allTriggers = FindObjectsByType<HapbeatTriggerBase>(FindObjectsSortMode.None);
+            // Include inactive so wires on disabled branches stay visible.
+            var allTriggers = FindObjectsByType<HapbeatTriggerBase>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
             foreach (var trigger in allTriggers)
             {
                 if (trigger == null) continue;
@@ -2731,20 +2792,55 @@ namespace Hapbeat.Editor
                     wiredEvents = FindWiredEvents(trigger)
                 };
 
-                int idx = trigger.EntryIndex;
-                if (idx >= 0 && idx < _selectedMap.entries.Count)
+                // Resolve the trigger's loop entry via stable id (authoritative).
+                // The _entryIndex display cache may be stale — e.g. after the
+                // user inserts a new entry in the EventMap, the trigger's
+                // _entryId still points at the right entry, but _entryIndex
+                // hasn't been rewritten yet. Use id-based lookup so the wiring
+                // column matches what the trigger actually fires at runtime.
+                int idx = ResolveTriggerEntryIndex(trigger.EntryId, trigger.EntryIndex);
+                AddWiring(idx, info);
+
+                // SequenceTrigger's On Start / On Stop phases are also worth
+                // surfacing in the wiring list so a user looking at an entry
+                // sees every trigger that references it in ANY phase.
+                if (trigger is HapbeatSequenceTrigger seq)
                 {
-                    if (!_triggersByEntry.ContainsKey(idx))
-                        _triggersByEntry[idx] = new List<TriggerInfo>();
-                    _triggersByEntry[idx].Add(info);
-                }
-                else
-                {
-                    _orphanedTriggers.Add(info);
+                    int startIdx = ResolveTriggerEntryIndex(seq.OnStartEntryId, seq.OnStartEntryIndex);
+                    int stopIdx = ResolveTriggerEntryIndex(seq.OnStopEntryId, seq.OnStopEntryIndex);
+                    if (startIdx != idx && startIdx >= 0) AddWiring(startIdx, info);
+                    if (stopIdx != idx && stopIdx >= 0 && stopIdx != startIdx) AddWiring(stopIdx, info);
                 }
             }
 
             Repaint();
+        }
+
+        /// <summary>
+        /// Resolve a trigger's entry index from its stable id (authoritative)
+        /// falling back to the supplied <paramref name="legacyIndex"/> cache
+        /// when the id is empty (unmigrated legacy trigger).
+        /// </summary>
+        private int ResolveTriggerEntryIndex(string id, int legacyIndex)
+        {
+            if (_selectedMap == null) return -1;
+            if (!string.IsNullOrEmpty(id))
+                return _selectedMap.IndexOfId(id);
+            return legacyIndex;
+        }
+
+        private void AddWiring(int idx, TriggerInfo info)
+        {
+            if (idx >= 0 && idx < _selectedMap.entries.Count)
+            {
+                if (!_triggersByEntry.ContainsKey(idx))
+                    _triggersByEntry[idx] = new List<TriggerInfo>();
+                _triggersByEntry[idx].Add(info);
+            }
+            else
+            {
+                _orphanedTriggers.Add(info);
+            }
         }
 
         /// <summary>
