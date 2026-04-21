@@ -7,21 +7,26 @@ namespace Hapbeat.Editor
     /// <summary>
     /// Custom inspector for <see cref="HapbeatSequenceTrigger"/>. Shows all three
     /// entries (On Start / Loop / On Stop) as dropdowns with the shared event-map
-    /// icon prefix, and adds a short wiring reminder for XRI grab interactions.
+    /// icon prefix. Selections are written by stable GUID so reorders don't break
+    /// wiring.
     /// </summary>
     [CustomEditor(typeof(HapbeatSequenceTrigger))]
     [CanEditMultipleObjects]
     public class HapbeatSequenceTriggerEditor : HapbeatTriggerBaseEditor
     {
-        private SerializedProperty _onStartProp;
-        private SerializedProperty _onStopProp;
+        private SerializedProperty _onStartIdProp;
+        private SerializedProperty _onStartIndexProp;
+        private SerializedProperty _onStopIdProp;
+        private SerializedProperty _onStopIndexProp;
         private bool _showUsageGuide;
 
         protected override void OnEnable()
         {
             base.OnEnable();
-            _onStartProp = serializedObject.FindProperty("_onStartEntryIndex");
-            _onStopProp = serializedObject.FindProperty("_onStopEntryIndex");
+            _onStartIdProp = serializedObject.FindProperty("_onStartEntryId");
+            _onStartIndexProp = serializedObject.FindProperty("_onStartEntryIndex");
+            _onStopIdProp = serializedObject.FindProperty("_onStopEntryId");
+            _onStopIndexProp = serializedObject.FindProperty("_onStopEntryIndex");
         }
 
         public override void OnInspectorGUI()
@@ -35,7 +40,7 @@ namespace Hapbeat.Editor
             if (eventMap == null || eventMap.entries.Count == 0)
             {
                 EditorGUILayout.HelpBox(
-                    "Event Map \u3092\u8a2d\u5b9a\u3057\u3001\u30a8\u30f3\u30c8\u30ea\u3092\u8ffd\u52a0\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+                    "Event Map を設定し、エントリを追加してください。",
                     MessageType.Warning);
                 serializedObject.ApplyModifiedProperties();
                 return;
@@ -44,59 +49,57 @@ namespace Hapbeat.Editor
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Sequence Entries", EditorStyles.boldLabel);
 
-            // Widen the label column so "On Start / Loop (hold) / On Stop" labels aren't
-            // truncated in a narrow inspector.
             float prev = EditorGUIUtility.labelWidth;
             EditorGUIUtility.labelWidth = Mathf.Max(160f, EditorGUIUtility.currentViewWidth * 0.45f);
             try
             {
-                DrawEntryDropdown(eventMap, _onStartProp,
+                DrawOptionalEntryDropdown(eventMap, _onStartIdProp, _onStartIndexProp,
                     "On Start",
                     "Optional one-shot haptic fired by Fire() (the 'attack' moment: " +
-                    "grab click, button click, enter ping). Set to (none) to skip.",
-                    allowNone: true);
+                    "grab click, button click, enter ping). Set to (none) to skip.");
 
-                DrawEntryDropdown(eventMap, serializedObject.FindProperty("_entryIndex"),
+                DrawEntryDropdown(eventMap,
+                    serializedObject.FindProperty("_entryId"),
+                    serializedObject.FindProperty("_entryIndex"),
                     "Loop (hold)",
                     "Continuous haptic that plays between Fire() and Stop(). " +
                     "Normally a StreamClip with loop=true, optionally driven by a " +
-                    "HapbeatParameterBinding for dynamic gain / pan modulation.",
-                    allowNone: false);
+                    "HapbeatParameterBinding for dynamic gain / pan modulation.");
 
-                DrawEntryDropdown(eventMap, _onStopProp,
+                DrawOptionalEntryDropdown(eventMap, _onStopIdProp, _onStopIndexProp,
                     "On Stop",
                     "Optional one-shot haptic fired by Stop() (the 'release' moment: " +
-                    "release thud, button release, exit ping). Set to (none) to skip.",
-                    allowNone: true);
+                    "release thud, button release, exit ping). Set to (none) to skip.");
             }
             finally
             {
                 EditorGUIUtility.labelWidth = prev;
             }
 
-            // Remaining inherited fields (trigger enabled, cooldown, verbose log, ...)
             EditorGUILayout.Space(4);
             DrawPropertiesExcluding(
                 serializedObject,
-                "_eventMap", "_entryIndex", "_onStartEntryIndex", "_onStopEntryIndex", "m_Script");
+                "_eventMap", "_entryIndex", "_entryId",
+                "_onStartEntryIndex", "_onStopEntryIndex",
+                "_onStartEntryId", "_onStopEntryId",
+                "m_Script");
 
             EditorGUILayout.Space(5);
             _showUsageGuide = EditorGUILayout.Foldout(_showUsageGuide, "Usage Guide", true);
             if (_showUsageGuide)
             {
                 EditorGUILayout.HelpBox(
-                    "Grab / Hold / Release \u30d1\u30bf\u30fc\u30f3\u306e wire:\n\n" +
-                    "\u25b6 XRGrabInteractable.firstSelectEntered  \u2192  Fire()\n" +
-                    "\u25b6 XRGrabInteractable.lastSelectExited   \u2192  Stop()\n\n" +
-                    "Fire() \u306f On Start \u306e\u4e00\u767a\u30b7\u30e7\u30c3\u30c8\u3092\u9001\u308a\u3001\u305d\u306e\u307e\u307e Loop \u3092\u958b\u59cb\u3057\u307e\u3059\u3002\n" +
-                    "Stop() \u306f Loop \u3092\u6b62\u3081\u3001On Stop \u306e\u4e00\u767a\u30b7\u30e7\u30c3\u30c8\u3092\u9001\u308a\u307e\u3059\u3002\n\n" +
-                    "\u4f7f\u308f\u306a\u3044\u30d5\u30a7\u30fc\u30ba\u306f \u300c(none)\u300d \u306b\u3057\u307e\u3059\u3002\n" +
-                    "On Start / On Stop \u306f Command \u307e\u305f\u306f StreamClip \u306e\u4e00\u767a\u3067\u4f7f\u3044\u307e\u3059\u3002",
+                    "Grab / Hold / Release パターンの wire:\n\n" +
+                    "▶ XRGrabInteractable.firstSelectEntered  →  Fire()\n" +
+                    "▶ XRGrabInteractable.lastSelectExited   →  Stop()\n\n" +
+                    "Fire() は On Start の一発ショットを送り、そのまま Loop を開始します。\n" +
+                    "Stop() は Loop を止め、On Stop の一発ショットを送ります。\n\n" +
+                    "使わないフェーズは「(none)」にします。",
                     MessageType.Info);
 
                 EditorGUILayout.HelpBox(
-                    "Animation Event \u7b49\u304b\u3089\u5f37\u5ea6\u3092\u53d7\u3051\u6e21\u3057\u305f\u3044\u5834\u5408\u306f FireWithStartGain(float) \u3092\u4f7f\u3048\u307e\u3059\u3002\n" +
-                    "On Start \u306e\u5f37\u5ea6\u3060\u3051\u4e0a\u66f8\u304d\u3055\u308c\u307e\u3059\uff08Loop \u306f\u30a8\u30f3\u30c8\u30ea\u8a2d\u5b9a\u306e gain \u3092\u305d\u306e\u307e\u307e\u4f7f\u7528\uff09\u3002",
+                    "Animation Event 等から強度を受け渡したい場合は FireWithStartGain(float) を使えます。\n" +
+                    "On Start の強度だけ上書きされます（Loop はエントリ設定の gain をそのまま使用）。",
                     MessageType.None);
             }
 
@@ -104,47 +107,66 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Draw a popup for <paramref name="prop"/> showing EventMap entry display
-        /// names (prefixed with mode icon). When <paramref name="allowNone"/>, the
-        /// popup has a leading "(none)" option mapped to -1.
+        /// Entry dropdown that includes a leading "(none)" option, mapped to
+        /// empty-id + index=-1. Used for Sequence's optional On Start / On Stop.
         /// </summary>
-        private static void DrawEntryDropdown(
-            HapbeatEventMap map,
-            SerializedProperty prop,
+        private static void DrawOptionalEntryDropdown(
+            HapbeatEventMap eventMap,
+            SerializedProperty idProp,
+            SerializedProperty indexProp,
             string label,
-            string tooltip,
-            bool allowNone)
+            string tooltip)
         {
-            string[] names = map.GetDisplayNames();
+            string[] names = eventMap.GetDisplayNames();
+            string[] options = new string[names.Length + 1];
+            options[0] = "(none)";
+            System.Array.Copy(names, 0, options, 1, names.Length);
 
-            string[] options;
-            if (allowNone)
+            // Resolve current popup index: popup uses 0 for "(none)", 1..N for entries.
+            int popupIdx;
+            if (!string.IsNullOrEmpty(idProp.stringValue))
             {
-                options = new string[names.Length + 1];
-                options[0] = "(none)";
-                System.Array.Copy(names, 0, options, 1, names.Length);
+                int resolved = eventMap.IndexOfId(idProp.stringValue);
+                popupIdx = resolved >= 0 ? resolved + 1 : Mathf.Max(0, indexProp.intValue + 1);
             }
             else
             {
-                options = names;
+                popupIdx = Mathf.Max(0, indexProp.intValue + 1);
+            }
+            popupIdx = Mathf.Clamp(popupIdx, 0, options.Length - 1);
+
+            int newPopupIdx = EditorGUILayout.Popup(new GUIContent(label, tooltip),
+                popupIdx, options);
+
+            int resolvedEntryIdx = newPopupIdx - 1; // -1 = none
+            if (resolvedEntryIdx < 0)
+            {
+                if (!string.IsNullOrEmpty(idProp.stringValue))
+                    idProp.stringValue = "";
+                indexProp.intValue = -1;
+            }
+            else if (resolvedEntryIdx < eventMap.entries.Count)
+            {
+                var entry = eventMap.entries[resolvedEntryIdx];
+                string newId = entry != null ? entry.id : "";
+                if (idProp.stringValue != newId)
+                {
+                    idProp.stringValue = newId;
+                    EditorUtility.SetDirty(eventMap);
+                    AssetDatabase.SaveAssetIfDirty(eventMap);
+                }
+                indexProp.intValue = resolvedEntryIdx;
             }
 
-            // Map SerializedProperty value (-1..N-1) \u2192 popup index (0..N or 0..N-1).
-            int popupIdx = allowNone ? prop.intValue + 1 : prop.intValue;
-            popupIdx = Mathf.Clamp(popupIdx, 0, options.Length - 1);
-            int newPopupIdx = EditorGUILayout.Popup(new GUIContent(label, tooltip), popupIdx, options);
-            prop.intValue = allowNone ? newPopupIdx - 1 : newPopupIdx;
-
-            // Small readonly preview line showing the resolved entry's mode/icon/target
-            int resolvedIdx = allowNone ? newPopupIdx - 1 : newPopupIdx;
-            if (resolvedIdx >= 0 && resolvedIdx < map.entries.Count)
+            // Short readonly preview line for the resolved entry
+            if (resolvedEntryIdx >= 0 && resolvedEntryIdx < eventMap.entries.Count)
             {
-                var entry = map.entries[resolvedIdx];
+                var entry = eventMap.entries[resolvedEntryIdx];
                 string summary = $"   mode={entry.mode}  gain={entry.gain:F2}" +
                                  (entry.HasTarget ? $"  target={entry.target}" : "");
                 EditorGUILayout.LabelField(summary, EditorStyles.miniLabel);
             }
-            else if (allowNone && resolvedIdx == -1)
+            else
             {
                 EditorGUILayout.LabelField("   (disabled)", EditorStyles.miniLabel);
             }

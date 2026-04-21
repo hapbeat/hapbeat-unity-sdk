@@ -110,6 +110,45 @@ namespace Hapbeat.Editor
             _splitRatio = Mathf.Clamp(_splitRatio, 0.2f, 0.8f);
             _viewMode = (ViewMode)EditorPrefs.GetInt(kViewModeKey, (int)ViewMode.List);
             RefreshIntensityCache();
+            EnsureEntryIdsAssigned();
+        }
+
+        /// <summary>
+        /// Proactively lazy-assign stable ids to every entry in the currently-selected
+        /// EventMap so subsequent resolutions go through the id path even before any
+        /// trigger edit. Persists the assignment to disk so it survives domain reload.
+        /// </summary>
+        private void EnsureEntryIdsAssigned()
+        {
+            if (_selectedMap == null) return;
+            bool anyAssigned = false;
+            foreach (var entry in _selectedMap.entries)
+            {
+                if (entry == null) continue;
+                if (!entry.HasId)
+                {
+                    _ = entry.id; // triggers lazy-assign
+                    anyAssigned = true;
+                }
+            }
+            if (anyAssigned)
+            {
+                EditorUtility.SetDirty(_selectedMap);
+                AssetDatabase.SaveAssetIfDirty(_selectedMap);
+            }
+        }
+
+        /// <summary>
+        /// Force-save the currently-selected EventMap to disk. Use after every
+        /// mutation (add / delete / reorder / edit) so the change survives a
+        /// subsequent script recompile / domain reload — SetDirty alone does
+        /// not guarantee the asset is written before the reload wipes memory state.
+        /// </summary>
+        private void PersistEventMap()
+        {
+            if (_selectedMap == null) return;
+            EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
         }
 
         private void OnGUI()
@@ -386,6 +425,7 @@ namespace Hapbeat.Editor
 
             _selectedEntryIndex = newIndex;
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
 
             // Remap all scene triggers that reference this map so their bindings
             // continue to point at the same logical entry after the reorder.
@@ -430,11 +470,12 @@ namespace Hapbeat.Editor
                 var so = new SerializedObject(trig);
                 int writesHere = 0;
 
-                writesHere += RemapIntProperty(so.FindProperty("_entryIndex"), oldToNew) ? 1 : 0;
-                // HapbeatSequenceTrigger adds two more entry-index fields. FindProperty
-                // returns null for trigger types that don't have them — handled inside.
-                writesHere += RemapIntProperty(so.FindProperty("_onStartEntryIndex"), oldToNew) ? 1 : 0;
-                writesHere += RemapIntProperty(so.FindProperty("_onStopEntryIndex"), oldToNew) ? 1 : 0;
+                // For each (idProp, indexProp) pair: if the trigger has a stable
+                // id, recompute the index cache from the map (authoritative path).
+                // Otherwise fall back to oldToNew remap for legacy triggers.
+                writesHere += SyncIndexCacheFromId(so, "_entryId", "_entryIndex", oldToNew) ? 1 : 0;
+                writesHere += SyncIndexCacheFromId(so, "_onStartEntryId", "_onStartEntryIndex", oldToNew) ? 1 : 0;
+                writesHere += SyncIndexCacheFromId(so, "_onStopEntryId", "_onStopEntryIndex", oldToNew) ? 1 : 0;
 
                 if (writesHere > 0)
                 {
@@ -445,6 +486,32 @@ namespace Hapbeat.Editor
                 }
             }
             return totalWrites;
+        }
+
+        /// <summary>
+        /// Sync a trigger's index cache after an EventMap reorder. When the id
+        /// field is populated, recompute the index from the map. When it's
+        /// empty (legacy), fall back to the oldToNew remap.
+        /// </summary>
+        private bool SyncIndexCacheFromId(SerializedObject so,
+            string idPropName, string indexPropName, int[] oldToNew)
+        {
+            var idProp = so.FindProperty(idPropName);
+            var indexProp = so.FindProperty(indexPropName);
+            if (indexProp == null) return false;
+
+            if (idProp != null && !string.IsNullOrEmpty(idProp.stringValue))
+            {
+                int newIdx = _selectedMap.IndexOfId(idProp.stringValue);
+                if (newIdx >= 0 && newIdx != indexProp.intValue)
+                {
+                    indexProp.intValue = newIdx;
+                    return true;
+                }
+                return false;
+            }
+
+            return RemapIntProperty(indexProp, oldToNew);
         }
 
         private static bool RemapIntProperty(SerializedProperty prop, int[] oldToNew)
@@ -547,6 +614,7 @@ namespace Hapbeat.Editor
                 });
                 _selectedEntryIndex = _selectedMap.entries.Count - 1;
                 EditorUtility.SetDirty(_selectedMap);
+                AssetDatabase.SaveAssetIfDirty(_selectedMap);
             }
 
             bool canDelete = _selectedMap != null && _selectedEntryIndex >= 0
@@ -558,6 +626,7 @@ namespace Hapbeat.Editor
                 _selectedMap.entries.RemoveAt(_selectedEntryIndex);
                 _selectedEntryIndex = Mathf.Min(_selectedEntryIndex, _selectedMap.entries.Count - 1);
                 EditorUtility.SetDirty(_selectedMap);
+                AssetDatabase.SaveAssetIfDirty(_selectedMap);
                 ScanScene();
             }
             EditorGUI.EndDisabledGroup();
@@ -972,6 +1041,7 @@ namespace Hapbeat.Editor
                 if (i >= 0 && i < _selectedMap.entries.Count)
                     _selectedMap.entries[i].mode = mode;
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
         }
 
         private void BatchSetGain(List<int> indices, float gain)
@@ -982,6 +1052,7 @@ namespace Hapbeat.Editor
                 if (i >= 0 && i < _selectedMap.entries.Count)
                     _selectedMap.entries[i].gain = gain;
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
         }
 
         private void BatchDuplicate(List<int> indices)
@@ -997,6 +1068,7 @@ namespace Hapbeat.Editor
                 _selectedMap.entries.Insert(i + 1, dup);
             }
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
             _tableMultiSelected.Clear();
             ScanScene();
         }
@@ -1080,6 +1152,7 @@ namespace Hapbeat.Editor
                 if (i >= 0 && i < _selectedMap.entries.Count)
                     _selectedMap.entries.RemoveAt(i);
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
             _tableMultiSelected.Clear();
             _selectedEntryIndex = Mathf.Min(_selectedEntryIndex, _selectedMap.entries.Count - 1);
             ScanScene();
@@ -1325,6 +1398,7 @@ namespace Hapbeat.Editor
             });
             _selectedEntryIndex = index;
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
         }
 
         private void DeleteEntry(int index)
@@ -1334,6 +1408,7 @@ namespace Hapbeat.Editor
             _selectedMap.entries.RemoveAt(index);
             _selectedEntryIndex = Mathf.Min(_selectedEntryIndex, _selectedMap.entries.Count - 1);
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
             ScanScene();
         }
 
@@ -1362,6 +1437,7 @@ namespace Hapbeat.Editor
             dst.target = _clipboardEntry.target;
             dst.group = _clipboardEntry.group;
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
         }
 
         private void DuplicateEntry(int index)
@@ -1372,6 +1448,7 @@ namespace Hapbeat.Editor
             _selectedMap.entries.Insert(index + 1, dup);
             _selectedEntryIndex = index + 1;
             EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
         }
 
         private void DrawSelectedEntryDetail()
@@ -2779,6 +2856,7 @@ namespace Hapbeat.Editor
             {
                 so.ApplyModifiedPropertiesWithoutUndo();
                 EditorUtility.SetDirty(_selectedMap);
+                AssetDatabase.SaveAssetIfDirty(_selectedMap);
             }
         }
 

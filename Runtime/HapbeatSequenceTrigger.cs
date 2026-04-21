@@ -30,13 +30,21 @@ namespace Hapbeat
     public class HapbeatSequenceTrigger : HapbeatTriggerBase
     {
         [Header("Sequence")]
-        [Tooltip("Event map entry played as a one-shot when Fire() is called. " +
-                 "-1 = none.")]
+        // Stable GUID references for On Start / On Stop. Mirror the base class's
+        // _entryId / _entryIndex pairing: _*EntryId is authoritative, _*EntryIndex
+        // is a display cache + legacy fallback for scenes authored before ids.
+        [SerializeField, HideInInspector]
+        private string _onStartEntryId = "";
+        [SerializeField, HideInInspector]
+        private string _onStopEntryId = "";
+
+        [Tooltip("List index of the On Start entry (display cache). -1 = none. " +
+                 "The authoritative reference is the hidden stable GUID.")]
         [SerializeField]
         private int _onStartEntryIndex = -1;
 
-        [Tooltip("Event map entry played as a one-shot when Stop() is called. " +
-                 "-1 = none.")]
+        [Tooltip("List index of the On Stop entry (display cache). -1 = none. " +
+                 "The authoritative reference is the hidden stable GUID.")]
         [SerializeField]
         private int _onStopEntryIndex = -1;
 
@@ -56,11 +64,36 @@ namespace Hapbeat
         // user released before the delay elapsed (i.e. Loop never started).
         private Coroutine _pendingLoopStart;
 
-        /// <summary>Index of the "on start" one-shot entry, or -1 if none.</summary>
+        /// <summary>Index of the "on start" one-shot entry (display cache), or -1 if none.</summary>
         public int OnStartEntryIndex => _onStartEntryIndex;
 
-        /// <summary>Index of the "on stop" one-shot entry, or -1 if none.</summary>
+        /// <summary>Index of the "on stop" one-shot entry (display cache), or -1 if none.</summary>
         public int OnStopEntryIndex => _onStopEntryIndex;
+
+        /// <summary>Stable id of the "on start" entry, or empty if none / not yet migrated.</summary>
+        public string OnStartEntryId => _onStartEntryId;
+
+        /// <summary>Stable id of the "on stop" entry, or empty if none / not yet migrated.</summary>
+        public string OnStopEntryId => _onStopEntryId;
+
+        private void Awake()
+        {
+            // Best-effort in-memory migration: populate the id fields from the
+            // legacy index fields on first load. Editor tooling persists the
+            // migration to disk (HapbeatMigrateLegacyReferences); this path
+            // covers runtime scenes that haven't been re-saved yet.
+            if (_eventMap == null) return;
+            if (string.IsNullOrEmpty(_onStartEntryId) && _onStartEntryIndex >= 0)
+            {
+                var e = _eventMap.GetEntry(_onStartEntryIndex);
+                if (e != null) _onStartEntryId = e.id;
+            }
+            if (string.IsNullOrEmpty(_onStopEntryId) && _onStopEntryIndex >= 0)
+            {
+                var e = _eventMap.GetEntry(_onStopEntryIndex);
+                if (e != null) _onStopEntryId = e.id;
+            }
+        }
 
         /// <summary>
         /// Delay (seconds) between the On Start one-shot and the Loop phase start.
@@ -83,8 +116,10 @@ namespace Hapbeat
             // issues from "Sequence short-circuit" issues).
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] SequenceTrigger.Fire() invoked on {name} " +
-                          $"(onStart={_onStartEntryIndex}, loop={_entryIndex}, onStop={_onStopEntryIndex})", this);
-            PlayOneShot(_onStartEntryIndex, "start");
+                          $"(onStart id='{_onStartEntryId}' idx={_onStartEntryIndex}, " +
+                          $"loop id='{_entryId}' idx={_entryIndex}, " +
+                          $"onStop id='{_onStopEntryId}' idx={_onStopEntryIndex})", this);
+            PlayOneShot(_onStartEntryId, _onStartEntryIndex, "start");
             StartLoopAfterDelay();
         }
 
@@ -101,7 +136,7 @@ namespace Hapbeat
             // nothing for StopHaptic to stop on that front).
             CancelPendingLoop();
             StopHaptic(); // inherited — stops the loop
-            PlayOneShot(_onStopEntryIndex, "end");
+            PlayOneShot(_onStopEntryId, _onStopEntryIndex, "end");
         }
 
         /// <summary>
@@ -113,9 +148,7 @@ namespace Hapbeat
         {
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] SequenceTrigger.FireWithStartGain({gainMultiplier:F2}) invoked on {name}", this);
-            PlayOneShot(_onStartEntryIndex, "start", gainMultiplier);
-            // Loop uses the entry's own gain — gainMultiplier applies to the
-            // start shot only (per existing contract).
+            PlayOneShot(_onStartEntryId, _onStartEntryIndex, "start", gainMultiplier);
             StartLoopAfterDelay();
         }
 
@@ -172,19 +205,28 @@ namespace Hapbeat
         /// </summary>
         private float ResolveStartShotDelay()
         {
-            // Explicit non-negative delay always wins.
             if (_startShotDelay >= 0f) return _startShotDelay;
-
-            // Auto (-1): use the start clip's duration for stream-mode one-shots,
-            // otherwise no delay.
-            if (_onStartEntryIndex < 0 || _eventMap == null) return 0f;
-            var entry = _eventMap.GetEntry(_onStartEntryIndex);
+            if (_eventMap == null) return 0f;
+            var entry = ResolveSequenceEntry(_onStartEntryId, _onStartEntryIndex);
             if (entry == null) return 0f;
-            // Command mode uses flashed clips on-device — no stream collision with
-            // the Loop phase, so no need to delay.
             if (entry.mode == HapticMode.Command) return 0f;
             if (entry.streamClip == null) return 0f;
             return entry.streamClip.length;
+        }
+
+        /// <summary>
+        /// Resolve an On Start / On Stop entry by id (authoritative) with
+        /// <paramref name="legacyIndex"/> as a fallback when the id is empty.
+        /// Mirrors <see cref="HapbeatTriggerBase.ResolveEntry"/>. Returns null
+        /// when the phase is (none) (index &lt; 0 and id empty).
+        /// </summary>
+        private HapbeatEventEntry ResolveSequenceEntry(string id, int legacyIndex)
+        {
+            if (_eventMap == null) return null;
+            if (!string.IsNullOrEmpty(id))
+                return _eventMap.FindById(id);
+            if (legacyIndex < 0) return null;
+            return _eventMap.GetEntry(legacyIndex);
         }
 
         private void OnDisable()
@@ -193,17 +235,21 @@ namespace Hapbeat
             CancelPendingLoop();
         }
 
-        private void PlayOneShot(int entryIndex, string phase, float gainMultiplier = 1f)
+        private void PlayOneShot(string entryId, int legacyIndex, string phase, float gainMultiplier = 1f)
         {
-            if (entryIndex < 0) return; // "(none)"
+            // "(none)" — both id empty AND legacy index -1 means the user deliberately
+            // left this phase unset.
+            if (string.IsNullOrEmpty(entryId) && legacyIndex < 0) return;
             if (!_triggerEnabled) return;
             if (_eventMap == null) return;
 
-            var entry = _eventMap.GetEntry(entryIndex);
+            var entry = ResolveSequenceEntry(entryId, legacyIndex);
             if (entry == null)
             {
                 if (_verboseLog)
-                    Debug.LogWarning($"[Hapbeat] Sequence {phase}-shot: entry index {entryIndex} out of range on {name}", this);
+                    Debug.LogWarning(
+                        $"[Hapbeat] Sequence {phase}-shot: entry not found on {name} " +
+                        $"(id='{entryId}', idx={legacyIndex})", this);
                 return;
             }
 

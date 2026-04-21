@@ -1006,6 +1006,17 @@ namespace Hapbeat.Editor
             var so = new SerializedObject(trigger);
             so.FindProperty("_eventMap").objectReferenceValue = _eventMap;
             so.FindProperty("_entryIndex").intValue = _entryIndex;
+            // Write stable id so reorders don't break this wiring. Lazy-assigns
+            // the entry's id if this is the first access — mark the event map
+            // dirty so the new id survives the next domain reload.
+            var entry = _eventMap != null ? _eventMap.GetEntry(_entryIndex) : null;
+            var idProp = so.FindProperty("_entryId");
+            if (idProp != null && entry != null)
+            {
+                idProp.stringValue = entry.id;
+                EditorUtility.SetDirty(_eventMap);
+                AssetDatabase.SaveAssetIfDirty(_eventMap);
+            }
             so.FindProperty("_cooldown").floatValue = _cooldown;
             so.ApplyModifiedProperties();
         }
@@ -1028,6 +1039,30 @@ namespace Hapbeat.Editor
             var so = new SerializedObject(trigger);
             so.FindProperty("_onStartEntryIndex").intValue = _onStartEntryIndex;
             so.FindProperty("_onStopEntryIndex").intValue = _onStopEntryIndex;
+
+            // Stable ids for the sequence's On Start / On Stop phases. Empty id
+            // for (none) — the trigger's ResolveSequenceEntry treats empty id + -1
+            // index as "disabled".
+            var startIdProp = so.FindProperty("_onStartEntryId");
+            if (startIdProp != null)
+            {
+                var e = _onStartEntryIndex >= 0 && _eventMap != null
+                    ? _eventMap.GetEntry(_onStartEntryIndex) : null;
+                startIdProp.stringValue = e != null ? e.id : "";
+            }
+            var stopIdProp = so.FindProperty("_onStopEntryId");
+            if (stopIdProp != null)
+            {
+                var e = _onStopEntryIndex >= 0 && _eventMap != null
+                    ? _eventMap.GetEntry(_onStopEntryIndex) : null;
+                stopIdProp.stringValue = e != null ? e.id : "";
+            }
+            if (_eventMap != null)
+            {
+                EditorUtility.SetDirty(_eventMap);
+                AssetDatabase.SaveAssetIfDirty(_eventMap);
+            }
+
             var delayProp = so.FindProperty("_startShotDelay");
             if (delayProp != null) delayProp.floatValue = _startShotDelay;
             so.ApplyModifiedProperties();

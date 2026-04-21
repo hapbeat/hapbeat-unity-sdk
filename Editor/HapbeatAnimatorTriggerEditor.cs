@@ -38,15 +38,17 @@ namespace Hapbeat.Editor
             EditorGUILayout.PropertyField(eventMapProp);
 
             var eventMap = eventMapProp.objectReferenceValue as HapbeatEventMap;
+            var entryIdProp = serializedObject.FindProperty("_entryId");
             var entryIndexProp = serializedObject.FindProperty("_entryIndex");
+            DrawEntryDropdown(eventMap, entryIdProp, entryIndexProp, "Event",
+                "Select a haptic event from the event map. Stored by stable GUID.");
+
             if (eventMap != null && eventMap.entries.Count > 0)
             {
-                string[] names = eventMap.GetDisplayNames();
-                int currentIndex = Mathf.Clamp(entryIndexProp.intValue, 0, names.Length - 1);
-                int newIndex = EditorGUILayout.Popup("Event", currentIndex, names);
-                entryIndexProp.intValue = newIndex;
-
-                var entry = eventMap.GetEntry(newIndex);
+                int resolvedIdx = !string.IsNullOrEmpty(entryIdProp.stringValue)
+                    ? eventMap.IndexOfId(entryIdProp.stringValue)
+                    : entryIndexProp.intValue;
+                var entry = eventMap.GetEntry(resolvedIdx);
                 if (entry != null)
                 {
                     EditorGUI.indentLevel++;
@@ -56,10 +58,6 @@ namespace Hapbeat.Editor
                     EditorGUI.EndDisabledGroup();
                     EditorGUI.indentLevel--;
                 }
-            }
-            else
-            {
-                EditorGUILayout.HelpBox("Event Map を設定してください。", MessageType.Warning);
             }
 
             // Trigger enabled + cooldown

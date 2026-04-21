@@ -80,6 +80,38 @@ namespace Hapbeat
     [Serializable]
     public class HapbeatEventEntry : ISerializationCallbackReceiver
     {
+        // ---- Stable identifier ----
+        //
+        // Triggers reference entries by this id (not by list index), so
+        // reordering, inserting, or duplicating entries in the EventMap
+        // cannot silently break existing trigger wiring. Lazy-assigned on
+        // first access; callers that trigger the lazy-assign should mark
+        // the owning EventMap dirty so the new id is persisted.
+        [SerializeField, HideInInspector]
+        private string _id;
+
+        /// <summary>
+        /// Stable GUID identifying this entry across reorders and reloads.
+        /// Lazy-assigned on first access. Callers that trigger assignment
+        /// (first time any code reads <c>.id</c> on a freshly deserialized
+        /// entry) are responsible for marking the EventMap dirty.
+        /// </summary>
+        public string id
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(_id))
+                    _id = Guid.NewGuid().ToString("N");
+                return _id;
+            }
+        }
+
+        /// <summary>Returns true iff the id field has been assigned (i.e. reading it now won't side-effect).</summary>
+        public bool HasId => !string.IsNullOrEmpty(_id);
+
+        /// <summary>Force assignment of a fresh id (used when duplicating entries).</summary>
+        public void RegenerateId() => _id = Guid.NewGuid().ToString("N");
+
         /// <summary>Standard categories defined by hapbeat-contracts.</summary>
         public static readonly string[] StandardCategories =
             { "clip", "impact", "vibration", "texture", "ambient", "ui", "custom" };
