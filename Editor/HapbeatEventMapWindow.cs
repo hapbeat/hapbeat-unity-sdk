@@ -1710,6 +1710,11 @@ namespace Hapbeat.Editor
                 }
             }
 
+            // Parameter bindings attached to this entry (linked via preset id).
+            // Grouped by the GameObject that owns the binding component so the
+            // user can jump straight from entry → component in the hierarchy.
+            DrawBindingsWiringList(entryProp);
+
             // Notes (last)
             EditorGUILayout.Space(4);
             EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"),
@@ -1722,6 +1727,87 @@ namespace Hapbeat.Editor
                 // Clip / eventId edits may change the manifest lookup result for
                 // this entry, so refresh the cached intensity. Cheap (cached).
                 RefreshIntensityCache();
+            }
+        }
+
+        /// <summary>
+        /// Draw a list of every <see cref="HapbeatParameterBinding"/> in open
+        /// scenes that is linked to a preset belonging to the currently-selected
+        /// entry. Each row is clickable (pings the binding's GameObject).
+        /// Bindings don't show up in the trigger-side "Wiring:" list because
+        /// they're attached by preset id, not by trigger reference — this
+        /// surfaces them so the user can see at a glance which objects
+        /// modulate this entry at runtime.
+        /// </summary>
+        private void DrawBindingsWiringList(SerializedProperty entryProp)
+        {
+            if (_selectedMap == null) return;
+            var bindingsProp = entryProp.FindPropertyRelative("bindings");
+            if (bindingsProp == null || bindingsProp.arraySize == 0) return;
+
+            // Collect the preset ids for this entry.
+            var presetIds = new HashSet<string>();
+            for (int i = 0; i < bindingsProp.arraySize; i++)
+            {
+                var idProp = bindingsProp.GetArrayElementAtIndex(i).FindPropertyRelative("_id");
+                if (idProp != null && !string.IsNullOrEmpty(idProp.stringValue))
+                    presetIds.Add(idProp.stringValue);
+            }
+            if (presetIds.Count == 0) return;
+
+            // Find matching HapbeatParameterBinding components in the scene.
+            var all = Object.FindObjectsByType<HapbeatParameterBinding>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var matches = new List<HapbeatParameterBinding>();
+            foreach (var b in all)
+            {
+                if (b == null) continue;
+                if (!ReferenceEquals(b.LinkedEventMap, _selectedMap)) continue;
+                if (!presetIds.Contains(b.LinkedBindingId)) continue;
+                matches.Add(b);
+            }
+            if (matches.Count == 0) return;
+
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("Bindings:", EditorStyles.miniBoldLabel);
+
+            // Group by GameObject for a compact display.
+            var byGo = new Dictionary<GameObject, List<HapbeatParameterBinding>>();
+            foreach (var b in matches)
+            {
+                var go = b.gameObject;
+                if (!byGo.ContainsKey(go)) byGo[go] = new List<HapbeatParameterBinding>();
+                byGo[go].Add(b);
+            }
+
+            float nameW = 80;
+            foreach (var kv in byGo.OrderBy(k => k.Key.name))
+            {
+                for (int i = 0; i < kv.Value.Count; i++)
+                {
+                    var b = kv.Value[i];
+                    var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+                    float detailW = rect.width - nameW - 4;
+
+                    if (i == 0)
+                    {
+                        if (GUI.Button(new Rect(rect.x, rect.y, nameW, rect.height),
+                            kv.Key.name, EditorStyles.linkLabel))
+                        {
+                            Selection.activeGameObject = kv.Key;
+                            EditorGUIUtility.PingObject(b); // ping the exact component
+                        }
+                    }
+
+                    // Short details: property → output param. Matches the
+                    // summary shown next to the binding entry in the preset list.
+                    var preset = b.ResolveLinkedPreset();
+                    string detail = preset != null
+                        ? $"{preset.sourceProperty} \u2192 {preset.outputParameter}"
+                        : "(preset missing)";
+                    GUI.Label(new Rect(rect.x + nameW + 4, rect.y, detailW, rect.height),
+                        detail, EditorStyles.miniLabel);
+                }
             }
         }
 

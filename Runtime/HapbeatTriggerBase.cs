@@ -60,6 +60,7 @@ namespace Hapbeat
         private bool _warnedNoManager;
         private bool _warnedNoEventMap;
         private bool _warnedStaleId;
+        private bool _warnedMissingIntensity;
 
         /// <summary>The event map this trigger references.</summary>
         public HapbeatEventMap EventMap => _eventMap;
@@ -226,6 +227,20 @@ namespace Hapbeat
                     }
                     {
                         float streamGain = entry.GetEffectiveGain();
+                        // Warn once per trigger if the manifest intensity cache is
+                        // unresolved — the fire is still going through but at plain
+                        // entry.gain, which is a common source of "the runtime
+                        // stream is louder than what I authored" confusion.
+                        if (entry.CachedManifestIntensity <= 0f && !_warnedMissingIntensity)
+                        {
+                            Debug.LogWarning(
+                                $"[Hapbeat] StreamClip entry '{label}' has no cached manifest " +
+                                $"intensity; firing at plain gain={entry.gain:F2} " +
+                                "(intensity factor skipped). Open the EventMap window or run " +
+                                "'Hapbeat > Migrate Legacy Entry References' to refresh the cache, " +
+                                "and confirm the clip is in a deployed Kit.", this);
+                            _warnedMissingIntensity = true;
+                        }
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire StreamClip: clip='{entry.streamClip.name}' " +
                                       $"target='{target ?? "(broadcast)"}' gain={entry.gain:F2} " +

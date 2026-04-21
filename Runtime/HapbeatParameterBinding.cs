@@ -149,8 +149,20 @@ namespace Hapbeat
         [SerializeField, Range(0f, 1f)]
         private float _debugLogChangeThreshold = 0.02f;
 
-        // Cached references
+        // Cached references.
+        //
+        // _trigger is the nearest single trigger — used for standalone bindings
+        // (no EventMap link) where there's nothing to scope against.
+        //
+        // _candidateTriggers holds ALL HapbeatTriggerBase instances found on
+        // this GameObject plus its parents & children at init time. For a
+        // linked binding we walk this list each frame and pick the one whose
+        // EntryId matches the binding's owner entry — so a binding attached
+        // to an event only modulates that event's stream, regardless of
+        // which trigger component happens to live on the GameObject.
         private HapbeatTriggerBase _trigger;
+        private readonly System.Collections.Generic.List<HapbeatTriggerBase> _candidateTriggers
+            = new System.Collections.Generic.List<HapbeatTriggerBase>(4);
         private Rigidbody _sourceRigidbody;
         private bool _initialized;
 
@@ -174,6 +186,11 @@ namespace Hapbeat
         /// <summary>Returns the id of the linked preset, or empty if standalone.</summary>
         public string LinkedBindingId => _linkedBindingId;
 
+        // Id of the entry that owns the linked preset. Cached alongside the
+        // preset itself. Used as the scope filter at write time — we only
+        // modulate a stream whose firing trigger points at this entry.
+        private string _cachedOwnerEntryId;
+
         /// <summary>Returns the linked preset, or null if standalone / id not found.</summary>
         public HapbeatBindingPreset ResolveLinkedPreset()
         {
@@ -188,6 +205,7 @@ namespace Hapbeat
             }
 
             _cachedPreset = null;
+            _cachedOwnerEntryId = null;
             _cachedForMap = _linkedEventMap;
             _cachedForId = _linkedBindingId;
 
@@ -200,11 +218,29 @@ namespace Hapbeat
                     if (p != null && p.id == _linkedBindingId)
                     {
                         _cachedPreset = p;
+                        _cachedOwnerEntryId = entry.id;
                         return p;
                     }
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// Id of the EventMap entry that contains the linked preset, or
+        /// <c>null</c> when the binding is standalone or the preset is missing.
+        /// The runtime write path only modulates a stream whose firing trigger
+        /// is currently pointing at this entry — so a binding authored on a
+        /// PokeButton's "push feedback" event doesn't accidentally modulate a
+        /// sibling "grab" trigger's stream.
+        /// </summary>
+        public string LinkedOwnerEntryId
+        {
+            get
+            {
+                if (_cachedOwnerEntryId == null) ResolveLinkedPreset();
+                return _cachedOwnerEntryId;
+            }
         }
 
         private float _lastDebugLogTime;
@@ -299,11 +335,36 @@ namespace Hapbeat
             float output = Mathf.Lerp(outMin, outMax, curved);
             CurrentOutput = output;
 
-            // Write to the trigger's active playback. If no stream is running
-            // (trigger hasn't fired, or stream already ended), silently skip —
-            // the binding just resumes writing when a fresh stream starts.
-            var playback = _trigger != null ? _trigger.ActivePlayback : null;
-            if (playback != null && !playback.IsStopped)
+            // Find the trigger that's currently firing THIS binding's linked
+            // entry — not just any trigger on the GameObject. Without this
+            // scope check, a PokeButton's binding for "push feedback" would
+            // also modulate a sibling "grab" trigger's stream whenever that
+            // fired, because both share the same ActivePlayback slot on the
+            // GameObject. The linked-entry id filter makes the binding
+            // inert toward unrelated streams.
+            string ownerId = LinkedOwnerEntryId;
+            HapbeatStreamPlayback playback = null;
+            if (!string.IsNullOrEmpty(ownerId))
+            {
+                // Scoped: only write when a trigger is actively streaming the
+                // exact entry this binding belongs to.
+                foreach (var t in _candidateTriggers)
+                {
+                    if (t == null) continue;
+                    if (t.EntryId != ownerId) continue;
+                    var pb = t.ActivePlayback;
+                    if (pb != null && !pb.IsStopped) { playback = pb; break; }
+                }
+            }
+            else if (_trigger != null)
+            {
+                // Unscoped (standalone binding): fall back to the nearest
+                // trigger's active playback. Matches pre-link behaviour.
+                var pb = _trigger.ActivePlayback;
+                if (pb != null && !pb.IsStopped) playback = pb;
+            }
+
+            if (playback != null)
             {
                 switch (outParam)
                 {
@@ -315,7 +376,7 @@ namespace Hapbeat
                         break;
                 }
             }
-            else if (_trigger == null && !_warnedNoTrigger)
+            else if (_trigger == null && _candidateTriggers.Count == 0 && !_warnedNoTrigger)
             {
                 Debug.LogWarning(
                     $"[HapbeatBinding] No HapbeatTriggerBase found on {name} (or parent/child). " +
@@ -349,6 +410,26 @@ namespace Hapbeat
             _trigger = GetComponent<HapbeatTriggerBase>()
                 ?? GetComponentInChildren<HapbeatTriggerBase>()
                 ?? GetComponentInParent<HapbeatTriggerBase>();
+
+            _candidateTriggers.Clear();
+            // Collect every HapbeatTriggerBase visible to this binding so the
+            // scoped write path (linked-entry filter) can pick the right one
+            // at runtime. Self + children + parents covers nested setups like
+            // "PokeButton with push trigger on root, grab trigger on parent".
+            var self = GetComponents<HapbeatTriggerBase>();
+            if (self != null) _candidateTriggers.AddRange(self);
+            var children = GetComponentsInChildren<HapbeatTriggerBase>(includeInactive: true);
+            if (children != null)
+            {
+                foreach (var t in children)
+                    if (t != null && !_candidateTriggers.Contains(t)) _candidateTriggers.Add(t);
+            }
+            var parents = GetComponentsInParent<HapbeatTriggerBase>(includeInactive: true);
+            if (parents != null)
+            {
+                foreach (var t in parents)
+                    if (t != null && !_candidateTriggers.Contains(t)) _candidateTriggers.Add(t);
+            }
 
             if (_sourceTransform != null)
                 _sourceRigidbody = _sourceTransform.GetComponent<Rigidbody>();
