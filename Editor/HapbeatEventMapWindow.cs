@@ -1756,7 +1756,7 @@ namespace Hapbeat.Editor
             if (presetIds.Count == 0) return;
 
             // Find matching HapbeatParameterBinding components in the scene.
-            var all = Object.FindObjectsByType<HapbeatParameterBinding>(
+            var all = UnityEngine.Object.FindObjectsByType<HapbeatParameterBinding>(
                 FindObjectsInactive.Include, FindObjectsSortMode.None);
             var matches = new List<HapbeatParameterBinding>();
             foreach (var b in all)
