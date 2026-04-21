@@ -522,7 +522,7 @@ namespace Hapbeat.Editor
                     break;
                 case HapticMode.StreamClip:
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
-                        new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16.\nDrag from Assets/HapbeatKits/<kit>/stream-clips/."));
+                        new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16.\nDrag from your HapbeatKits/<kit>/stream-clips/ folder."));
                     DrawKitFolderHint("stream-clips");
                     break;
                 case HapticMode.StreamSource:
@@ -530,7 +530,7 @@ namespace Hapbeat.Editor
                         new GUIContent("Default Clip",
                             "AudioClip reference (optional). Studio exports this WAV to stream-clips/.\n" +
                             "Batch Setup uses it as the default AudioSource clip.\n" +
-                            "Drag from Assets/HapbeatKits/<kit>/stream-clips/."));
+                            "Drag from your HapbeatKits/<kit>/stream-clips/ folder."));
                     DrawKitFolderHint("stream-clips");
                     EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("silentMode"),
                         new GUIContent("Silent Mode", "Mute speaker output. Audio captured for haptics only."));
@@ -1062,8 +1062,9 @@ namespace Hapbeat.Editor
                 return _cachedKitEvents;
 
             var result = new List<KitManifestEvent>();
-            const string kitsRoot = "Assets/HapbeatKits";
-            if (AssetDatabase.IsValidFolder(kitsRoot))
+            // Resolve via marker asset so the user can move/rename the folder freely.
+            string kitsRoot = HapbeatKitsReadme.FindKitsRootPath();
+            if (!string.IsNullOrEmpty(kitsRoot) && AssetDatabase.IsValidFolder(kitsRoot))
             {
                 foreach (string kitDir in AssetDatabase.GetSubFolders(kitsRoot))
                 {
@@ -1210,7 +1211,7 @@ namespace Hapbeat.Editor
                     menu.AddDisabledItem(new GUIContent("No Kit manifests found"));
                     menu.AddSeparator("");
                     menu.AddItem(new GUIContent("Open HapbeatKits folder"), false, () =>
-                        RevealKitSubfolder("Assets/HapbeatKits", ""));
+                        RevealKitSubfolder(""));
                 }
                 else
                 {
@@ -1272,51 +1273,53 @@ namespace Hapbeat.Editor
         /// </summary>
         private static void DrawKitFolderHint(string subfolder)
         {
-            const string kitsRoot = "Assets/HapbeatKits";
             EditorGUILayout.BeginHorizontal();
             GUILayout.Space(EditorGUIUtility.labelWidth);
             string label = subfolder == "clips"
-                ? "Look in: HapbeatKits/<kit>/clips/"
-                : "Look in: HapbeatKits/<kit>/stream-clips/";
+                ? "Look in: <kits-root>/<kit>/clips/"
+                : "Look in: <kits-root>/<kit>/stream-clips/";
             GUILayout.Label(label, EditorStyles.miniLabel);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Reveal", EditorStyles.miniButton, GUILayout.Width(54)))
-                RevealKitSubfolder(kitsRoot, subfolder);
+                RevealKitSubfolder(subfolder);
             EditorGUILayout.EndHorizontal();
         }
 
         /// <summary>
-        /// Ask the user whether to create <c>Assets/HapbeatKits/</c>. The folder
-        /// isn't auto-created on SDK import — so the first time a user clicks
-        /// "Reveal" before running the setup menu, they hit this dialog.
+        /// Resolve the kits root folder, offering to create it if no marker
+        /// exists. The folder isn't auto-created on SDK import — so the first
+        /// time a user clicks "Reveal" / "From Kit ▾" without having run the
+        /// setup menu, they hit a create-or-cancel dialog here.
         /// </summary>
-        /// <returns>True if the folder now exists (either pre-existing or created).</returns>
-        private static bool OfferToCreateKitsFolder(string kitsRoot)
+        /// <returns>Asset-relative path of the kits root, or <c>null</c> if the
+        /// user cancelled / creation failed.</returns>
+        private static string ResolveOrCreateKitsRoot()
         {
-            if (AssetDatabase.IsValidFolder(kitsRoot)) return true;
+            string kitsRoot = HapbeatKitsReadme.FindKitsRootPath();
+            if (!string.IsNullOrEmpty(kitsRoot) && AssetDatabase.IsValidFolder(kitsRoot))
+                return kitsRoot;
 
             bool confirmed = EditorUtility.DisplayDialog(
                 "Create HapbeatKits Folder?",
-                $"{kitsRoot}/ doesn't exist yet.\n\n" +
-                "This is where Hapbeat Studio writes your Kits (manifest.json + audio). " +
-                "Creating it also lays down a README with the onboarding steps.\n\n" +
-                "Create it now?",
-                "Create", "Cancel");
-            if (!confirmed) return false;
+                "HapbeatKits フォルダがまだ見つかりません。\n\n" +
+                "これは Hapbeat Studio が Kit (manifest.json + 音源) を書き出す先です。\n" +
+                $"作成する場合、既定の場所 {HapbeatKitsReadme.DefaultKitsRootPath}/ に作り、" +
+                "マーカーアセット (HapbeatKitsReadme) を中に置きます。\n" +
+                "後で好きな場所にフォルダごと移動してかまいません — マーカーで追跡します。\n\n" +
+                "いま作成しますか？",
+                "作成する", "キャンセル");
+            if (!confirmed) return null;
 
-            return HapbeatKitsFolderCreator.EnsureFolderAndReadme(openReadme: true);
+            if (!HapbeatKitsFolderCreator.EnsureFolderAndReadme(openReadme: true))
+                return null;
+
+            return HapbeatKitsReadme.FindKitsRootPath();
         }
 
-        private static void RevealKitSubfolder(string kitsRoot, string subfolder)
+        private static void RevealKitSubfolder(string subfolder)
         {
-            // If the kits root itself is missing, offer to create it.
-            bool kitsRootExists = AssetDatabase.IsValidFolder(kitsRoot);
-            if (!kitsRootExists)
-            {
-                if (!OfferToCreateKitsFolder(kitsRoot)) return;
-                kitsRootExists = AssetDatabase.IsValidFolder(kitsRoot);
-                if (!kitsRootExists) return; // user cancelled or creation failed
-            }
+            string kitsRoot = ResolveOrCreateKitsRoot();
+            if (string.IsNullOrEmpty(kitsRoot)) return;
 
             // Empty subfolder = caller wants the kits root itself
             if (string.IsNullOrEmpty(subfolder))
