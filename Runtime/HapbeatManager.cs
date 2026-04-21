@@ -426,14 +426,19 @@ namespace Hapbeat
             // monotonically-increasing global byte offset across iterations so
             // the device sees one continuous stream with no reset seam.
             uint reportedTotalSamples = loop ? 0u : (uint)clip.samples;
-            // The gain sent in STREAM_BEGIN is purely informational for the
-            // device — we also apply it per-sample below so dynamic updates
-            // from the playback handle take effect.
+            // Send gain=1.0 in STREAM_BEGIN because we pre-multiply the samples
+            // below. The device applies STREAM_BEGIN.gain exactly once on its
+            // side; if we also sent playback.Gain here, the device would
+            // double-attenuate (samples × gain on the SDK side + × gain on the
+            // device side = gain² → e.g. 0.3 looks like 0.09). Passing 1.0
+            // makes the device a passthrough and keeps the SDK as the single
+            // source of truth for the gain value — required for dynamic
+            // modulation via HapbeatStreamPlayback.Gain / HapbeatParameterBinding.
             _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16,
-                reportedTotalSamples, playback.Gain, target);
+                reportedTotalSamples, 1.0f, target);
             Log(loop
-                ? $"Stream begin (loop): {sampleRate}Hz, {channels}ch, gain={playback.Gain:F2}"
-                : $"Stream begin: {sampleRate}Hz, {channels}ch, {clip.samples} samples, gain={playback.Gain:F2}");
+                ? $"Stream begin (loop): {sampleRate}Hz, {channels}ch, initialGain={playback.Gain:F2} (sent as samples×gain; STREAM_BEGIN=1.0)"
+                : $"Stream begin: {sampleRate}Hz, {channels}ch, {clip.samples} samples, initialGain={playback.Gain:F2} (sent as samples×gain; STREAM_BEGIN=1.0)");
 
             uint globalByteOffset = 0;
             float startTime = Time.realtimeSinceStartup;

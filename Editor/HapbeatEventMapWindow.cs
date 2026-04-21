@@ -1071,6 +1071,7 @@ namespace Hapbeat.Editor
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
             _tableMultiSelected.Clear();
             ScanScene();
+            RefreshIntensityCache();
         }
 
         /// <summary>
@@ -1086,7 +1087,7 @@ namespace Hapbeat.Editor
         private static HapbeatEventEntry CloneEntry(HapbeatEventEntry src, string displayNameSuffix)
         {
             if (src == null) return null;
-            return new HapbeatEventEntry
+            var dst = new HapbeatEventEntry
             {
                 mode = src.mode,
                 displayName = src.displayName + displayNameSuffix,
@@ -1100,6 +1101,14 @@ namespace Hapbeat.Editor
                 group = src.group,
                 notes = src.notes,
             };
+            // Propagate the manifest intensity cache. The new entry points at
+            // the same category/eventName/streamClip as the source, so the
+            // resolved intensity is identical. Without this, dup'd entries fire
+            // at plain `gain` (intensity treated as -1 / unknown) until the
+            // next RefreshIntensityCache pass — a source of the "sometimes
+            // intensity not applied" bug.
+            dst.SetCachedManifestIntensity(src.CachedManifestIntensity);
+            return dst;
         }
 
         /// <summary>
@@ -1399,6 +1408,9 @@ namespace Hapbeat.Editor
             _selectedEntryIndex = index;
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
+            // New entry starts with _cachedManifestIntensity = -1 so its stream
+            // mode would silently ignore Studio-authored intensity until refreshed.
+            RefreshIntensityCache();
         }
 
         private void DeleteEntry(int index)
@@ -1438,6 +1450,9 @@ namespace Hapbeat.Editor
             dst.group = _clipboardEntry.group;
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
+            // Pasted category/eventName/clip may point at a different manifest
+            // entry than before — recompute the intensity cache.
+            RefreshIntensityCache();
         }
 
         private void DuplicateEntry(int index)
@@ -1449,6 +1464,9 @@ namespace Hapbeat.Editor
             _selectedEntryIndex = index + 1;
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
+            // Belt-and-suspenders: CloneEntry already copies the cache, but
+            // rescan in case the duplicate's fields drifted since last refresh.
+            RefreshIntensityCache();
         }
 
         private void DrawSelectedEntryDetail()
@@ -1695,49 +1713,47 @@ namespace Hapbeat.Editor
                 ? HapbeatManager.Instance.IsStreaming
                 : HapbeatEditorTransport.IsStreaming;
 
-            // Single-row bar: [Test Play] [Stop]  inline-hint
+            // Single-row bar: [▶ Test Play / ■ Stop toggle]  inline-hint
             // The bar is sized from the CURRENT layout context (the detail scroll
-            // view), so boxRect.width is the detail panel's usable width — NOT
-            // position.width. That's what makes the bar respond when the user
-            // drags the middle splitter to resize the detail panel.
-            const float btnGap = 4f;
+            // view), so boxRect.width is the detail panel's usable width.
             const float padding = 2f;
             const float btnH = 20f;
             const float boxH = 24f;
 
             var boxRect = GUILayoutUtility.GetRect(0, boxH, GUILayout.ExpandWidth(true));
 
-            // Compact mode: when the detail panel is narrow, collapse button labels
-            // to icon-only so both buttons always remain visible. Threshold chosen
-            // so the hint text still has ~80px of room before we go compact.
+            // Compact mode: when the detail panel is narrow, collapse to icon-only.
             bool compact = boxRect.width < 260f;
-            float btnPlayW = compact ? 30f : 88f;
-            float btnStopW = compact ? 30f : 48f;
+            float btnW = compact ? 30f : 88f;
             string playLabel = compact ? "\u25b6" : "\u25b6 Test Play";
             string stopLabel = compact ? "\u25a0" : "\u25a0 Stop";
 
-            // Vertically centered button row, pinned to the left side of the panel.
             float btnY = boxRect.y + (boxRect.height - btnH) * 0.5f;
-            var playRect = new Rect(boxRect.x + padding, btnY, btnPlayW, btnH);
-            var stopRect = new Rect(playRect.xMax + btnGap, btnY, btnStopW, btnH);
+            var btnRect = new Rect(boxRect.x + padding, btnY, btnW, btnH);
 
-            // ▶ Test Play — fires on MouseDown (press) so feedback feels instant.
-            // We intercept the event BEFORE GUI.Button sees it (GUI.Button fires on
-            // MouseUp), then let the button render a visual press state afterwards.
-            string playTooltip = canFire
-                ? (inPlay
-                    ? "Test Play — fires through HapbeatManager (same path as runtime triggers)."
-                    : "Test Play — fires via the editor UDP transport (uses HapbeatConfig port/group).")
-                : hint;
-            DrawPressButton(playRect, new GUIContent(playLabel, playTooltip),
-                canFire, canFire ? new Color(0.4f, 0.8f, 0.4f) : (Color?)null,
-                () => TestPlayEntry(entry));
+            // Toggle Play <-> Stop based on live streaming state. Keeps the UI
+            // single-purpose — "press to fire, press again to stop" — and avoids
+            // the ambiguity of two side-by-side buttons that both look active.
+            bool showStop = canFire && isStreaming;
+            string label = showStop ? stopLabel : playLabel;
+            string tooltip = showStop
+                ? "Stop — end the in-flight stream for this entry."
+                : canFire
+                    ? (inPlay
+                        ? "Test Play — fires through HapbeatManager (same path as runtime triggers)."
+                        : "Test Play — fires via the editor UDP transport (uses HapbeatConfig port/group).")
+                    : hint;
 
-            // ■ Stop — press-to-fire for parity.
-            DrawPressButton(stopRect, new GUIContent(stopLabel,
-                    "Stop — any in-flight stream / command for this entry."),
-                canFire, null,
-                () => TestStopEntry(entry));
+            Color? bg = showStop
+                ? new Color(0.9f, 0.45f, 0.45f)
+                : canFire ? new Color(0.4f, 0.8f, 0.4f) : (Color?)null;
+
+            DrawPressButton(btnRect, new GUIContent(label, tooltip), canFire, bg,
+                () => { if (showStop) TestStopEntry(entry); else TestPlayEntry(entry); });
+
+            // Preserve Stop's horizontal footprint so the hint label lines up
+            // regardless of whether the toggle is showing Play or Stop.
+            var stopRect = btnRect;
 
             // Inline hint / status text — rendered on the SAME row as the buttons
             // (right of them) so the bar never takes a second line's worth of height.

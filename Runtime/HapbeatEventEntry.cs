@@ -216,7 +216,14 @@ namespace Hapbeat
         /// so the field remains [HideInInspector]. This setter is here for edit-only
         /// helpers that work directly on the entry instance.
         /// </summary>
-        internal void SetCachedManifestIntensity(float value) => _cachedManifestIntensity = value;
+        /// <summary>
+        /// Editor-only helper for writing the cached intensity (e.g. when
+        /// duplicating an entry the caller wants the copy to inherit the
+        /// resolved cache). Runtime code should never call this — the cache
+        /// is populated by <c>HapbeatMigrateLegacyReferences</c> or the
+        /// EventMap window's refresh pass.
+        /// </summary>
+        public void SetCachedManifestIntensity(float value) => _cachedManifestIntensity = value;
 
         /// <summary>
         /// Effective gain to send over the wire: <c>gain × cached intensity</c> for
