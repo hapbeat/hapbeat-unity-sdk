@@ -1,13 +1,13 @@
 # Kit Integration — Unity SDK side
 
-> この文書は decision-log DEC-023 / DEC-024 で定めた「Kit を全モード共通の SDK-authoritative 資産にする」設計を、Unity SDK 側でどう実装するかを説明する。実装は contracts / studio / pack-tools / firmware 側の対応と平行して進める。
+> この文書は decision-log DEC-023 / DEC-024 で定めた「Kit を全モード共通の SDK-authoritative 資産にする」設計を、Unity SDK 側でどう実装するかを説明する。実装は contracts / studio / kit-tools / firmware 側の対応と平行して進める。
 
 ## 1. 用語
 
 | 用語 | 意味 |
 |---|---|
-| **Kit** | Studio で作られる触覚コンテンツ一式。`manifest.json` + 音源ファイル群 + メタデータ。UI 表記は Kit、内部・contract 上は Pack（将来 Kit に統一予定） |
-| **Pack (device binary)** | Kit からデバイス向けにビルドされるフラッシュ用バイナリ。Kit のうち `mode=command` の event + その clip のみを含む |
+| **Kit** | Studio で作られる触覚コンテンツ一式。`manifest.json` + 音源ファイル群 + メタデータ。UI 表記は Kit、contracts schema・内部プロトコルともに Kit に統一済み (2026-04-25) |
+| **Kit binary (device flash 出力)** | Kit からデバイス向けにビルドされるフラッシュ用バイナリ。Kit のうち `mode=command` の event + その clip のみを含む |
 | **Working Directory** | Studio が Kit ファイル一式を編集する作業ディレクトリ。Unity 連携時は `Assets/HapbeatKits/<kit-id>/` を推奨 |
 | **HapbeatKitAsset (予定)** | Unity SDK 側で Kit を ScriptableObject-wrapped な first-class asset として扱うためのラッパー（future work） |
 
@@ -32,7 +32,7 @@
 
 ## 3. 4-layer 強度モデル
 
-pack-format.md §5 で定める最終出力計算式:
+kit-format.md §5 で定める最終出力計算式:
 
 ```
 最終出力 = WAV振幅 × intensity × SDK_gain × デバイス音量
@@ -141,6 +141,6 @@ float LookupEffectiveIntensity(HapbeatEventEntry entry)
 
 ## 7. 参考
 
-- `hapbeat-contracts/specs/pack-format.md` §5 — intensity / device_wiper / loop の仕様
+- `hapbeat-contracts/specs/kit-format.md` §5 — intensity / device_wiper / loop の仕様
 - `hapbeat-contracts/specs/message-format.md` §4 — PLAY / STREAM_BEGIN の wire format
 - `docs/decision-log.md` DEC-023, DEC-024
