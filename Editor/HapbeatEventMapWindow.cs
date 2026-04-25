@@ -2530,7 +2530,7 @@ namespace Hapbeat.Editor
 
                 string entryBody = block.Substring(entryStart, entryEnd - entryStart);
 
-                string mode = "command"; // default per pack-format spec (absent mode = command)
+                string mode = "command"; // default per kit-format spec (absent mode = command)
                 var modeMatch = Regex.Match(entryBody, "\"mode\"\\s*:\\s*\"([^\"]+)\"");
                 if (modeMatch.Success) mode = modeMatch.Groups[1].Value;
 

@@ -2,11 +2,11 @@
 
 ## repo の目的
 
-Unity 向け SDK。C# API、Editor tools、diagnostics UI、pack install 導線、サンプルシーンを提供する。
+Unity 向け SDK。C# API、Editor tools、diagnostics UI、kit install 導線、サンプルシーンを提供する。
 
 ## 全体アーキテクチャ上の役割
 
-contracts / bridge / pack の上に薄く載せる最初の正式 SDK。
+contracts / bridge / kit の上に薄く載せる最初の正式 SDK。
 
 ## 責務
 
@@ -14,9 +14,9 @@ contracts / bridge / pack の上に薄く載せる最初の正式 SDK。
 - Wi-Fi UDP 直接通信（標準方式）
 - デバイス自動検出（UDP ブロードキャスト PING）
 - Bridge 接続クライアント（UDP 送信）
-- Editor tools（Pack 管理、Event ID ブラウズ）
+- Editor tools（Kit 管理、Event ID ブラウズ）
 - diagnostics UI（接続状態、デバイス一覧）
-- pack install 導線
+- kit install 導線
 - サンプルシーン
 
 ## 管理対象
@@ -30,7 +30,7 @@ contracts / bridge / pack の上に薄く載せる最初の正式 SDK。
 
 - Bridge サーバ実装
 - ファームウェア
-- Pack ビルドツール本体
+- Kit ビルドツール本体
 - 送信機ファーム
 
 ## 依存関係

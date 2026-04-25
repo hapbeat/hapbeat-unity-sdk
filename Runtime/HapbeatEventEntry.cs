@@ -64,9 +64,9 @@ namespace Hapbeat
     /// </summary>
     public enum HapticMode
     {
-        /// <summary>Send eventId command. Device resolves clip locally from installed Pack.</summary>
+        /// <summary>Send eventId command. Device resolves clip locally from installed Kit.</summary>
         Command,
-        /// <summary>Stream an AudioClip over UDP as PCM16. No Pack needed on device.
+        /// <summary>Stream an AudioClip over UDP as PCM16. No Kit needed on device.
         /// Dynamic gain / pan modulation via HapbeatParameterBinding is supported
         /// through the returned <see cref="HapbeatStreamPlayback"/> handle.</summary>
         StreamClip,
