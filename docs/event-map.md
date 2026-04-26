@@ -77,4 +77,4 @@ EventMap データは Project Asset として保存されます。
 ## 次のステップ
 
 - [Trigger コンポーネント](/docs/unity-sdk/triggers/)
-- [Hapbeat Studio で Kit を作る](https://devtools.hapbeat.com/docs/studio/getting-started/)
+- [Hapbeat Studio で Kit を作る](/docs/studio/getting-started/)
