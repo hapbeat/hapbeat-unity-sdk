@@ -20,14 +20,14 @@
         ├── README.md                ← SDK が生成（Studio URL + 手順）
         └── <kit-id>/                ← Studio が自動生成（例: hand-demo-kit）
             ├── manifest.json
-            ├── clips/               ← command mode の wav
+            ├── install-clips/       ← command mode の wav (DEC-027 で clips/ から rename)
             │   └── *.wav
             └── stream-clips/        ← stream_clip mode の wav（Unity のみ、device には行かない）
                 └── *.wav
 ```
 
 - `Assets/HapbeatKits/README.md` は `Hapbeat > Setup > Create HapbeatKits Folder` Editor menu で生成される（空の状態から導線を確保するため）
-- Studio で working directory に `Assets/HapbeatKits/` を指定すると、`<kit-id>/` サブディレクトリが自動生成され manifest.json skeleton + clips/ が作られる
+- Studio で working directory に `Assets/HapbeatKits/` を指定すると、`<kit-id>/` サブディレクトリが自動生成され manifest.json skeleton + install-clips/ が作られる
 - AssetDatabase は `.wav` をそのまま認識（AudioClip として import される）
 
 ## 3. 4-layer 強度モデル
@@ -117,7 +117,7 @@ float LookupEffectiveIntensity(HapbeatEventEntry entry)
 2. メニューから `Hapbeat > Setup > Create HapbeatKits Folder` を実行
 3. `Assets/HapbeatKits/README.md` が生成され、Unity Console に "開いたファイルを参照、Studio URL: https://devtools.hapbeat.com/studio/" と出る
 4. ユーザーが Studio を開き、working directory として `Assets/HapbeatKits/` を指定
-5. Studio が `<kit-id>/manifest.json` + `clips/` を自動生成
+5. Studio が `<kit-id>/manifest.json` + `install-clips/` を自動生成
 6. ユーザーが Studio 上で event 追加 (command / stream_source / stream_clip)、intensity 等を設定
 7. Unity 側は AssetPostprocessor で manifest.json 変更を検知し、HapbeatKitAsset を更新
 8. ユーザーが HapbeatEventMap を作成し、linkedKit を HapbeatKitAsset に設定
