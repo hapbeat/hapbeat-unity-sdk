@@ -46,7 +46,7 @@ namespace Hapbeat.Editor
             }
             // Nothing to reset in the serialized form (content is in the Editor),
             // so just bump templateVersion and ping so user re-sees the inspector.
-            existing.templateVersion = "1";
+            existing.templateVersion = "2";
             EditorUtility.SetDirty(existing);
             AssetDatabase.SaveAssets();
             Selection.activeObject = existing;

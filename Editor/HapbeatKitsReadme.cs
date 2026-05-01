@@ -19,7 +19,7 @@ namespace Hapbeat.Editor
     {
         /// <summary>Bumped by the SDK when the readme content changes; lets
         /// "Reset Readme" know when the on-disk asset is out of date.</summary>
-        public string templateVersion = "1";
+        public string templateVersion = "2";
 
         // ── Folder resolution ────────────────────────────────────────────────
 
@@ -168,7 +168,7 @@ namespace Hapbeat.Editor
                 DrawModeRow("FIRE", "(command)",
                     Tr("Device plays pre-flashed Kit clip (Event ID → UDP)",
                        "デバイス内フラッシュ済みの Kit クリップを再生（Event ID → UDP）"),
-                    "clips/");
+                    "install-clips/");
                 DrawModeRow("CLIP", "(stream_clip)",
                     Tr("SDK streams a Kit WAV over UDP as PCM16",
                        "SDK が Kit の WAV を UDP でストリーム（PCM16）"),
@@ -196,8 +196,8 @@ namespace Hapbeat.Editor
             // ── Troubleshooting ──────────────────────────────────────────────
             GUILayout.Label(Tr("Troubleshooting", "トラブルシューティング"), _h2);
             DrawBullet(Tr(
-                "Studio doesn't detect audio → use PCM WAV in clips/ or stream-clips/",
-                "音源を Studio が認識しない → PCM WAV を clips/ または stream-clips/ に置く"));
+                "Studio doesn't detect audio → use PCM WAV in install-clips/ or stream-clips/",
+                "音源を Studio が認識しない → PCM WAV を install-clips/ または stream-clips/ に置く"));
             DrawBullet(Tr(
                 "Device doesn't vibrate → flash the Kit from Manager, and check that event mode is <b>FIRE (command)</b>",
                 "デバイスが鳴らない → Manager から Kit をフラッシュ、かつ event mode が <b>FIRE (command)</b> か確認"));
@@ -215,7 +215,7 @@ namespace Hapbeat.Editor
             using (new GUILayout.VerticalScope(EditorStyles.helpBox))
             {
                 GUILayout.Label(
-                    "Assets/**/HapbeatKits/**/clips/*.wav\nAssets/**/HapbeatKits/**/stream-clips/*.wav",
+                    "Assets/**/HapbeatKits/**/install-clips/*.wav\nAssets/**/HapbeatKits/**/stream-clips/*.wav",
                     _mono);
             }
 
