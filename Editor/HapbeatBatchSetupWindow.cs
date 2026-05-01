@@ -23,8 +23,15 @@ namespace Hapbeat.Editor
     /// </summary>
     public class HapbeatBatchSetupWindow : EditorWindow
     {
-        private enum TriggerType { UnityEventTrigger, CollisionTrigger, SequenceTrigger }
+        private enum TriggerType { UnityEventTrigger, CollisionTrigger, SequenceTrigger, TickTrigger }
         private TriggerType _triggerType = TriggerType.UnityEventTrigger;
+
+        // --- TickTrigger ---
+        // One haptic fire per fixed-magnitude step of a continuous input
+        // value. Drop-in for Slider / ScrollRect / MinMaxSlider.
+        private float _tickThreshold = 0.1f;
+        private HapbeatTickEmitter.VectorAxis _tickAxis = HapbeatTickEmitter.VectorAxis.Y;
+        private bool _tickEmitOnInitial = false;
 
         // --- Shared ---
         private HapbeatEventMap _eventMap;
@@ -53,7 +60,6 @@ namespace Hapbeat.Editor
 
         // --- Targets ---
         private List<GameObject> _targets = new List<GameObject>();
-        private Vector2 _targetScrollPos;
         private Vector2 _mainScrollPos;
 
         // --- Reference (import source) ---
@@ -62,7 +68,6 @@ namespace Hapbeat.Editor
 
         // --- Scanned events ---
         private List<DetectedEventGroup> _detectedEvents = new List<DetectedEventGroup>();
-        private Vector2 _eventScrollPos;
         // Track target list hash to auto-rescan on change
         private int _lastTargetHash;
 
@@ -106,7 +111,8 @@ namespace Hapbeat.Editor
             EditorGUILayout.Space(6);
 
             if (_triggerType == TriggerType.UnityEventTrigger
-                || _triggerType == TriggerType.SequenceTrigger)
+                || _triggerType == TriggerType.SequenceTrigger
+                || _triggerType == TriggerType.TickTrigger)
             {
                 AutoScanIfNeeded();
                 DrawEventWiringSection();
@@ -150,8 +156,9 @@ namespace Hapbeat.Editor
 
             if (_targets.Count > 0)
             {
-                _targetScrollPos = EditorGUILayout.BeginScrollView(
-                    _targetScrollPos, GUILayout.MaxHeight(100));
+                // Inline list (no nested scroll) \u2014 defers scrolling to the
+                // outer window scroll view so the full target list is visible
+                // alongside the rest of the panel.
                 for (int i = 0; i < _targets.Count; i++)
                 {
                     EditorGUILayout.BeginHorizontal();
@@ -168,7 +175,6 @@ namespace Hapbeat.Editor
                     { _targets.RemoveAt(i); i--; }
                     EditorGUILayout.EndHorizontal();
                 }
-                EditorGUILayout.EndScrollView();
             }
         }
 
@@ -361,6 +367,11 @@ namespace Hapbeat.Editor
                     "Fire()/Stop() の 3 フェーズ (On Start / Loop / On Stop) を 1 つにまとめたトリガー。\n" +
                     "XR の掴む/ホールド/離す (firstSelectEntered / lastSelectExited) に配線すると、\n" +
                     "つかむ瞬間 + 保持中のループ + 離す余韻を 1 コンポーネントで扱える。",
+                TriggerType.TickTrigger =>
+                    "連続値 (Slider / ScrollRect / MinMaxSlider 等) の onValueChanged に配線。\n" +
+                    "値が指定 threshold だけ変化するごとに 1 回 fire。スクロールホイールの " +
+                    "ノッチ感のような \"detent 触覚\" を簡潔に実現できる。\n" +
+                    "Wire: onValueChanged(float) → Fire(float) / onValueChanged(Vector2) → Fire(Vector2)",
                 _ => ""
             };
             if (!string.IsNullOrEmpty(desc))
@@ -452,6 +463,24 @@ namespace Hapbeat.Editor
                     _velocityThreshold = EditorGUILayout.FloatField("Velocity Threshold", _velocityThreshold);
                     _maxVelocity = EditorGUILayout.FloatField("Max Velocity", _maxVelocity);
                 }
+            }
+            else if (_triggerType == TriggerType.TickTrigger)
+            {
+                _tickThreshold = EditorGUILayout.FloatField(
+                    new GUIContent("Tick Threshold",
+                        "値が累積でこの量だけ変化するたびに 1 回 fire する。\n" +
+                        "Slider なら slider 値の絶対量、ScrollRect の onValueChanged は " +
+                        "0..1 正規化なので 0.05 で 5% ごと 1 tick になる。"),
+                    Mathf.Max(0f, _tickThreshold));
+                _tickAxis = (HapbeatTickEmitter.VectorAxis)EditorGUILayout.EnumPopup(
+                    new GUIContent("Vector Axis",
+                        "Vector2 入力 (ScrollRect / MinMaxSlider) でどの軸を見るか。\n" +
+                        "float 入力 (Slider) では無視される。"),
+                    _tickAxis);
+                _tickEmitOnInitial = EditorGUILayout.ToggleLeft(
+                    new GUIContent("Emit On Initial Value",
+                        "最初に値を受け取った時点で 1 回 fire する。通常 OFF。"),
+                    _tickEmitOnInitial);
             }
 
             _replaceExisting = EditorGUILayout.ToggleLeft(
@@ -548,8 +577,9 @@ namespace Hapbeat.Editor
                 return;
             }
 
-            _eventScrollPos = EditorGUILayout.BeginScrollView(
-                _eventScrollPos, GUILayout.MaxHeight(160));
+            // Inline list (no nested scroll) — defers scrolling to the outer
+            // window scroll view so the user can see the full wiring list and
+            // the Apply button area in one continuous scroll.
             for (int i = 0; i < _detectedEvents.Count; i++)
             {
                 var e = _detectedEvents[i];
@@ -568,7 +598,6 @@ namespace Hapbeat.Editor
                     SaveEventSelections();
                 }
             }
-            EditorGUILayout.EndScrollView();
 
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button("Select All", EditorStyles.miniButton))
@@ -854,6 +883,16 @@ namespace Hapbeat.Editor
                     if (entry != null && entry.mode == HapticMode.StreamClip)
                         ApplyBindingPresets(go, entry);
                 }
+                else if (_triggerType == TriggerType.TickTrigger)
+                {
+                    var trigger = FindOrCreate<HapbeatTickEmitter>(go, out bool isNew);
+                    ConfigureBase(trigger);
+                    ConfigureTick(trigger);
+                    if (isNew) added++; else updated++;
+                    wired += WireScannedEvents(go, trigger);
+                    if (entry != null && entry.mode == HapticMode.StreamClip)
+                        ApplyBindingPresets(go, entry);
+                }
                 else
                 {
                     var trigger = FindOrCreate<HapbeatCollisionTrigger>(go, out bool isNew);
@@ -1034,6 +1073,15 @@ namespace Hapbeat.Editor
             so.ApplyModifiedProperties();
         }
 
+        private void ConfigureTick(HapbeatTickEmitter trigger)
+        {
+            var so = new SerializedObject(trigger);
+            so.FindProperty("_tickThreshold").floatValue = Mathf.Max(0f, _tickThreshold);
+            so.FindProperty("_axis").enumValueIndex = (int)_tickAxis;
+            so.FindProperty("_emitOnInitialValue").boolValue = _tickEmitOnInitial;
+            so.ApplyModifiedProperties();
+        }
+
         private void ConfigureSequence(HapbeatSequenceTrigger trigger)
         {
             var so = new SerializedObject(trigger);
@@ -1073,6 +1121,12 @@ namespace Hapbeat.Editor
             int count = 0;
             var selected = _detectedEvents.Where(e => e.selected).ToList();
 
+            // TickEmitter's Fire takes the event's argument (float / Vector2)
+            // at runtime, so its persistent call must use dynamic mode (0)
+            // instead of the parameterless void mode (1) that the other
+            // triggers use. Stop() is still parameterless for all triggers.
+            bool tickFire = trigger is HapbeatTickEmitter;
+
             foreach (var comp in go.GetComponents<Component>())
             {
                 if (comp == null) continue;
@@ -1082,8 +1136,9 @@ namespace Hapbeat.Editor
                 {
                     if (ev.componentType != fullType) continue;
                     string method = WireMethods[Mathf.Clamp(ev.methodIndex, 0, WireMethods.Length - 1)];
+                    bool dynamic = tickFire && method == "Fire";
                     var so = new SerializedObject(comp);
-                    count += EnsureWired(so, ev.fieldPath, trigger, method);
+                    count += EnsureWired(so, ev.fieldPath, trigger, method, dynamic);
                     so.ApplyModifiedProperties();
                 }
             }
@@ -1091,7 +1146,7 @@ namespace Hapbeat.Editor
         }
 
         private int EnsureWired(SerializedObject so, string fieldName,
-            UnityEngine.Object target, string methodName)
+            UnityEngine.Object target, string methodName, bool dynamicMode = false)
         {
             var prop = so.FindProperty(fieldName);
             if (prop == null)
@@ -1122,7 +1177,9 @@ namespace Hapbeat.Editor
             var nc = callsProp.GetArrayElementAtIndex(callsProp.arraySize - 1);
             nc.FindPropertyRelative("m_Target").objectReferenceValue = target;
             nc.FindPropertyRelative("m_MethodName").stringValue = methodName;
-            nc.FindPropertyRelative("m_Mode").intValue = 1;
+            // PersistentListenerMode: 0=EventDefined (dynamic, passes the
+            // source event's argument), 1=Void (parameterless invoke).
+            nc.FindPropertyRelative("m_Mode").intValue = dynamicMode ? 0 : 1;
             nc.FindPropertyRelative("m_CallState").intValue = 2;
             return 1;
         }

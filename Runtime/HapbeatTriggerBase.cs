@@ -43,6 +43,13 @@ namespace Hapbeat
         [SerializeField]
         protected float _cooldown = 0f;
 
+        [Tooltip("Per-trigger gain multiplier. Final gain = entry.gain × this.\n" +
+                 "Default 1.0 (no override). Use when the same entry is wired " +
+                 "to multiple GameObjects but each needs a different intensity " +
+                 "without authoring a per-object EventMap entry.")]
+        [SerializeField, Range(0f, 2f)]
+        protected float _gainMultiplier = 1f;
+
         [Header("Diagnostics")]
         [Tooltip("Log every Fire()/Stop() call and all early-return reasons to the " +
                  "Unity console. Enable while wiring a trigger to verify the event is " +
@@ -83,6 +90,16 @@ namespace Hapbeat
         {
             get => _triggerEnabled;
             set => _triggerEnabled = value;
+        }
+
+        /// <summary>
+        /// Per-trigger gain multiplier applied on top of the entry's gain.
+        /// 1.0 = use entry default. Range [0, 2].
+        /// </summary>
+        public float GainMultiplier
+        {
+            get => _gainMultiplier;
+            set => _gainMultiplier = Mathf.Clamp(value, 0f, 2f);
         }
 
         /// <summary>
@@ -213,9 +230,16 @@ namespace Hapbeat
                             Debug.Log($"[Hapbeat] Fire rejected: Command mode but eventId is empty on entry '{label}'", this);
                         return;
                     }
-                    if (_verboseLog)
-                        Debug.Log($"[Hapbeat] Fire Command: eventId='{entry.eventId}' target='{target ?? "(broadcast)"}' gain={entry.gain:F2}", this);
-                    HapbeatManager.Instance.Play(entry.eventId, entry.gain, entry.group, label, target);
+                    {
+                        // Per-trigger multiplier composes with entry.gain so the
+                        // same EventMap entry can be reused at different intensities
+                        // across GameObjects without authoring extra entries.
+                        float commandGain = entry.gain * _gainMultiplier;
+                        if (_verboseLog)
+                            Debug.Log($"[Hapbeat] Fire Command: eventId='{entry.eventId}' target='{target ?? "(broadcast)"}' " +
+                                      $"gain={entry.gain:F2} × triggerMult={_gainMultiplier:F2} = {commandGain:F2}", this);
+                        HapbeatManager.Instance.Play(entry.eventId, commandGain, entry.group, label, target);
+                    }
                     break;
 
                 case HapticMode.StreamClip:
@@ -226,7 +250,9 @@ namespace Hapbeat
                         return;
                     }
                     {
-                        float streamGain = entry.GetEffectiveGain();
+                        // Same multiplier policy as Command above — applied on top
+                        // of entry.gain × manifest.intensity (GetEffectiveGain).
+                        float streamGain = entry.GetEffectiveGain() * _gainMultiplier;
                         // Warn once per trigger if the manifest intensity cache is
                         // unresolved — the fire is still going through but at plain
                         // entry.gain, which is a common source of "the runtime

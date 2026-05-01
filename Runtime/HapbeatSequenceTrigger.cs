@@ -360,7 +360,9 @@ namespace Hapbeat
             string target = entry.HasTarget ? entry.target : null;
             // Effective gain (entry.gain × manifest.intensity) for stream modes;
             // raw gain for Command (device applies intensity internally).
-            float gain = entry.GetEffectiveGain() * gainMultiplier;
+            // Per-trigger _gainMultiplier composes on top of both, mirroring
+            // the policy in HapbeatTriggerBase.FireHaptic.
+            float gain = entry.GetEffectiveGain() * gainMultiplier * _gainMultiplier;
 
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] Sequence {phase}-shot: '{label}' mode={entry.mode} gain={gain:F2}", this);

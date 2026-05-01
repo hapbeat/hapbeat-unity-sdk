@@ -70,6 +70,17 @@ namespace Hapbeat.Editor
         private Dictionary<int, List<TriggerInfo>> _triggersByEntry = new Dictionary<int, List<TriggerInfo>>();
         private List<TriggerInfo> _orphanedTriggers = new List<TriggerInfo>();
 
+        // Cache of (preset.id → last sourceTransformPath we synced) so that
+        // DrawBindingsList can detect a path change between draws and trigger
+        // a deferred re-sync of scene-side HapbeatParameterBinding components.
+        // Keyed by preset GUID — survives preset reordering inside the entry.
+        private readonly Dictionary<string, string> _lastSyncedPathByPresetId = new Dictionary<string, string>();
+
+        // Per-preset expansion state in the compact bindings list. Keyed by
+        // preset.id. Default = collapsed; users click the summary row to
+        // expand the editor for a single preset at a time.
+        private readonly Dictionary<string, bool> _bindingExpanded = new Dictionary<string, bool>();
+
         private struct TriggerInfo
         {
             public HapbeatTriggerBase trigger;
@@ -1594,7 +1605,8 @@ namespace Hapbeat.Editor
                             "continuously-modulated effects (drag / scrape) whose gain " +
                             "is driven by a HapbeatParameterBinding.\n" +
                             "Leave off for one-shot impacts."));
-                    DrawBindingsList(entryProp);
+                    // Bindings UI was relocated to the bottom of the panel
+                    // (just before Notes) — see DrawBindingsList call below.
                     break;
             }
 
@@ -1684,36 +1696,35 @@ namespace Hapbeat.Editor
                     // Continue drawing with the (possibly stale) list; next frame will refresh.
                 }
 
-                float nameW = 80;
+                float nameW = 100;
                 var sorted = byObject.OrderBy(kv => kv.Key.name).ToList();
                 foreach (var kv in sorted)
                 {
+                    // Header row: name link + inline trigger-params editor
+                    // (gain × multiplier, plus tick params if it's a TickTrigger).
+                    // Reads/writes the live scene component directly — no preset
+                    // duplication, just visibility + quick edit from EventMap.
+                    DrawWiredObjectHeaderRow(kv.Key, nameW);
+
+                    // Event lines, indented under the header.
                     for (int w = 0; w < kv.Value.Count; w++)
                     {
                         var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
-                        float wireW = rect.width - nameW - 4;
-
-                        // Show object name only on first line
-                        if (w == 0)
-                        {
-                            if (GUI.Button(new Rect(rect.x, rect.y, nameW, rect.height),
-                                kv.Key.name, EditorStyles.linkLabel))
-                            {
-                                Selection.activeGameObject = kv.Key;
-                                EditorGUIUtility.PingObject(kv.Key);
-                            }
-                        }
-
-                        GUI.Label(new Rect(rect.x + nameW + 4, rect.y, wireW, rect.height),
+                        GUI.Label(new Rect(rect.x + nameW + 4, rect.y,
+                                           rect.width - nameW - 4, rect.height),
                             kv.Value[w], EditorStyles.miniLabel);
                     }
                 }
             }
 
-            // Parameter bindings attached to this entry (linked via preset id).
-            // Grouped by the GameObject that owns the binding component so the
-            // user can jump straight from entry → component in the hierarchy.
-            DrawBindingsWiringList(entryProp);
+            // Parameter Bindings — compact per-wired-object layout. Only
+            // shown for StreamClip entries since bindings have no effect in
+            // Command mode (the device side has no stream to modulate).
+            if (entryProp.FindPropertyRelative("mode").enumValueIndex == (int)HapticMode.StreamClip)
+            {
+                EditorGUILayout.Space(4);
+                DrawBindingsList(entryProp);
+            }
 
             // Notes (last)
             EditorGUILayout.Space(4);
@@ -1739,6 +1750,154 @@ namespace Hapbeat.Editor
         /// surfaces them so the user can see at a glance which objects
         /// modulate this entry at runtime.
         /// </summary>
+        /// <summary>
+        /// Header row for one wired GameObject in the Wiring section. Shows:
+        ///   [GameObject name link]   [trigger-type tag]  gain× [F]  [tick params if TickTrigger]
+        /// Inline-edits the LIVE scene component (no preset / link layer) so
+        /// per-object tuning stays single-source-of-truth on the component.
+        /// </summary>
+        private void DrawWiredObjectHeaderRow(GameObject go, float nameW)
+        {
+            // Find a Hapbeat trigger component on this GO that fires the
+            // currently-selected entry. Most GameObjects have just one,
+            // but Sequence + UnityEvent triggers can coexist; pick the
+            // first matching this entry id.
+            HapbeatTriggerBase trigger = null;
+            string entryId = null;
+            if (_selectedMap != null && _selectedEntryIndex >= 0
+                && _selectedEntryIndex < _selectedMap.entries.Count)
+            {
+                entryId = _selectedMap.entries[_selectedEntryIndex]?.id;
+            }
+            foreach (var t in go.GetComponents<HapbeatTriggerBase>())
+            {
+                if (t == null) continue;
+                if (!ReferenceEquals(t.EventMap, _selectedMap)) continue;
+                if (entryId != null && t.EntryId == entryId) { trigger = t; break; }
+                if (trigger == null) trigger = t; // fallback: any trigger on this GO bound to this map
+            }
+
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            const float typeTagW = 34f;   // tight: just enough for "Event"/"Tick"/"Seq"/"Coll"
+            const float gainLabelW = 28f; // "gain"
+            const float gainFieldW = 42f;
+            const float tickFieldW = 50f;
+            const float axisW = 50f;
+            const float gap = 4f;
+            const float tightGap = 1f;    // hugged label-to-field
+
+            // Left: GameObject name link
+            var nameRect = new Rect(rect.x, rect.y, nameW, rect.height);
+            if (GUI.Button(nameRect, go.name, EditorStyles.linkLabel))
+            {
+                Selection.activeGameObject = go;
+                EditorGUIUtility.PingObject(go);
+            }
+
+            float cursor = rect.x + nameW + gap;
+            if (trigger == null)
+            {
+                // No matching trigger component (orphaned scan entry).
+                GUI.Label(new Rect(cursor, rect.y, rect.width - (cursor - rect.x), rect.height),
+                    "(no trigger)", EditorStyles.miniLabel);
+                return;
+            }
+
+            // Type tag
+            string typeTag = trigger switch
+            {
+                HapbeatSequenceTrigger _    => "Seq",
+                HapbeatTickEmitter _        => "Tick",
+                HapbeatCollisionTrigger _   => "Coll",
+                HapbeatUnityEventTrigger _  => "Event",
+                _                           => trigger.GetType().Name,
+            };
+            GUI.Label(new Rect(cursor, rect.y, typeTagW, rect.height), typeTag, EditorStyles.miniBoldLabel);
+            cursor += typeTagW + tightGap;
+
+            // Gain multiplier (always shown — applies to all trigger types).
+            GUI.Label(new Rect(cursor, rect.y, gainLabelW, rect.height),
+                new GUIContent("gain",
+                    "Per-trigger gain multiplier。\n" +
+                    "実効値 = entry.gain × この値。\n" +
+                    "デフォルト 1.0 (素通し)。同じ EventMap entry を複数 GameObject で使い回すときに、" +
+                    "objectごとに強度を微調整したい場合に使う。\n" +
+                    "範囲: 0.0 〜 2.0"),
+                EditorStyles.miniLabel);
+            cursor += gainLabelW;
+
+            float newGain = EditorGUI.FloatField(
+                new Rect(cursor, rect.y, gainFieldW, rect.height),
+                trigger.GainMultiplier);
+            cursor += gainFieldW + gap;
+            if (!Mathf.Approximately(newGain, trigger.GainMultiplier))
+            {
+                Undo.RecordObject(trigger, "Edit Hapbeat Trigger Gain");
+                var so = new SerializedObject(trigger);
+                so.FindProperty("_gainMultiplier").floatValue = Mathf.Clamp(newGain, 0f, 2f);
+                so.ApplyModifiedProperties();
+                EditorUtility.SetDirty(trigger);
+            }
+
+            // TickTrigger: tick threshold + axis inline.
+            if (trigger is HapbeatTickEmitter tick)
+            {
+                const string thresholdTip =
+                    "Δ = Tick Threshold (1 tick あたりの変化量)\n" +
+                    "─────────────────────────\n" +
+                    "入力値がこの量だけ累積で変化するたびに 1 回 fire する。\n" +
+                    "ホイールやダイヤルの \"カチッ\" 感 (detent 触覚) を生む閾値。\n\n" +
+                    "目安:\n" +
+                    "  Slider 0..1   → Δ=0.1   で 10% ごと 1 tick\n" +
+                    "  Slider 0..100 → Δ=5     で 5 ごと 1 tick\n" +
+                    "  ScrollRect    → Δ=0.05  で 5% ごと 1 tick (正規化 0..1)\n\n" +
+                    "小さいほど tick が密、大きいほど疎。\n" +
+                    "0 にすると \"任意の変化で fire\" モード (= 元の cooldown 方式と等価)。";
+                const string axisTip =
+                    "Vector2 入力時の追跡軸\n" +
+                    "─────────────────────────\n" +
+                    "ScrollRect / MinMaxSlider のような Vector2 を吐く UI で、" +
+                    "どの軸を tick 計算に使うかを選ぶ。\n\n" +
+                    "  X   横軸 (横スクロール / MinMaxSlider の min ハンドル)\n" +
+                    "  Y   縦軸 (縦スクロール / MinMaxSlider の max ハンドル)\n" +
+                    "  Mag 2軸合成のベクトル長 (斜め移動も含めた総移動量)\n\n" +
+                    "float 入力 (通常の Slider 等) では無視される。";
+
+                GUI.Label(new Rect(cursor, rect.y, 14f, rect.height),
+                    new GUIContent("Δ", thresholdTip), EditorStyles.miniLabel);
+                cursor += 14f;
+
+                var so = new SerializedObject(tick);
+                var threshProp = so.FindProperty("_tickThreshold");
+                var axisProp = so.FindProperty("_axis");
+
+                // Wrap field in its own GUIContent so the tooltip propagates
+                // to the field area as well (Unity gives float fields an empty
+                // label by default → no hover hint).
+                EditorGUI.BeginChangeCheck();
+                var threshRect = new Rect(cursor, rect.y, tickFieldW, rect.height);
+                float currentThresh = threshProp != null ? threshProp.floatValue : 0f;
+                GUI.Label(threshRect, new GUIContent("", thresholdTip));
+                float newThresh = EditorGUI.FloatField(threshRect, currentThresh);
+                cursor += tickFieldW + gap;
+
+                var axisRect = new Rect(cursor, rect.y, axisW, rect.height);
+                GUI.Label(axisRect, new GUIContent("", axisTip));
+                int newAxis = EditorGUI.Popup(axisRect,
+                    axisProp != null ? axisProp.enumValueIndex : 0,
+                    new[] { "X", "Y", "Mag" });
+                cursor += axisW + gap;
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Undo.RecordObject(tick, "Edit Hapbeat Tick Trigger");
+                    if (threshProp != null) threshProp.floatValue = Mathf.Max(0f, newThresh);
+                    if (axisProp != null) axisProp.enumValueIndex = newAxis;
+                    so.ApplyModifiedProperties();
+                    EditorUtility.SetDirty(tick);
+                }
+            }
+        }
+
         private void DrawBindingsWiringList(SerializedProperty entryProp)
         {
             if (_selectedMap == null) return;
@@ -2070,6 +2229,454 @@ namespace Hapbeat.Editor
         private static Dictionary<string, Rect> _bindingBoxRectCache = new Dictionary<string, Rect>();
         private static Dictionary<string, Rect> _sourcePathRectCache = new Dictionary<string, Rect>();
 
+        // =====================================================================
+        // Wired-object grouped preset rendering (per ?? feedback).
+        //
+        // Mental model:
+        //   Wired GameObject is the parent (header). Underneath, the user sees
+        //   the events wired to that object (read-only) and the bindings whose
+        //   ownerObjectName matches that object (editable).
+        //   "+ Binding" creates a new preset already owned by that GameObject.
+        //   ownerObjectName is implicit from grouping; users do NOT pick it.
+        //
+        // Bindings without an owner appear in a "Shared (all wired)" foldout.
+        // Bindings whose owner doesn't match any current trigger appear in an
+        // "Orphan" foldout for cleanup.
+        // =====================================================================
+
+        /// <summary>
+        /// Initialise a freshly-grown preset entry. Sets stable id, default
+        /// values, and the supplied owner name so "+ Binding" buttons under
+        /// each wired-object foldout produce correctly-scoped presets without
+        /// the user having to touch ownerObjectName.
+        /// </summary>
+        private void InitNewPreset(SerializedProperty newProp, string ownerName)
+        {
+            newProp.FindPropertyRelative("_id").stringValue = System.Guid.NewGuid().ToString("N");
+            var ownerProp = newProp.FindPropertyRelative("ownerObjectName");
+            if (ownerProp != null) ownerProp.stringValue = ownerName ?? "";
+            newProp.FindPropertyRelative("sourceTransformPath").stringValue = "";
+            newProp.FindPropertyRelative("sourceProperty").enumValueIndex = (int)BindingSourceProperty.LocalPositionY;
+            newProp.FindPropertyRelative("inputMin").floatValue = 0f;
+            newProp.FindPropertyRelative("inputMax").floatValue = 1f;
+            newProp.FindPropertyRelative("curveType").enumValueIndex = (int)BindingCurveType.Linear;
+            newProp.FindPropertyRelative("outputParameter").enumValueIndex = (int)BindingOutputParameter.StreamGain;
+            newProp.FindPropertyRelative("outputMin").floatValue = 0f;
+            newProp.FindPropertyRelative("outputMax").floatValue = 1f;
+            newProp.FindPropertyRelative("debugLog").boolValue = false;
+            newProp.FindPropertyRelative("debugLogInterval").floatValue = 0.1f;
+            newProp.FindPropertyRelative("debugLogChangeThreshold").floatValue = 0.02f;
+        }
+
+        /// <summary>
+        /// Render a single preset box. Returns the absolute index in
+        /// <paramref name="bindingsProp"/> if the user clicked the delete
+        /// button this frame, else -1. <paramref name="contextOwnerName"/>
+        /// scopes the source-path resolution so "→ resolves to" finds
+        /// the right trigger when multiple objects are wired to this entry.
+        /// </summary>
+        private int DrawSinglePresetBox(SerializedProperty bindingsProp, int presetIndex,
+            string contextOwnerName)
+        {
+            var bp = bindingsProp.GetArrayElementAtIndex(presetIndex);
+            string boxKey = bp.propertyPath;
+            int deleteIdx = -1;
+
+            // Backfill stable id (migration / Ctrl-D duplication path).
+            var idProp = bp.FindPropertyRelative("_id");
+            if (idProp != null && string.IsNullOrEmpty(idProp.stringValue))
+                idProp.stringValue = System.Guid.NewGuid().ToString("N");
+
+            EditorGUILayout.BeginVertical("box");
+
+            EditorGUILayout.BeginHorizontal();
+            var srcProp = bp.FindPropertyRelative("sourceProperty");
+            var outProp = bp.FindPropertyRelative("outputParameter");
+            string summary = $"#{presetIndex}  {(BindingSourceProperty)srcProp.enumValueIndex} → " +
+                             $"{(BindingOutputParameter)outProp.enumValueIndex}";
+            EditorGUILayout.LabelField(summary, EditorStyles.miniBoldLabel);
+            if (GUILayout.Button("−", EditorStyles.miniButton, GUILayout.Width(22)))
+                deleteIdx = presetIndex;
+            EditorGUILayout.EndHorizontal();
+
+            var pathProp = bp.FindPropertyRelative("sourceTransformPath");
+            DrawSourcePathWithDragDrop(pathProp);
+            DrawSourcePathPingRowScoped(pathProp, contextOwnerName);
+
+            if (idProp != null && !string.IsNullOrEmpty(idProp.stringValue))
+                DrawLinkedBindingsRowScoped(idProp.stringValue, contextOwnerName);
+
+            EditorGUILayout.PropertyField(srcProp,
+                new GUIContent("Property", "Which value to read from the source Transform/Rigidbody."));
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel(new GUIContent("Input Range",
+                "Source value at min/max. Input is normalized to 0-1 within this range."));
+            EditorGUILayout.PropertyField(bp.FindPropertyRelative("inputMin"), GUIContent.none);
+            EditorGUILayout.PropertyField(bp.FindPropertyRelative("inputMax"), GUIContent.none);
+            EditorGUILayout.EndHorizontal();
+
+            var curveTypeProp = bp.FindPropertyRelative("curveType");
+            EditorGUILayout.PropertyField(curveTypeProp,
+                new GUIContent("Curve", "Shape of input-to-output mapping."));
+            if ((BindingCurveType)curveTypeProp.enumValueIndex == BindingCurveType.Custom)
+                EditorGUILayout.PropertyField(bp.FindPropertyRelative("customCurve"),
+                    new GUIContent("Custom Curve"));
+
+            EditorGUILayout.PropertyField(outProp,
+                new GUIContent("Output",
+                    "StreamGain: overall volume multiplier on the active StreamClip playback (0..2).\n" +
+                    "StreamPan: stereo pan (-1..+1). Ignored for mono clips."));
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.PrefixLabel(new GUIContent("Output Range",
+                "Target values at input min/max."));
+            EditorGUILayout.PropertyField(bp.FindPropertyRelative("outputMin"), GUIContent.none);
+            EditorGUILayout.PropertyField(bp.FindPropertyRelative("outputMax"), GUIContent.none);
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.PropertyField(bp.FindPropertyRelative("debugLog"),
+                new GUIContent("Debug Log",
+                    "Log input/output values to console on change. Throttled by Interval/Change."));
+            var dbgProp = bp.FindPropertyRelative("debugLog");
+            if (dbgProp.boolValue)
+            {
+                EditorGUI.indentLevel++;
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.PrefixLabel(new GUIContent("Interval",
+                    "Minimum seconds between log lines."));
+                var intervalProp = bp.FindPropertyRelative("debugLogInterval");
+                intervalProp.floatValue = EditorGUILayout.Slider(intervalProp.floatValue, 0.01f, 2f);
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.PrefixLabel(new GUIContent("Change",
+                    "Minimum normalized-value change required to emit a line."));
+                var threshProp = bp.FindPropertyRelative("debugLogChangeThreshold");
+                if (threshProp != null)
+                    threshProp.floatValue = EditorGUILayout.Slider(threshProp.floatValue, 0f, 1f);
+                EditorGUILayout.EndHorizontal();
+                EditorGUI.indentLevel--;
+            }
+
+            EditorGUILayout.EndVertical();
+
+            if (Event.current.type == EventType.Repaint)
+                _bindingBoxRectCache[boxKey] = GUILayoutUtility.GetLastRect();
+
+            if (_bindingBoxRectCache.TryGetValue(boxKey, out var boxRect))
+                HandlePathDragDrop(boxRect, pathProp, "box");
+
+            return deleteIdx;
+        }
+
+        /// <summary>
+        /// Draws the foldout for a single wired GameObject. Header shows
+        /// counts and an "+ Binding" button that creates a preset already
+        /// owned by this GameObject. Body lists wired events (read-only)
+        /// and the matching bindings.
+        /// </summary>
+        private int DrawWiredObjectFoldout(SerializedProperty bindingsProp,
+            string objectName, List<string> wiredEvents, List<int> presetIndices,
+            int pendingDelete)
+        {
+            return DrawCompactBindingGroup(bindingsProp,
+                headerLabel: objectName,
+                ownerForAdd: objectName,
+                presetIndices: presetIndices,
+                pendingDelete: pendingDelete,
+                allowAdd: true,
+                addTooltip: $"{objectName} に紐付く新しい binding を追加",
+                showAsLink: true);
+        }
+
+        /// <summary>Draws the "Shared (all wired)" or "Orphan" group.</summary>
+        private int DrawSpecialGroupFoldout(SerializedProperty bindingsProp,
+            string foldoutKeySuffix, string headerLabel, string ownerForAdd,
+            List<int> presetIndices, int pendingDelete, bool allowAdd)
+        {
+            return DrawCompactBindingGroup(bindingsProp,
+                headerLabel: headerLabel,
+                ownerForAdd: ownerForAdd,
+                presetIndices: presetIndices,
+                pendingDelete: pendingDelete,
+                allowAdd: allowAdd,
+                addTooltip: "Wired 全対象に適用される binding を追加",
+                showAsLink: false);
+        }
+
+        /// <summary>
+        /// Compact 1-line group header (mimics existing Wiring section
+        /// density). Header shows the GameObject name (clickable to ping in
+        /// the link case) with a right-aligned "+ Binding" button. Each
+        /// existing preset is one collapsed summary line below; click to
+        /// expand the editor inline. No big nested box / Foldout chrome —
+        /// the design goal is to keep vertical real estate cheap so the
+        /// detail panel stays readable.
+        /// </summary>
+        private int DrawCompactBindingGroup(SerializedProperty bindingsProp,
+            string headerLabel, string ownerForAdd, List<int> presetIndices,
+            int pendingDelete, bool allowAdd, string addTooltip, bool showAsLink)
+        {
+            int bdCount = presetIndices != null ? presetIndices.Count : 0;
+
+            // 1-line header: name on the left, "+ Binding" right-aligned.
+            var headerRect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            const float buttonW = 80f;
+            const float buttonGap = 4f;
+            float labelMaxW = headerRect.width - buttonW - buttonGap;
+            var labelRect = new Rect(headerRect.x, headerRect.y, labelMaxW, headerRect.height);
+            var addRect = new Rect(headerRect.x + headerRect.width - buttonW,
+                                   headerRect.y, buttonW, headerRect.height);
+
+            // Header label. Link style for wired GameObjects (clickable to ping
+            // via SyncScene resolution); plain for Shared / Orphan groups.
+            if (showAsLink)
+            {
+                if (GUI.Button(labelRect, headerLabel, EditorStyles.linkLabel))
+                {
+                    var resolved = ResolvePathInSceneScoped("", headerLabel);
+                    if (resolved != null)
+                    {
+                        Selection.activeGameObject = resolved;
+                        EditorGUIUtility.PingObject(resolved);
+                    }
+                }
+            }
+            else
+            {
+                GUI.Label(labelRect, headerLabel, EditorStyles.miniBoldLabel);
+            }
+
+            if (allowAdd &&
+                GUI.Button(addRect, new GUIContent("+ Binding", addTooltip), EditorStyles.miniButton))
+            {
+                bindingsProp.arraySize++;
+                var newProp = bindingsProp.GetArrayElementAtIndex(bindingsProp.arraySize - 1);
+                InitNewPreset(newProp, ownerForAdd);
+                // Pre-expand the new preset so the user sees the editor right
+                // away (otherwise they have to hunt for the new collapsed row).
+                var idProp = newProp.FindPropertyRelative("_id");
+                if (idProp != null && !string.IsNullOrEmpty(idProp.stringValue))
+                    _bindingExpanded[idProp.stringValue] = true;
+            }
+
+            // Existing presets — one compact summary row each.
+            if (bdCount > 0)
+            {
+                foreach (var idx in presetIndices)
+                {
+                    int del = DrawCompactBindingRow(bindingsProp, idx, ownerForAdd);
+                    if (del >= 0) pendingDelete = del;
+                }
+            }
+            return pendingDelete;
+        }
+
+        /// <summary>
+        /// Compact 1-line preset summary with collapse arrow + delete. Click
+        /// the arrow or summary to expand the inline editor. Indent matches
+        /// the visual nesting under the wired-object header.
+        /// </summary>
+        private int DrawCompactBindingRow(SerializedProperty bindingsProp, int presetIndex,
+            string contextOwnerName)
+        {
+            var bp = bindingsProp.GetArrayElementAtIndex(presetIndex);
+            var idProp = bp.FindPropertyRelative("_id");
+            if (idProp != null && string.IsNullOrEmpty(idProp.stringValue))
+                idProp.stringValue = System.Guid.NewGuid().ToString("N");
+            string presetId = idProp != null ? idProp.stringValue : "";
+
+            bool expanded = !string.IsNullOrEmpty(presetId) &&
+                _bindingExpanded.TryGetValue(presetId, out var e) && e;
+
+            var srcProp = bp.FindPropertyRelative("sourceProperty");
+            var outProp = bp.FindPropertyRelative("outputParameter");
+            string summary = $"#{presetIndex} {(BindingSourceProperty)srcProp.enumValueIndex} → " +
+                             $"{(BindingOutputParameter)outProp.enumValueIndex}";
+
+            int del = -1;
+
+            // Manual rect so we can place arrow / label / delete on a single
+            // tight line (EditorGUI.indentLevel adds significant padding).
+            var rowRect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            const float indentX = 16f;
+            const float arrowW = 14f;
+            const float delW = 22f;
+            var arrowRect = new Rect(rowRect.x + indentX, rowRect.y, arrowW, rowRect.height);
+            var summaryRect = new Rect(rowRect.x + indentX + arrowW, rowRect.y,
+                                       rowRect.width - indentX - arrowW - delW, rowRect.height);
+            var deleteRect = new Rect(rowRect.x + rowRect.width - delW, rowRect.y, delW, rowRect.height);
+
+            string arrow = expanded ? "▼" : "▶";
+            if (GUI.Button(arrowRect, arrow, EditorStyles.label))
+            {
+                expanded = !expanded;
+                if (!string.IsNullOrEmpty(presetId)) _bindingExpanded[presetId] = expanded;
+            }
+            if (GUI.Button(summaryRect, summary, EditorStyles.miniLabel))
+            {
+                expanded = !expanded;
+                if (!string.IsNullOrEmpty(presetId)) _bindingExpanded[presetId] = expanded;
+            }
+            if (GUI.Button(deleteRect, "−", EditorStyles.miniButton))
+                del = presetIndex;
+
+            if (expanded)
+            {
+                // Render the editor body at one indent level deeper. We use
+                // the existing DrawSinglePresetBox; its own header row is a
+                // duplicate of the compact summary, but it costs only one
+                // line and gives the user the delete button + index hint at
+                // a glance.
+                EditorGUI.indentLevel++;
+                int innerDel = DrawSinglePresetBox(bindingsProp, presetIndex, contextOwnerName);
+                if (innerDel >= 0) del = innerDel;
+                EditorGUI.indentLevel--;
+            }
+
+            return del;
+        }
+
+        /// <summary>
+        /// Owner-aware variant of <see cref="ResolvePathInScene"/>. When
+        /// <paramref name="contextOwnerName"/> is non-empty, the matching
+        /// wired GameObject is tried first as the resolution root — fixes
+        /// the "preset under PawnController resolves to FlatSphere" bug
+        /// where alphabetical scan order picked the wrong root.
+        /// </summary>
+        private GameObject ResolvePathInSceneScoped(string path, string contextOwnerName)
+        {
+            var candidates = new List<Transform>();
+            if (_triggersByEntry.TryGetValue(_selectedEntryIndex, out var infos))
+            {
+                // Pass 1: prefer the trigger whose object name matches the context owner.
+                if (!string.IsNullOrEmpty(contextOwnerName))
+                {
+                    foreach (var info in infos)
+                    {
+                        if (info.trigger == null) continue;
+                        if (info.trigger.gameObject.name == contextOwnerName)
+                            candidates.Add(info.trigger.transform);
+                    }
+                }
+                // Pass 2: every other wired trigger as fallback.
+                foreach (var info in infos)
+                {
+                    if (info.trigger == null) continue;
+                    if (!string.IsNullOrEmpty(contextOwnerName) &&
+                        info.trigger.gameObject.name == contextOwnerName) continue;
+                    candidates.Add(info.trigger.transform);
+                }
+            }
+            if (Selection.activeGameObject != null)
+                candidates.Add(Selection.activeGameObject.transform);
+
+            foreach (var root in candidates)
+            {
+                if (root == null) continue;
+                if (string.IsNullOrEmpty(path) || path == ".") return root.gameObject;
+                var child = root.Find(path);
+                if (child != null) return child.gameObject;
+            }
+            return null;
+        }
+
+        /// <summary>Owner-aware variant of <see cref="DrawSourcePathPingRow"/>.</summary>
+        private void DrawSourcePathPingRowScoped(SerializedProperty pathProp, string contextOwnerName)
+        {
+            string path = pathProp.stringValue;
+            var resolved = ResolvePathInSceneScoped(path, contextOwnerName);
+
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            float labelW = EditorGUIUtility.labelWidth;
+            var labelRect = new Rect(rect.x, rect.y, labelW, rect.height);
+            var valueRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
+
+            EditorGUI.LabelField(labelRect, new GUIContent(" → resolves to",
+                "Source Path がどの GameObject に解決されるか。" +
+                "親グループ (owner) のトリガーオブジェクトを優先。"));
+
+            if (resolved != null)
+            {
+                if (GUI.Button(valueRect, resolved.name, EditorStyles.linkLabel))
+                {
+                    Selection.activeGameObject = resolved;
+                    EditorGUIUtility.PingObject(resolved);
+                }
+            }
+            else
+            {
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUI.LabelField(valueRect,
+                    string.IsNullOrEmpty(path) ? "(self)" : "(not resolvable — no matching target in scene)",
+                    EditorStyles.miniLabel);
+                EditorGUI.EndDisabledGroup();
+            }
+        }
+
+        /// <summary>
+        /// Scoped variant of <see cref="DrawLinkedBindingsRow"/> — only lists
+        /// linked components on the wired GameObject named
+        /// <paramref name="contextOwnerName"/> (or all if empty/null).
+        /// </summary>
+        private void DrawLinkedBindingsRowScoped(string presetId, string contextOwnerName)
+        {
+            var matches = new List<HapbeatParameterBinding>();
+            var all = FindObjectsByType<HapbeatParameterBinding>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+            foreach (var b in all)
+            {
+                if (b == null) continue;
+                if (!ReferenceEquals(b.LinkedEventMap, _selectedMap)) continue;
+                if (b.LinkedBindingId != presetId) continue;
+                if (!string.IsNullOrEmpty(contextOwnerName))
+                {
+                    // Restrict to the binding component whose nearest enclosing
+                    // wired trigger object matches the context owner. We use the
+                    // GameObject's name walking up the hierarchy — practical
+                    // enough for typical scene layouts (binding lives on the
+                    // trigger root or its child).
+                    bool ownerMatch = false;
+                    Transform t = b.transform;
+                    while (t != null)
+                    {
+                        if (t.gameObject.name == contextOwnerName) { ownerMatch = true; break; }
+                        t = t.parent;
+                    }
+                    if (!ownerMatch) continue;
+                }
+                matches.Add(b);
+            }
+
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            float labelW = EditorGUIUtility.labelWidth;
+            var labelRect = new Rect(rect.x, rect.y, labelW, rect.height);
+            var valueRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
+
+            EditorGUI.LabelField(labelRect, new GUIContent(" ↳ linked to",
+                "シーン上で この preset にリンクされている HapbeatParameterBinding 一覧。"));
+
+            if (matches.Count == 0)
+            {
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUI.LabelField(valueRect, "(none — not yet synced)", EditorStyles.miniLabel);
+                EditorGUI.EndDisabledGroup();
+                return;
+            }
+
+            var first = matches[0];
+            string firstName = first != null ? first.gameObject.name : "(missing)";
+            string label = matches.Count == 1
+                ? firstName
+                : $"{firstName}  +{matches.Count - 1} more";
+
+            if (GUI.Button(valueRect, label, EditorStyles.linkLabel))
+            {
+                Selection.activeGameObject = first.gameObject;
+                EditorGUIUtility.PingObject(first.gameObject);
+            }
+        }
+
         private void DrawBindingsList(SerializedProperty entryProp)
         {
             var bindingsProp = entryProp.FindPropertyRelative("bindings");
@@ -2077,138 +2684,94 @@ namespace Hapbeat.Editor
             EditorGUILayout.Space(4);
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Parameter Bindings", EditorStyles.miniBoldLabel);
-            if (GUILayout.Button("+", EditorStyles.miniButton, GUILayout.Width(22)))
+            GUILayout.FlexibleSpace();
+            // Manual sync escape hatch — the per-frame path-change detector
+            // below already handles drag/drop/text edits, but this lets the
+            // user force a re-scan after editing scene triggers, etc.
+            if (bindingsProp.arraySize > 0 &&
+                GUILayout.Button(new GUIContent("Sync Scene", "シーン上のトリガー対象に preset を反映 / link"),
+                    EditorStyles.miniButton, GUILayout.Width(80)))
             {
-                bindingsProp.arraySize++;
-                var newProp = bindingsProp.GetArrayElementAtIndex(bindingsProp.arraySize - 1);
-                // Assign a fresh GUID so runtime HapbeatParameterBinding instances can
-                // link to this preset by id (stable across list reordering).
-                newProp.FindPropertyRelative("_id").stringValue = System.Guid.NewGuid().ToString("N");
-                newProp.FindPropertyRelative("sourceTransformPath").stringValue = "";
-                newProp.FindPropertyRelative("sourceProperty").enumValueIndex = (int)BindingSourceProperty.LocalPositionY;
-                newProp.FindPropertyRelative("inputMin").floatValue = 0f;
-                newProp.FindPropertyRelative("inputMax").floatValue = 1f;
-                newProp.FindPropertyRelative("curveType").enumValueIndex = (int)BindingCurveType.Linear;
-                newProp.FindPropertyRelative("outputParameter").enumValueIndex = (int)BindingOutputParameter.StreamGain;
-                newProp.FindPropertyRelative("outputMin").floatValue = 0f;
-                newProp.FindPropertyRelative("outputMax").floatValue = 1f;
-                newProp.FindPropertyRelative("debugLog").boolValue = false;
-                newProp.FindPropertyRelative("debugLogInterval").floatValue = 0.1f;
-                newProp.FindPropertyRelative("debugLogChangeThreshold").floatValue = 0.02f;
+                int idx = _selectedEntryIndex;
+                EditorApplication.delayCall += () =>
+                {
+                    SyncLinkedBindingsForEntry(idx);
+                    UpdateSyncedPathCache(idx);
+                };
             }
             EditorGUILayout.EndHorizontal();
-
-            if (bindingsProp.arraySize == 0)
-            {
-                EditorGUILayout.LabelField("  (no bindings \u2014 click + to add)", EditorStyles.miniLabel);
-                return;
-            }
 
             // Wider label for binding fields (80 → 95)
             float prevLabel = EditorGUIUtility.labelWidth;
             EditorGUIUtility.labelWidth = 95;
 
-            int pendingDelete = -1;
-            for (int i = 0; i < bindingsProp.arraySize; i++)
+            // Build the wired-object list (alphabetically) and a name -> events map.
+            var wiredNames = new List<string>();
+            var eventsByObject = new Dictionary<string, List<string>>();
+            if (_triggersByEntry.TryGetValue(_selectedEntryIndex, out var infos))
             {
-                var bp = bindingsProp.GetArrayElementAtIndex(i);
-                string boxKey = bp.propertyPath;
-
-                // Backfill a GUID if missing (migration from pre-id presets, or
-                // preset duplicated via Ctrl-D which copies the id from the source).
-                var idProp = bp.FindPropertyRelative("_id");
-                if (idProp != null && string.IsNullOrEmpty(idProp.stringValue))
-                    idProp.stringValue = System.Guid.NewGuid().ToString("N");
-
-                EditorGUILayout.BeginVertical("box");
-
-                EditorGUILayout.BeginHorizontal();
-                var srcProp = bp.FindPropertyRelative("sourceProperty");
-                var outProp = bp.FindPropertyRelative("outputParameter");
-                string summary = $"#{i}  {(BindingSourceProperty)srcProp.enumValueIndex} \u2192 {(BindingOutputParameter)outProp.enumValueIndex}";
-                EditorGUILayout.LabelField(summary, EditorStyles.miniBoldLabel);
-                if (GUILayout.Button("\u2212", EditorStyles.miniButton, GUILayout.Width(22)))
-                    pendingDelete = i;
-                EditorGUILayout.EndHorizontal();
-
-                var pathProp = bp.FindPropertyRelative("sourceTransformPath");
-                DrawSourcePathWithDragDrop(pathProp);
-                DrawSourcePathPingRow(pathProp);
-
-                EditorGUILayout.PropertyField(srcProp,
-                    new GUIContent("Property", "Which value to read from the source Transform/Rigidbody."));
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.PrefixLabel(new GUIContent("Input Range",
-                    "Source value at min/max. Input is normalized to 0-1 within this range.\n" +
-                    "Example: LocalPositionY 0 (idle) → -0.01 (pressed) \u21d2 Min=0, Max=-0.01"));
-                EditorGUILayout.PropertyField(bp.FindPropertyRelative("inputMin"), GUIContent.none);
-                EditorGUILayout.PropertyField(bp.FindPropertyRelative("inputMax"), GUIContent.none);
-                EditorGUILayout.EndHorizontal();
-
-                var curveTypeProp = bp.FindPropertyRelative("curveType");
-                EditorGUILayout.PropertyField(curveTypeProp,
-                    new GUIContent("Curve", "Shape of input-to-output mapping."));
-                if ((BindingCurveType)curveTypeProp.enumValueIndex == BindingCurveType.Custom)
-                    EditorGUILayout.PropertyField(bp.FindPropertyRelative("customCurve"), new GUIContent("Custom Curve"));
-
-                EditorGUILayout.PropertyField(outProp,
-                    new GUIContent("Output",
-                        "StreamGain: overall volume multiplier on the active StreamClip " +
-                        "playback (0..2). Use for intensity modulation.\n" +
-                        "StreamPan: stereo pan (-1..+1). Ignored for mono clips.\n\n" +
-                        "Final device samples = audio × StreamGain × entry.gain × " +
-                        "(per-channel pan coefficients)"));
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.PrefixLabel(new GUIContent("Output Range",
-                    "Target values at input min/max."));
-                EditorGUILayout.PropertyField(bp.FindPropertyRelative("outputMin"), GUIContent.none);
-                EditorGUILayout.PropertyField(bp.FindPropertyRelative("outputMax"), GUIContent.none);
-                EditorGUILayout.EndHorizontal();
-
-                // Debug log — only emits when (value changed >= threshold) AND (interval elapsed).
-                EditorGUILayout.PropertyField(bp.FindPropertyRelative("debugLog"),
-                    new GUIContent("Debug Log",
-                        "Log input/output values to console. Only emitted when the " +
-                        "normalized value changed by 'Change' or more AND at least " +
-                        "'Interval' seconds passed since the last log line."));
-                var dbgProp = bp.FindPropertyRelative("debugLog");
-                if (dbgProp.boolValue)
+                var seenNames = new HashSet<string>();
+                foreach (var info in infos)
                 {
-                    EditorGUI.indentLevel++;
-                    EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.PrefixLabel(new GUIContent("Interval",
-                        "Minimum seconds between log lines (throttle)."));
-                    var intervalProp = bp.FindPropertyRelative("debugLogInterval");
-                    intervalProp.floatValue = EditorGUILayout.Slider(intervalProp.floatValue, 0.01f, 2f);
-                    EditorGUILayout.EndHorizontal();
-
-                    EditorGUILayout.BeginHorizontal();
-                    EditorGUILayout.PrefixLabel(new GUIContent("Change",
-                        "Minimum normalized-value change (0-1 scale) to emit a line. " +
-                        "0 = log every interval regardless of change."));
-                    var threshProp = bp.FindPropertyRelative("debugLogChangeThreshold");
-                    if (threshProp != null)
-                        threshProp.floatValue = EditorGUILayout.Slider(threshProp.floatValue, 0f, 1f);
-                    EditorGUILayout.EndHorizontal();
-                    EditorGUI.indentLevel--;
+                    if (info.trigger == null) continue;
+                    string nm = info.trigger.gameObject.name;
+                    if (seenNames.Add(nm)) wiredNames.Add(nm);
+                    if (!eventsByObject.TryGetValue(nm, out var evs))
+                        eventsByObject[nm] = evs = new List<string>();
+                    if (info.wiredEvents != null) evs.AddRange(info.wiredEvents);
                 }
+                foreach (var kv in eventsByObject)
+                    if (kv.Value.Count == 0) kv.Value.Add("(manual)");
+            }
+            wiredNames.Sort();
 
-                EditorGUILayout.EndVertical();
+            // Group preset indices by ownerObjectName for fast lookup per group.
+            var presetIndicesByOwner = new Dictionary<string, List<int>>();
+            for (int j = 0; j < bindingsProp.arraySize; j++)
+            {
+                var bpJ = bindingsProp.GetArrayElementAtIndex(j);
+                var idPropJ = bpJ.FindPropertyRelative("_id");
+                if (idPropJ != null && string.IsNullOrEmpty(idPropJ.stringValue))
+                    idPropJ.stringValue = System.Guid.NewGuid().ToString("N");
+                var ownerPropJ = bpJ.FindPropertyRelative("ownerObjectName");
+                string ow = ownerPropJ != null ? (ownerPropJ.stringValue ?? "") : "";
+                if (!presetIndicesByOwner.TryGetValue(ow, out var list))
+                    presetIndicesByOwner[ow] = list = new List<int>();
+                list.Add(j);
+            }
 
-                // Capture the entire binding box rect during Repaint.
-                // Used as a fallback drop zone so dragging anywhere inside the binding
-                // box (not just the narrow Source Path line) updates sourceTransformPath.
-                if (Event.current.type == EventType.Repaint)
-                    _bindingBoxRectCache[boxKey] = GUILayoutUtility.GetLastRect();
+            int pendingDelete = -1;
 
-                // Fallback drop handler — only activates if the text-field-level drop
-                // didn't consume the event (e.g., mouse outside text field but inside box).
-                if (_bindingBoxRectCache.TryGetValue(boxKey, out var boxRect))
-                {
-                    var pathPropForBox = bp.FindPropertyRelative("sourceTransformPath");
-                    HandlePathDragDrop(boxRect, pathPropForBox, "box");
-                }
+            // 1. Foldout per wired GameObject.
+            foreach (var n in wiredNames)
+            {
+                eventsByObject.TryGetValue(n, out var evs);
+                presetIndicesByOwner.TryGetValue(n, out var indices);
+                pendingDelete = DrawWiredObjectFoldout(bindingsProp, n, evs, indices, pendingDelete);
+                presetIndicesByOwner.Remove(n);
+            }
+
+            // 2. Shared group (no owner).
+            bool hasShared = presetIndicesByOwner.TryGetValue("", out var sharedIndices)
+                             && sharedIndices.Count > 0;
+            if (hasShared || wiredNames.Count == 0)
+            {
+                pendingDelete = DrawSpecialGroupFoldout(bindingsProp,
+                    "shared", "Shared (all wired)", ownerForAdd: "",
+                    presetIndices: hasShared ? sharedIndices : null,
+                    pendingDelete: pendingDelete, allowAdd: true);
+                presetIndicesByOwner.Remove("");
+            }
+
+            // 3. Orphan groups - owner set but no wired trigger matches.
+            foreach (var kv in presetIndicesByOwner)
+            {
+                pendingDelete = DrawSpecialGroupFoldout(bindingsProp,
+                    "orphan|" + kv.Key,
+                    "[orphan] " + kv.Key + " (no wired trigger)",
+                    ownerForAdd: kv.Key,
+                    presetIndices: kv.Value,
+                    pendingDelete: pendingDelete, allowAdd: false);
             }
 
             // Deferred deletion after the loop to avoid GUI layout mismatch
@@ -2216,6 +2779,64 @@ namespace Hapbeat.Editor
                 bindingsProp.DeleteArrayElementAtIndex(pendingDelete);
 
             EditorGUIUtility.labelWidth = prevLabel;
+
+            // Detect path changes between draws and schedule a deferred sync.
+            // We can't sync inline because (a) it mutates the scene which
+            // disrupts the IMGUI layout and (b) text-field edits aren't applied
+            // to the entry asset until ApplyModifiedProperties (called by the
+            // outer Inspector flow). delayCall runs after IMGUI completes.
+            int entryIdx = _selectedEntryIndex;
+            bool needsSync = false;
+            for (int i = 0; i < bindingsProp.arraySize; i++)
+            {
+                var bp = bindingsProp.GetArrayElementAtIndex(i);
+                var idProp = bp.FindPropertyRelative("_id");
+                var pathProp = bp.FindPropertyRelative("sourceTransformPath");
+                var ownerPropChk = bp.FindPropertyRelative("ownerObjectName");
+                if (idProp == null || pathProp == null) continue;
+                string id = idProp.stringValue;
+                string path = pathProp.stringValue ?? "";
+                string owner = ownerPropChk != null ? (ownerPropChk.stringValue ?? "") : "";
+                // Combined key tracks both path and owner so a user toggling
+                // the Owner popup also triggers a re-sync (which will unlink
+                // bindings that no longer match the new scope).
+                string key = $"{owner}|{path}";
+                if (string.IsNullOrEmpty(id)) continue;
+                if (!_lastSyncedPathByPresetId.TryGetValue(id, out var prev) || prev != key)
+                {
+                    needsSync = true;
+                    break;
+                }
+            }
+            if (needsSync)
+            {
+                EditorApplication.delayCall += () =>
+                {
+                    SyncLinkedBindingsForEntry(entryIdx);
+                    UpdateSyncedPathCache(entryIdx);
+                };
+            }
+        }
+
+        /// <summary>
+        /// Refresh the per-preset path cache after a sync run so subsequent
+        /// draws don't mistake an unchanged path for "needs sync" again.
+        /// </summary>
+        private void UpdateSyncedPathCache(int entryIdx)
+        {
+            if (_selectedMap == null) return;
+            if (entryIdx < 0 || entryIdx >= _selectedMap.entries.Count) return;
+            var entry = _selectedMap.entries[entryIdx];
+            if (entry == null || entry.bindings == null) return;
+            foreach (var p in entry.bindings)
+            {
+                if (p == null || string.IsNullOrEmpty(p.id)) continue;
+                // Match the change-detector key format (owner|path) so the
+                // cache hit reasoning in DrawBindingsList stays in sync.
+                string owner = p.ownerObjectName ?? "";
+                string path = p.sourceTransformPath ?? "";
+                _lastSyncedPathByPresetId[p.id] = $"{owner}|{path}";
+            }
         }
 
         /// <summary>
@@ -2228,21 +2849,21 @@ namespace Hapbeat.Editor
         /// during drag-only event passes inside nested scroll views, so the cached
         /// Repaint-era rect is the only reliable source of truth for hit-testing.
         /// </summary>
-        private static void DrawSourcePathWithDragDrop(SerializedProperty pathProp)
+        private void DrawSourcePathWithDragDrop(SerializedProperty pathProp)
         {
             var rect = EditorGUILayout.GetControlRect();
             float labelW = EditorGUIUtility.labelWidth;
             float pickerW = 22;
 
             EditorGUI.LabelField(new Rect(rect.x, rect.y, labelW, rect.height),
-                new GUIContent("Source Path",
-                    "Relative path from target to source Transform.\n" +
-                    "Empty / '.' = target itself.\n" +
-                    "'Visual' = child named Visual.\n" +
-                    "'Body/Head' = nested child.\n\n" +
+                new GUIContent("Source Object",
+                    "\u30d1\u30e9\u30e1\u30fc\u30bf\u306e\u53c2\u7167\u5143 GameObject\u3002\n" +
+                    "\u5024 (= \u5185\u90e8\u306e sourceTransformPath) \u306f wired GameObject (owner) \u304b\u3089\u306e\u76f8\u5bfe\u30d1\u30b9\u3067\u4fdd\u5b58\u3002\n\n" +
+                    "Empty / '.' = owner \u81ea\u8eab\n" +
+                    "'Visual' = owner \u306e\u5b50 'Visual'\n" +
+                    "'Body/Head' = owner \u306e\u5165\u308c\u5b50 'Body/Head'\n\n" +
                     "Drag a GameObject here or use the \u25ce picker button.\n" +
-                    "If it's a descendant of the Hierarchy-selected object,\n" +
-                    "the relative path is computed. Otherwise, the name is used."));
+                    "(owner \u306e\u5b50\u5b6b\u3092 drop \u3059\u308b\u3068\u76f8\u5bfe\u30d1\u30b9\u304c\u8a08\u7b97\u3055\u308c\u3001\u305d\u308c\u4ee5\u5916\u306f\u540d\u524d\u306e\u307f\u304c\u5165\u308a\u307e\u3059\u3002)"));
 
             var fullRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
             var textRect = new Rect(fullRect.x, fullRect.y, fullRect.width - pickerW, fullRect.height);
@@ -2298,7 +2919,7 @@ namespace Hapbeat.Editor
         /// Accepts a drag&drop of a GameObject into the sourceTransformPath field.
         /// <paramref name="zone"/> identifies which hit-test rect matched (for diagnostics).
         /// </summary>
-        private static void HandlePathDragDrop(Rect dropRect, SerializedProperty pathProp, string zone)
+        private void HandlePathDragDrop(Rect dropRect, SerializedProperty pathProp, string zone)
         {
             var e = Event.current;
 
@@ -2376,6 +2997,59 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
+        /// Draws a one-line summary of HapbeatParameterBinding components in
+        /// the scene that are currently linked to the preset with id
+        /// <paramref name="presetId"/>. Lets the user click a name to ping
+        /// the GameObject, or notice when nothing is linked yet.
+        /// </summary>
+        private void DrawLinkedBindingsRow(string presetId)
+        {
+            // Find every binding in scene linked to this preset id.
+            var matches = new List<HapbeatParameterBinding>();
+            var all = FindObjectsByType<HapbeatParameterBinding>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+            foreach (var b in all)
+            {
+                if (b == null) continue;
+                if (ReferenceEquals(b.LinkedEventMap, _selectedMap) &&
+                    b.LinkedBindingId == presetId)
+                {
+                    matches.Add(b);
+                }
+            }
+
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            float labelW = EditorGUIUtility.labelWidth;
+            var labelRect = new Rect(rect.x, rect.y, labelW, rect.height);
+            var valueRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
+
+            EditorGUI.LabelField(labelRect, new GUIContent(" ↳ linked to",
+                "シーン上で この preset にリンクされている HapbeatParameterBinding。" +
+                "Source Path 設定後に自動アタッチされます。クリックで ping。"));
+
+            if (matches.Count == 0)
+            {
+                EditorGUI.BeginDisabledGroup(true);
+                EditorGUI.LabelField(valueRect, "(none — Source Path 未解決 / 未同期)", EditorStyles.miniLabel);
+                EditorGUI.EndDisabledGroup();
+                return;
+            }
+
+            // Render the first match as a clickable link, rest as count if any.
+            var first = matches[0];
+            string firstName = first != null ? first.gameObject.name : "(missing)";
+            string label = matches.Count == 1
+                ? firstName
+                : $"{firstName}  +{matches.Count - 1} more";
+
+            if (GUI.Button(valueRect, label, EditorStyles.linkLabel))
+            {
+                Selection.activeGameObject = first.gameObject;
+                EditorGUIUtility.PingObject(first.gameObject);
+            }
+        }
+
+        /// <summary>
         /// Try to resolve a source path relative to:
         /// 1. GameObjects of triggers bound to the currently selected entry
         /// 2. The currently selected Hierarchy object
@@ -2410,28 +3084,216 @@ namespace Hapbeat.Editor
             return null;
         }
 
+        // =====================================================================
+        // Auto-attach: ensure scene-side HapbeatParameterBinding components
+        // exist and are linked for every BindingPreset under the entry.
+        //
+        // Workflow goal: the user authors bindings ENTIRELY from the EventMap
+        // window — they pick a Source Path on a preset and the SDK takes care
+        // of attaching/upgrading/linking the matching component on every
+        // GameObject driven by the entry. No "Add Component" round trip.
+        // =====================================================================
+
+        /// <summary>
+        /// For each preset on <paramref name="entry"/> with a resolvable
+        /// sourceTransformPath, make sure every trigger GameObject bound to the
+        /// entry has a <see cref="HapbeatParameterBinding"/> component linked
+        /// to that preset on the resolved Transform.
+        ///
+        /// Reuses an existing unlinked binding (matching sourceProperty +
+        /// outputParameter) on the target by upgrading it; otherwise adds a
+        /// new linked component. Idempotent — calling it after the targets
+        /// are already in sync is a no-op.
+        /// </summary>
+        private void SyncLinkedBindingsForEntry(int entryIdx)
+        {
+            if (_selectedMap == null) return;
+            if (entryIdx < 0 || entryIdx >= _selectedMap.entries.Count) return;
+            var entry = _selectedMap.entries[entryIdx];
+            if (entry == null || entry.bindings == null || entry.bindings.Count == 0) return;
+            if (!_triggersByEntry.TryGetValue(entryIdx, out var triggers) || triggers == null)
+                return;
+
+            int attached = 0, upgraded = 0, unlinked = 0;
+            foreach (var preset in entry.bindings)
+            {
+                if (preset == null || string.IsNullOrEmpty(preset.id)) continue;
+
+                // First pass: unlink any binding currently linked to this
+                // preset that lives on a wired GameObject which no longer
+                // matches the preset's owner scope. Keeps the scene
+                // consistent when the user changes Owner from "Shared" → X
+                // or X → Y. The component is preserved (not destroyed) and
+                // becomes standalone — the user can delete it manually if
+                // they want, or the next Sync may re-link it if the scope
+                // changes again.
+                foreach (var info in triggers)
+                {
+                    if (info.trigger == null) continue;
+                    bool nowInScope = string.IsNullOrEmpty(preset.ownerObjectName) ||
+                                      info.trigger.gameObject.name == preset.ownerObjectName;
+                    if (nowInScope) continue;
+                    foreach (var b in info.trigger.GetComponentsInChildren<HapbeatParameterBinding>(true))
+                    {
+                        if (b == null) continue;
+                        if (!ReferenceEquals(b.LinkedEventMap, _selectedMap)) continue;
+                        if (b.LinkedBindingId != preset.id) continue;
+                        Undo.RecordObject(b, "Unlink Hapbeat Binding (out of scope)");
+                        var so = new SerializedObject(b);
+                        so.FindProperty("_linkedEventMap").objectReferenceValue = null;
+                        so.FindProperty("_linkedBindingId").stringValue = string.Empty;
+                        so.ApplyModifiedProperties();
+                        EditorUtility.SetDirty(b);
+                        unlinked++;
+                    }
+                }
+
+                foreach (var info in triggers)
+                {
+                    if (info.trigger == null) continue;
+                    // ownerObjectName filter: when non-empty, only attach to
+                    // the wired GameObject whose name matches. Empty = shared
+                    // across every wired trigger (legacy behaviour).
+                    if (!string.IsNullOrEmpty(preset.ownerObjectName) &&
+                        info.trigger.gameObject.name != preset.ownerObjectName)
+                    {
+                        continue;
+                    }
+                    Transform root = info.trigger.transform;
+                    Transform target = ResolvePresetPath(root, preset.sourceTransformPath);
+                    if (target == null) continue; // path not resolvable on this trigger; skip silently
+
+                    var existing = target.GetComponents<HapbeatParameterBinding>();
+
+                    // 1. Already linked? Skip.
+                    bool alreadyLinked = false;
+                    foreach (var b in existing)
+                    {
+                        if (b == null) continue;
+                        if (ReferenceEquals(b.LinkedEventMap, _selectedMap) &&
+                            b.LinkedBindingId == preset.id)
+                        {
+                            alreadyLinked = true;
+                            break;
+                        }
+                    }
+                    if (alreadyLinked) continue;
+
+                    // 2. Find an unlinked binding to upgrade (matching property/output).
+                    HapbeatParameterBinding upgradeCandidate = null;
+                    foreach (var b in existing)
+                    {
+                        if (b == null) continue;
+                        if (b.LinkedEventMap != null) continue;
+                        if (!string.IsNullOrEmpty(b.LinkedBindingId)) continue;
+                        var bso = new SerializedObject(b);
+                        var spProp = bso.FindProperty("_sourceProperty");
+                        var opProp = bso.FindProperty("_outputParameter");
+                        if (spProp == null || opProp == null) continue;
+                        if (spProp.enumValueIndex == (int)preset.sourceProperty &&
+                            opProp.enumValueIndex == (int)preset.outputParameter)
+                        {
+                            upgradeCandidate = b;
+                            break;
+                        }
+                    }
+
+                    HapbeatParameterBinding binding;
+                    if (upgradeCandidate != null)
+                    {
+                        Undo.RecordObject(upgradeCandidate, "Link Hapbeat Binding");
+                        binding = upgradeCandidate;
+                        upgraded++;
+                    }
+                    else
+                    {
+                        binding = Undo.AddComponent<HapbeatParameterBinding>(target.gameObject);
+                        attached++;
+                    }
+
+                    var so = new SerializedObject(binding);
+                    so.FindProperty("_linkedEventMap").objectReferenceValue = _selectedMap;
+                    so.FindProperty("_linkedBindingId").stringValue = preset.id;
+                    so.FindProperty("_sourceTransform").objectReferenceValue = target;
+                    // Source / output mode mirror the preset so the runtime
+                    // pre-link evaluation works even if the binding was just
+                    // created (preset values take over the moment _linkedBindingId
+                    // resolves, but matching the local fields keeps the Inspector
+                    // consistent and protects against transient unlink states).
+                    so.FindProperty("_sourceProperty").enumValueIndex = (int)preset.sourceProperty;
+                    so.FindProperty("_outputParameter").enumValueIndex = (int)preset.outputParameter;
+                    so.ApplyModifiedProperties();
+                    EditorUtility.SetDirty(binding);
+                }
+            }
+
+            if (attached > 0 || upgraded > 0 || unlinked > 0)
+            {
+                Debug.Log($"[Hapbeat] Sync bindings for entry '{entry.displayName}': " +
+                          $"{attached} new, {upgraded} upgraded, {unlinked} unlinked (out of scope).");
+                Repaint();
+            }
+        }
+
+        /// <summary>
+        /// Resolve a preset's <c>sourceTransformPath</c> against a trigger root.
+        /// Empty / "." returns the root itself (self).
+        /// </summary>
+        private static Transform ResolvePresetPath(Transform root, string path)
+        {
+            if (root == null) return null;
+            if (string.IsNullOrEmpty(path) || path == ".") return root;
+            return root.Find(path);
+        }
+
         /// <summary>
         /// Compute a relative path from the currently-selected Hierarchy object to the dropped one.
         /// Falls back to the dropped object's name if no ancestor match is found.
         /// </summary>
-        private static string ComputeRelativePath(GameObject dropped)
+        private string ComputeRelativePath(GameObject dropped)
         {
-            // Use the Hierarchy-selected object as the target root
-            GameObject selected = Selection.activeGameObject;
-            if (selected != null && selected != dropped)
+            // Candidate roots, in priority order:
+            //   1. GameObjects of triggers bound to the currently selected entry.
+            //      This is the natural root because the resulting path will be
+            //      resolved against the SAME triggers at runtime by the binding.
+            //      It also handles "user drops the trigger object itself" → "" (self),
+            //      which previously fell through to the name-only fallback and
+            //      produced a "not resolvable" preset.
+            //   2. The currently selected Hierarchy object — for the case where
+            //      the entry has no triggers yet but the user is staging a path
+            //      against a known scene root.
+            //   3. Fallback: dropped.name (last resort, often "not resolvable"
+            //      but better than nothing).
+            var candidateRoots = new List<Transform>();
+            if (_selectedEntryIndex >= 0 &&
+                _triggersByEntry.TryGetValue(_selectedEntryIndex, out var infos))
             {
+                foreach (var info in infos)
+                {
+                    if (info.trigger != null && info.trigger.transform != null)
+                        candidateRoots.Add(info.trigger.transform);
+                }
+            }
+            GameObject selected = Selection.activeGameObject;
+            if (selected != null) candidateRoots.Add(selected.transform);
+
+            foreach (var root in candidateRoots)
+            {
+                if (root == null) continue;
+                if (root.gameObject == dropped) return ""; // self
                 Transform cursor = dropped.transform;
                 var segments = new List<string>();
-                while (cursor != null && cursor.gameObject != selected)
+                while (cursor != null && cursor != root)
                 {
                     segments.Insert(0, cursor.name);
                     cursor = cursor.parent;
                 }
-                if (cursor != null && cursor.gameObject == selected)
+                if (cursor == root)
                     return string.Join("/", segments);
             }
 
-            // Fallback: use the dropped object's name only
+            // Last-resort fallback (will likely show "not resolvable" — at
+            // least the path is non-empty so the user can edit it manually).
             return dropped.name;
         }
 

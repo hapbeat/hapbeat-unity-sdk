@@ -14,7 +14,17 @@ namespace Hapbeat
         LocalScaleY,
         LocalScaleZ,
         VelocityMagnitude,
-        AngularVelocityMagnitude
+        AngularVelocityMagnitude,
+        /// <summary>
+        /// World-space speed of the source Transform, computed from position
+        /// delta per frame (<c>(pos - prevPos).magnitude / Time.deltaTime</c>).
+        /// Use this instead of <see cref="VelocityMagnitude"/> when the source
+        /// Rigidbody is kinematic or its MovementType is Instantaneous / Kinematic
+        /// (e.g. XRI grabbed objects) — in those modes the physics engine does
+        /// not compute <c>Rigidbody.linearVelocity</c>, so the velocity-based
+        /// sources stay at 0 even while the object is visibly moving.
+        /// </summary>
+        PositionDeltaMagnitude,
     }
 
     /// <summary>
@@ -165,6 +175,12 @@ namespace Hapbeat
             = new System.Collections.Generic.List<HapbeatTriggerBase>(4);
         private Rigidbody _sourceRigidbody;
         private bool _initialized;
+
+        // World-position cache for PositionDeltaMagnitude. Reset on Initialize
+        // so that re-enabling the component doesn't emit a spurious spike from
+        // a stale position captured before the source moved elsewhere.
+        private Vector3 _prevSourcePosition;
+        private bool _hasPrevSourcePosition;
 
         // Preset resolution cache — invalidated when _linkedEventMap or _linkedBindingId change.
         private HapbeatBindingPreset _cachedPreset;
@@ -468,6 +484,10 @@ namespace Hapbeat
             if (_sourceTransform != null)
                 _sourceRigidbody = _sourceTransform.GetComponent<Rigidbody>();
 
+            // Reset PositionDeltaMagnitude cache so the first sample after
+            // (re-)initialize returns 0 rather than a spike from a stale prev.
+            _hasPrevSourcePosition = false;
+
             _initialized = true;
         }
 
@@ -567,6 +587,23 @@ namespace Hapbeat
 #endif
                 case BindingSourceProperty.AngularVelocityMagnitude:
                     return _sourceRigidbody != null ? _sourceRigidbody.angularVelocity.magnitude : 0f;
+                case BindingSourceProperty.PositionDeltaMagnitude:
+                {
+                    // World-space speed estimated from frame-to-frame position
+                    // delta. Bypasses Rigidbody.velocity so it works with
+                    // Instantaneous / Kinematic XRGrabInteractable objects.
+                    Vector3 current = _sourceTransform.position;
+                    float dt = Time.deltaTime;
+                    if (!_hasPrevSourcePosition || dt <= 0f)
+                    {
+                        _prevSourcePosition = current;
+                        _hasPrevSourcePosition = true;
+                        return 0f;
+                    }
+                    float speed = (current - _prevSourcePosition).magnitude / dt;
+                    _prevSourcePosition = current;
+                    return speed;
+                }
                 default: return 0f;
             }
         }

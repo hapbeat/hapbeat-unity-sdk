@@ -36,6 +36,15 @@ namespace Hapbeat
         /// <summary>Force assignment of a fresh id (used when duplicating presets).</summary>
         public void RegenerateId() => _id = Guid.NewGuid().ToString("N");
 
+        [Tooltip("Optional GameObject name that scopes this binding to a single wired " +
+                 "trigger object.\n" +
+                 "Empty = shared: applies to every GameObject wired to this entry.\n" +
+                 "Set to a wired GameObject's name to limit the binding to that object.\n\n" +
+                 "Used by the EventMap UI to group bindings under the wired object that " +
+                 "owns them. The runtime filter is by name match, so renaming a wired " +
+                 "GameObject also requires updating this field.")]
+        public string ownerObjectName = "";
+
         [Tooltip("Path to source Transform relative to target.\n" +
                  "Empty or '.' = target itself. Otherwise child path (e.g. \"Visual\", \"Body/Head\").")]
         public string sourceTransformPath = "";

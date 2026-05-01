@@ -138,10 +138,12 @@ namespace Hapbeat
                 return;
             _lastFireTimeInternal = Time.unscaledTime;
 
-            // Map velocity through curve
+            // Map velocity through curve. Per-trigger gain multiplier composes
+            // on top of entry.gain (and the curve), so the same EventMap entry
+            // can drive different intensities across collision objects.
             float normalizedVel = Mathf.Clamp01(velocity / _maxVelocity);
             float curveValue = _velocityCurve.Evaluate(normalizedVel);
-            float gain = curveValue * entry.gain;
+            float gain = curveValue * entry.gain * _gainMultiplier;
 
             if (HapbeatManager.Instance != null)
             {
