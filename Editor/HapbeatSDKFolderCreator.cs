@@ -19,7 +19,7 @@ namespace Hapbeat.Editor
     /// a stand-alone menu lets users prepare the layout when starting from
     /// Hapbeat Studio (kit-first workflow) without first building a sample.
     /// </summary>
-    internal static class HapbeatSDKFolderCreator
+    public static class HapbeatSDKFolderCreator
     {
         private const string kMenu = "Hapbeat/Setup/Create HapbeatSDK Folder";
         public const string kSdkRoot = "Assets/HapbeatSDK";
