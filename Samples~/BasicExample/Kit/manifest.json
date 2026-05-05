@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0.0",
+  "kit_id": "basic-example-kit",
+  "version": "1.0.0",
+  "name": "Basic Example Kit",
+  "description": "Hapbeat Unity SDK の Basic Example サンプル用 Kit。100Hz の正弦波 1 個のみ収録。",
+  "author": "Hapbeat",
+  "created_at": "2026-05-06T00:00:00Z",
+  "target_device": {
+    "firmware_version_min": "0.0.2"
+  },
+  "events": {
+    "demo.sine": {
+      "clip": "sine_100hz_1s.wav",
+      "description": "100Hz サイン波 1 秒",
+      "tags": ["demo", "tone"],
+      "parameters": {
+        "intensity": 1.0,
+        "loop": false
+      }
+    }
+  },
+  "install_clips": {
+    "sine_100hz_1s.wav": {
+      "duration_ms": 1000,
+      "sample_rate": 16000,
+      "channels": 1,
+      "format": "pcm_s16le"
+    }
+  }
+}
