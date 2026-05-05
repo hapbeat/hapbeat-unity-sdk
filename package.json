@@ -8,18 +8,13 @@
   "samples": [
     {
       "displayName": "Basic Example",
-      "description": "キーボードで Hapbeat を操作する最小サンプル",
+      "description": "キーボードで Hapbeat を操作する最小サンプル (動作確認用)",
       "path": "Samples~/BasicExample"
     },
     {
-      "displayName": "Player Demo",
-      "description": "VR で Hapbeat のフィードバックを体験する5シーン構成デモ（Hub + Zone A-D）",
-      "path": "Samples~/PlayerDemo"
-    },
-    {
-      "displayName": "Creator Tutorial",
-      "description": "既存 VR ゲームに Hapbeat を組み込むステップバイステップチュートリアル",
-      "path": "Samples~/CreatorTutorial"
+      "displayName": "Tutorial",
+      "description": "キーマウスで SDK 全機能 (Trigger 各種・Stream・ParameterBinding・Targeting) を体験する 1 シーン × 5 ゾーンのチュートリアル。Without/With 2 バージョン同梱。XR デバイス不要。",
+      "path": "Samples~/Tutorial"
     },
     {
       "displayName": "XR Helpers",

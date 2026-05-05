@@ -368,3 +368,17 @@ Player Demo は `PlayerDemoHub.unity` と `PlayerDemoZoneA`〜`PlayerDemoZoneD` 
 - Pico 4 Ultra
 - Apple Vision Pro
 - その他 Android / iOS デバイス
+
+## サウンド素材クレジット
+
+サンプル（`Samples~/`）に同梱されているサウンドファイルには、以下のフリー効果音サイトの素材を触覚信号生成用に加工して使用しているものが含まれる場合があります（全てのファイルが下記由来というわけではありません）。
+
+- 効果音ラボ — https://soundeffect-lab.info/
+- 魔王魂 — https://maou.audio/
+- 効果音辞典（小森平） — https://taira-komori.net/
+- OtoLogic — https://otologic.jp/
+- 音人 — https://on-jin.com/
+
+各素材は触覚デバイス向けに編集（リサンプル・トリミング・ゲイン調整等）した上で再配布しています。配布前に作者・著作権関連のメタデータは除去しています。
+
+なお、上記以外のサイト由来の素材が混入している可能性も完全には否定できません。出典が明確でないファイルについても、権利者・配布元からご連絡をいただければ整合を確認の上、削除・差し替え・クレジット追記など適宜対応いたします。Issue または GitHub の連絡先までお知らせください。

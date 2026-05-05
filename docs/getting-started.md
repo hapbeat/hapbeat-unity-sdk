@@ -76,6 +76,8 @@ public class GunController : MonoBehaviour
 
 ## 次のステップ
 
+- [Tutorial サンプル](/docs/unity-sdk/tutorial/) — キーマウスで SDK 全機能を 30 分で体験 (XR 不要)
 - [Trigger コンポーネントの種類](/docs/unity-sdk/triggers/)
 - [EventMap ウィンドウ](/docs/unity-sdk/event-map/)
-- サンプルシーン `PlayerDemo` / `CreatorTutorial` を import して実例を確認
+- [Parameter Binding](/docs/unity-sdk/parameter-binding/) — ゲーム状態を gain/pan に動的マッピング
+- [BatchSetup vs スクリプトの使い分け](/docs/unity-sdk/tutorial/method-choice/)

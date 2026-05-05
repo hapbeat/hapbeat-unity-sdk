@@ -35,9 +35,8 @@ Package Manager で Hapbeat SDK を選択 → 右パネルの `Samples` セク�
 
 | サンプル | 内容 |
 |---------|-----|
-| **BasicExample** | 最小構成（Bridge + Trigger 1 個） |
-| **PlayerDemo** | プレイヤー視点のデモ（Animator / Collision Trigger 統合） |
-| **CreatorTutorial** | 既存アセットへの触覚追加を Before/After で実演 |
+| **BasicExample** | 最小構成（Manager + キー操作で Stream/Command 確認）30 秒で動作確認 |
+| **Tutorial** | キーマウスで SDK 全機能を体験する 1 シーン × 5 ゾーンのチュートリアル。Without/With 2 バージョン。XR 不要 |
 | **XriHelpers** | XR Interaction Toolkit 用ヘルパー（opt-in） |
 
 サンプルは `Assets/Samples/Hapbeat SDK/x.y.z/` に展開されます。自由に編集してプロジェクトに取り込んでください。
