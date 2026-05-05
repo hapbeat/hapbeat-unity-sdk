@@ -15,7 +15,7 @@ namespace Hapbeat.Samples.Editor
     /// Menu: Hapbeat > Build Samples > 1. Basic Example
     ///
     /// 生成物の配置 (ユーザー領域):
-    ///   Assets/HapbeatKits/BasicExampleKit/  (manifest.json + sine_100hz_1s.wav)
+    ///   Assets/HapbeatSDK/Kits/BasicExampleKit/  (manifest.json + sine_100hz_1s.wav)
     ///   Assets/HapbeatSDK/EventMaps/BasicExampleEventMap.asset
     ///   Assets/HapbeatSDK/Scenes/BasicExample.unity
     ///
@@ -38,7 +38,7 @@ namespace Hapbeat.Samples.Editor
             if (!EditorUtility.DisplayDialog(
                 "BasicExample 生成",
                 "BasicExample 用 Kit / EventMap / Scene を生成します。\n" +
-                $"  - Assets/HapbeatKits/{kKitName}/ (manifest + wav)\n" +
+                $"  - Assets/HapbeatSDK/Kits/{kKitName}/ (manifest + wav)\n" +
                 $"  - {kEventMapsDir}/{kEventMapName}.asset\n" +
                 $"  - {kScenesDir}/{kSceneName}.unity\n\n" +
                 "現在のシーンの未保存の変更は失われます。",

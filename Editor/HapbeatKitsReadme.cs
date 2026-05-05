@@ -49,7 +49,7 @@ namespace Hapbeat.Editor
         /// Resolve the kits root path, or return the SDK's default initial location
         /// if no marker exists. Useful for "Create Folder" flows that need a default.
         /// </summary>
-        internal const string DefaultKitsRootPath = "Assets/HapbeatKits";
+        internal const string DefaultKitsRootPath = "Assets/HapbeatSDK/Kits";
     }
 
     [CustomEditor(typeof(HapbeatKitsReadme))]
@@ -215,7 +215,7 @@ namespace Hapbeat.Editor
             using (new GUILayout.VerticalScope(EditorStyles.helpBox))
             {
                 GUILayout.Label(
-                    "Assets/**/HapbeatKits/**/install-clips/*.wav\nAssets/**/HapbeatKits/**/stream-clips/*.wav",
+                    "Assets/**/HapbeatSDK/Kits/**/install-clips/*.wav\nAssets/**/HapbeatSDK/Kits/**/stream-clips/*.wav",
                     _mono);
             }
 
