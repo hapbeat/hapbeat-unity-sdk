@@ -7,6 +7,8 @@ description: キーマウスだけで Hapbeat Unity SDK の全機能を体験す
 
 XR デバイス不要・キーマウスだけで完結します (XRI HandDemo 連携は [別サンプル](/docs/unity-sdk/xri-handdemo-quickstart/) を参照)。
 
+> **ポイント**: Tutorial は **Hapbeat Studio で Kit を作らずに、Unity 同梱の WAV を StreamClip で送信して動かす** ことから始められます。デバイスをオンラインにして Unity を Play すればすぐ触覚が返ります。Studio 連動 (Command モード) は walkthrough の最後で任意ステップとして扱います。
+
 ## 構成
 
 5 ゾーンを含む 1 シーン構成。各ゾーンが SDK の異なる側面を担当します:

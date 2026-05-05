@@ -12,7 +12,9 @@ description: 触覚なし版 (Tutorial_Plain.unity) を起点に、ゾーンご�
 - `Hapbeat → Tutorial → Strip Hapbeat` で `Tutorial_Plain.unity` を生成済み
 - Hapbeat デバイスがオンライン (Studio または Helper で確認)
 
-## 0. EventMap の用意
+## 0. EventMap の用意 (StreamClip ファースト)
+
+このチュートリアルは **Hapbeat Studio で Kit を作らずに**、Unity 同梱の WAV を StreamClip 経由で送信して動くように設計しています。Studio 連動は本ページ末尾の任意ステップで扱います。
 
 すべての Trigger / Bridge は EventMap を参照するため、最初に作成します。
 
@@ -21,22 +23,24 @@ description: 触覚なし版 (Tutorial_Plain.unity) を起点に、ゾーンご�
 3. `Hapbeat → Window → Event Map` を開く
 4. 作成した asset を選択して、以下の entry を追加:
 
-| Display Name | Category | Event Name | Mode | streamClip | loop | Target | Gain |
-|---|---|---|---|---|---|---|---|
-| pin_hit | physics | pin_hit | Command | - | - | `*/pos_r_arm` | 1.0 |
-| door_open | door | open | Command | - | - | `*/pos_neck` | 1.0 |
-| door_close | door | close | Command | - | - | `*/pos_neck` | 1.0 |
-| grab_start | grab | start | Command | - | - | `*/pos_r_arm` | 1.0 |
-| grab_loop | grab | loop | StreamClip | rain_loop.mp3 | ✓ | `*/pos_r_arm` | 1.0 |
-| grab_release | grab | release | Command | - | - | `*/pos_r_arm` | 1.0 |
-| stream_demo | stream | audio | StreamClip | rain_loop.mp3 | ✓ | (空) | 1.0 |
-| slider_tick | ui | slider_tick | Command | - | - | (空) | 1.0 |
-| charge_release | combat | shot | Command | - | - | (空) | 1.0 |
-| target_hit | combat | target_hit | Command | - | - | (空) | 1.0 |
-| manual_fire | misc | beep | Command | - | - | (空) | 1.0 |
-| burst | combat | burst | Command | - | - | (空) | 1.0 |
+| Display Name | Mode | streamClip | loop | Target | Gain |
+|---|---|---|---|---|---|
+| pin_hit | StreamClip | `Audio/drum_hit_1.wav` | - | `*/pos_r_arm` | 1.0 |
+| door_open | StreamClip | `Audio/ui_click.wav` | - | `*/pos_neck` | 1.0 |
+| door_close | StreamClip | `Audio/ui_click.wav` | - | `*/pos_neck` | 1.0 |
+| grab_start | StreamClip | `Audio/grab.wav` | - | `*/pos_r_arm` | 1.0 |
+| grab_loop | StreamClip | `Audio/rain_loop.mp3` | ✓ | `*/pos_r_arm` | 1.0 |
+| grab_release | StreamClip | `Audio/release.wav` | - | `*/pos_r_arm` | 1.0 |
+| stream_demo | StreamClip | `Audio/rain_loop.mp3` | ✓ | (空) | 1.0 |
+| slider_tick | StreamClip | `Audio/ui_click.wav` | - | (空) | 1.0 |
+| charge_release | StreamClip | `Audio/explosion.wav` | - | (空) | 1.0 |
+| target_hit | StreamClip | `Audio/target_hit.mp3` | - | (空) | 1.0 |
+| manual_fire | StreamClip | `Audio/punch_impact.wav` | - | (空) | 1.0 |
+| burst | StreamClip | `Audio/gunshot.wav` | - | (空) | 1.0 |
 
 target が空のものは broadcast (= Picker UI に従う)。Z1〜Z3 は EventMap で固定 target を持つ「設計時点で決まる」例です。
+
+> **ヒント**: Mode を StreamClip にしておけば、デバイスは Unity から送られてくる PCM サンプルをそのまま再生するだけなので、Studio で Kit を作る・配布する手間ゼロで動作確認できます。Command モードへの切替は最後の任意ステップ ([Step 9](#step-9-command-モードに切替-任意-studio-連動)) を参照してください。
 
 `grab_loop` の `bindings` には preset を 1 つ追加してください:
 - Source Transform Path: 空 (= target object)
@@ -120,6 +124,38 @@ Pin 6 個に同じ設定が一括で貼られます。
 2. Play
 3. WASD で移動、各ゾーンを試す
 4. Target Picker を切り替えて Z4・Z5・ホットキーが追従するか確認
+
+## Step 9: Command モードに切替 (任意, Studio 連動)
+
+ここまで StreamClip だけで Tutorial の挙動は完成しています。次に「Hapbeat Studio で Kit を整備すると何が変わるか」を Command モードで体験できます。任意ステップなのでスキップして OK。
+
+### Command モードのメリット
+
+- **低遅延**: event id (短い文字列) だけ送るので、PCM ストリームより到達が速い
+- **デバイス内蔵 clip 再生**: Unity 側に WAV を持たなくてよい (アプリの容量削減)
+- **Studio で clip を編集**: Kit を Studio で更新して deploy すれば、Unity 側のビルドし直しは不要
+
+### 手順
+
+1. **Studio で Kit を作る**
+   - Hapbeat Studio を開いて新規 Kit を作成
+   - 各 entry 名に対応する clip を登録 (例: `physics.pin_hit` → drum 系の clip)
+   - 同じ event id を使うのが楽: Studio の Kit にも `physics.pin_hit` で登録
+2. **Kit をデバイスに deploy** (Studio の Save → Deploy)
+3. **EventMap で mode を Command に切替**
+   - `pin_hit` entry を開いて Mode を `Command` に
+   - Category = `physics`, Event Name = `pin_hit` を入力 (Event ID = `physics.pin_hit` が自動算出)
+   - streamClip フィールドはそのまま (Command モードでは無視される)
+4. **試したい entry を順次 Command 化**
+   - 全部 Command にする必要はなく、低遅延を効かせたい衝撃系だけ Command、ambient/drag 系は StreamClip という混在運用が実用的
+5. Play で動作確認
+
+### Command + StreamClip 混在の指針
+
+- **Command 向き**: 衝撃 (pin_hit, target_hit, charge_release, manual_fire など)。低遅延が効く
+- **StreamClip 向き**: ループ系 (grab_loop, stream_demo)。ParameterBinding で動的 modulation できる
+
+実機で両方触ってみると、Command の応答の速さと StreamClip の表現の自由度の違いが体感できます。
 
 ## トラブルシューティング
 

@@ -8,6 +8,16 @@ namespace Hapbeat.Samples.Tutorial
     /// and lets <see cref="TargetPickerUI"/> override the device target at
     /// runtime so users can experiment with Hapbeat's targeting feature.
     ///
+    /// <para>
+    /// Mode handling: each call inspects <c>entry.mode</c> and routes to the
+    /// matching transport. <see cref="HapticMode.StreamClip"/> entries are
+    /// streamed as <c>Manager.StreamAudioClip</c> so the Tutorial works
+    /// out of the box without a Hapbeat Studio Kit on the device — only the
+    /// SDK + the WAV files shipped with this sample are needed.
+    /// <see cref="HapticMode.Command"/> entries fall through to
+    /// <c>Manager.Play</c> for users who have set up a Kit.
+    /// </para>
+    ///
     /// Wired Trigger components (HapbeatCollisionTrigger / HapbeatAnimatorTrigger /
     /// HapbeatSequenceTrigger / HapbeatTickEmitter) bypass this bridge and use
     /// the entry's <c>target</c> field directly — that's the "fixed target,
@@ -29,19 +39,11 @@ namespace Hapbeat.Samples.Tutorial
         /// </summary>
         public void PlayWithPickerTarget(string displayName, float gainOverride = -1f)
         {
-            if (EventMap == null || HapbeatManager.Instance == null) return;
-            var entry = EventMap.FindByName(displayName);
-            if (entry == null || string.IsNullOrEmpty(entry.eventId))
-            {
-                Debug.LogWarning($"[TutorialBridge] Entry not found: '{displayName}'");
-                return;
-            }
+            var entry = ResolveEntry(displayName);
+            if (entry == null) return;
 
-            float rawGain = gainOverride >= 0f ? gainOverride : entry.gain;
-            float intensity = entry.CachedManifestIntensity;
-            float gain = intensity < 0f ? rawGain : rawGain * intensity;
-
-            HapbeatManager.Instance.Play(entry.eventId, gain, entry.group, displayName, CurrentTarget);
+            float gain = ResolveGain(entry, gainOverride >= 0f ? gainOverride : entry.gain);
+            DispatchOneShot(entry, gain);
         }
 
         /// <summary>
@@ -51,15 +53,12 @@ namespace Hapbeat.Samples.Tutorial
             float minVelocity = 0f, float maxVelocity = 5f)
         {
             if (velocity < minVelocity) return;
-            if (EventMap == null || HapbeatManager.Instance == null) return;
-            var entry = EventMap.FindByName(displayName);
-            if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
+            var entry = ResolveEntry(displayName);
+            if (entry == null) return;
 
             float t = Mathf.Clamp01((velocity - minVelocity) / (maxVelocity - minVelocity));
-            float rawGain = t * entry.gain;
-            float intensity = entry.CachedManifestIntensity;
-            float gain = intensity < 0f ? rawGain : rawGain * intensity;
-            HapbeatManager.Instance.Play(entry.eventId, gain, entry.group, displayName, CurrentTarget);
+            float gain = ResolveGain(entry, t * entry.gain);
+            DispatchOneShot(entry, gain);
         }
 
         /// <summary>
@@ -67,14 +66,11 @@ namespace Hapbeat.Samples.Tutorial
         /// </summary>
         public void PlayWithCurveAndPickerTarget(string displayName, float inputValue, AnimationCurve curve)
         {
-            if (EventMap == null || HapbeatManager.Instance == null) return;
-            var entry = EventMap.FindByName(displayName);
-            if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
+            var entry = ResolveEntry(displayName);
+            if (entry == null) return;
 
-            float rawGain = curve.Evaluate(inputValue) * entry.gain;
-            float intensity = entry.CachedManifestIntensity;
-            float gain = intensity < 0f ? rawGain : rawGain * intensity;
-            HapbeatManager.Instance.Play(entry.eventId, gain, entry.group, displayName, CurrentTarget);
+            float gain = ResolveGain(entry, curve.Evaluate(inputValue) * entry.gain);
+            DispatchOneShot(entry, gain);
         }
 
         /// <summary>
@@ -110,6 +106,65 @@ namespace Hapbeat.Samples.Tutorial
             if (EventMap == null) return 1f;
             var entry = EventMap.FindByName(displayName);
             return entry != null ? entry.gain : 1f;
+        }
+
+        // -----------------------------------------------------------------
+        // Private helpers
+        // -----------------------------------------------------------------
+
+        private HapbeatEventEntry ResolveEntry(string displayName)
+        {
+            if (EventMap == null || HapbeatManager.Instance == null) return null;
+            var entry = EventMap.FindByName(displayName);
+            if (entry == null)
+            {
+                Debug.LogWarning($"[TutorialBridge] Entry not found: '{displayName}'");
+                return null;
+            }
+            return entry;
+        }
+
+        private static float ResolveGain(HapbeatEventEntry entry, float rawGain)
+        {
+            float intensity = entry.CachedManifestIntensity;
+            return intensity < 0f ? rawGain : rawGain * intensity;
+        }
+
+        /// <summary>
+        /// Send a one-shot fire respecting <c>entry.mode</c>:
+        /// <list type="bullet">
+        ///   <item>StreamClip → <c>Manager.StreamAudioClip(entry.streamClip, gain, target, loop)</c></item>
+        ///   <item>Command → <c>Manager.Play(entry.eventId, gain, group, displayName, target)</c></item>
+        /// </list>
+        /// </summary>
+        private void DispatchOneShot(HapbeatEventEntry entry, float gain)
+        {
+            var mgr = HapbeatManager.Instance;
+            if (mgr == null) return;
+
+            switch (entry.mode)
+            {
+                case HapticMode.StreamClip:
+                    if (entry.streamClip == null)
+                    {
+                        Debug.LogWarning($"[TutorialBridge] StreamClip entry '{entry.displayName}' has no AudioClip.");
+                        return;
+                    }
+                    // For Tutorial we treat script-driven StreamClip fires as one-shot
+                    // (loop=false). The Sequence loop path is handled by HapbeatSequenceTrigger.
+                    mgr.StreamAudioClip(entry.streamClip, gain, CurrentTarget, loop: false);
+                    break;
+
+                case HapticMode.Command:
+                default:
+                    if (string.IsNullOrEmpty(entry.eventId))
+                    {
+                        Debug.LogWarning($"[TutorialBridge] Command entry '{entry.displayName}' has no event id.");
+                        return;
+                    }
+                    mgr.Play(entry.eventId, gain, entry.group, entry.displayName, CurrentTarget);
+                    break;
+            }
         }
     }
 }
