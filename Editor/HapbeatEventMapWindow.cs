@@ -2158,12 +2158,19 @@ namespace Hapbeat.Editor
                         Debug.LogWarning("[Hapbeat] Test-play: Command entry has no eventId.");
                         return;
                     }
-                    // Command: device has the flashed intensity and applies it internally.
-                    // Send entry.gain raw.
-                    if (usePlayPath)
-                        HapbeatManager.Instance.Play(entry.eventId, entry.gain, entry.group, label, target);
-                    else
-                        HapbeatEditorTransport.Play(entry.eventId, entry.gain, entry.group, target);
+                    {
+                        // Device no longer reads manifest.intensity at runtime —
+                        // SDK applies gain × intensity before putting it on the wire.
+                        float eff = entry.GetEffectiveGain();
+                        if (entry.CachedManifestIntensity < 0f)
+                            Debug.LogWarning(
+                                $"[Hapbeat] Test-play Command: manifest intensity not found for '{entry.eventId}'. " +
+                                $"Sending gain={eff:F2} without intensity factor. Deploy the Kit from Studio or Refresh the EventMap.");
+                        if (usePlayPath)
+                            HapbeatManager.Instance.Play(entry.eventId, eff, entry.group, label, target);
+                        else
+                            HapbeatEditorTransport.Play(entry.eventId, eff, entry.group, target);
+                    }
                     break;
 
                 case HapticMode.StreamClip:
@@ -2177,7 +2184,7 @@ namespace Hapbeat.Editor
                         // device just replays the raw PCM it received. GetEffectiveGain returns
                         // gain × intensity when the intensity is cached, else plain gain.
                         float eff = entry.GetEffectiveGain();
-                        if (entry.CachedManifestIntensity <= 0f)
+                        if (entry.CachedManifestIntensity < 0f)
                             Debug.LogWarning(
                                 $"[Hapbeat] Test-play StreamClip: manifest intensity not found for '{entry.streamClip.name}'. " +
                                 $"Sending gain={eff:F2} without intensity factor. Deploy the Kit from Studio or Refresh the EventMap.");

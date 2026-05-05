@@ -231,13 +231,27 @@ namespace Hapbeat
                         return;
                     }
                     {
-                        // Per-trigger multiplier composes with entry.gain so the
-                        // same EventMap entry can be reused at different intensities
-                        // across GameObjects without authoring extra entries.
-                        float commandGain = entry.gain * _gainMultiplier;
+                        // GetEffectiveGain() = entry.gain × manifest.intensity.
+                        // Device no longer reads manifest.intensity at runtime —
+                        // the sender (SDK) is responsible for the multiplication.
+                        // Per-trigger multiplier composes on top so the same
+                        // EventMap entry can run at different intensities across
+                        // GameObjects without authoring extra entries.
+                        if (entry.CachedManifestIntensity < 0f && !_warnedMissingIntensity)
+                        {
+                            Debug.LogWarning(
+                                $"[Hapbeat] Command entry '{label}' has no cached manifest " +
+                                $"intensity; firing at plain gain={entry.gain:F2} " +
+                                "(intensity factor skipped). Open the EventMap window or run " +
+                                "'Hapbeat > Migrate Legacy Entry References' to refresh the cache, " +
+                                "and confirm the Kit is deployed on this device.", this);
+                            _warnedMissingIntensity = true;
+                        }
+                        float commandGain = entry.GetEffectiveGain() * _gainMultiplier;
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire Command: eventId='{entry.eventId}' target='{target ?? "(broadcast)"}' " +
-                                      $"gain={entry.gain:F2} × triggerMult={_gainMultiplier:F2} = {commandGain:F2}", this);
+                                      $"gain={entry.gain:F2} × intensity={(entry.CachedManifestIntensity >= 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
+                                      $"× triggerMult={_gainMultiplier:F2} = {commandGain:F2}", this);
                         HapbeatManager.Instance.Play(entry.eventId, commandGain, entry.group, label, target);
                     }
                     break;
@@ -257,7 +271,7 @@ namespace Hapbeat
                         // unresolved — the fire is still going through but at plain
                         // entry.gain, which is a common source of "the runtime
                         // stream is louder than what I authored" confusion.
-                        if (entry.CachedManifestIntensity <= 0f && !_warnedMissingIntensity)
+                        if (entry.CachedManifestIntensity < 0f && !_warnedMissingIntensity)
                         {
                             Debug.LogWarning(
                                 $"[Hapbeat] StreamClip entry '{label}' has no cached manifest " +

@@ -202,9 +202,10 @@ namespace Hapbeat
         // ---- Manifest intensity cache ----
         //
         // Studio authors <c>parameters.intensity</c> in each Kit's manifest.json. The
-        // SDK needs to honour that value in stream modes (where the device just
-        // replays the raw PCM it received) — otherwise every stream entry effectively
-        // runs at full authored amplitude regardless of what the designer set.
+        // SDK needs to honour that value in both Command and StreamClip modes — the
+        // device no longer reads manifest.intensity at runtime (device is a pure
+        // executor that plays req.gain as-is). The sender (SDK) is responsible for
+        // multiplying gain × intensity before putting it on the wire.
         //
         // We cache it onto the entry (populated by the EventMap window in the editor)
         // so the runtime player — which doesn't ship the manifest.json — still has
@@ -221,11 +222,6 @@ namespace Hapbeat
         public float CachedManifestIntensity => _cachedManifestIntensity;
 
         /// <summary>
-        /// Set the cached intensity. Editor-only flow writes this via SerializedProperty
-        /// so the field remains [HideInInspector]. This setter is here for edit-only
-        /// helpers that work directly on the entry instance.
-        /// </summary>
-        /// <summary>
         /// Editor-only helper for writing the cached intensity (e.g. when
         /// duplicating an entry the caller wants the copy to inherit the
         /// resolved cache). Runtime code should never call this — the cache
@@ -235,23 +231,28 @@ namespace Hapbeat
         public void SetCachedManifestIntensity(float value) => _cachedManifestIntensity = value;
 
         /// <summary>
-        /// Effective gain to send over the wire: <c>gain × cached intensity</c> for
-        /// stream modes, or plain <c>gain</c> for Command (the device applies its
-        /// own flashed intensity). If the cache is unresolved (-1), stream modes
-        /// return plain <c>gain</c> and the caller should consider logging a warning.
+        /// Effective gain to send over the wire: <c>gain × cached intensity</c>.
+        /// Applies to both Command and StreamClip modes — the device is a pure
+        /// executor (req.gain only) and no longer reads manifest.intensity itself.
+        /// <para>
+        /// If the cache is unresolved (<c>CachedManifestIntensity &lt; 0</c>),
+        /// returns plain <c>gain</c>; callers should warn when the sentinel is -1
+        /// because it means the Kit has not been deployed yet or the EventMap
+        /// window's refresh has not run.
+        /// </para>
+        /// <para>
+        /// A manifest intensity of exactly 0 is honoured (returns 0), because the
+        /// designer may intentionally silence an event in the manifest.
+        /// </para>
         /// </summary>
         public float GetEffectiveGain()
         {
-            switch (mode)
-            {
-                case HapticMode.StreamClip:
-                    return _cachedManifestIntensity > 0f
-                        ? gain * _cachedManifestIntensity
-                        : gain;
-                case HapticMode.Command:
-                default:
-                    return gain;
-            }
+            // _cachedManifestIntensity < 0 is the "not yet resolved" sentinel.
+            // 0 is a valid authored intensity (silence), so we only use plain gain
+            // for the strictly-negative sentinel case.
+            return _cachedManifestIntensity < 0f
+                ? gain
+                : gain * _cachedManifestIntensity;
         }
 
         // Legacy field kept for migration from old serialized data.

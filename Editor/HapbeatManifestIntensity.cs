@@ -15,11 +15,10 @@ namespace Hapbeat.Editor
     /// Why this exists:
     /// <list type="bullet">
     ///   <item>Studio stores <c>intensity</c> as a manifest parameter, NOT baked into
-    ///     the WAV amplitude. So for stream modes the SDK must multiply
-    ///     <c>gain × intensity</c> itself — otherwise authored intensity is ignored
-    ///     and every entry effectively plays at full strength.</item>
-    ///   <item>Command mode devices have the intensity flashed as part of the Kit
-    ///     binary and apply it internally, so the SDK sends raw gain for Command.</item>
+    ///     the WAV amplitude. The device is a pure executor that plays req.gain as-is
+    ///     and no longer reads manifest.intensity at runtime. The SDK (sender) must
+    ///     therefore multiply <c>gain × intensity</c> before putting the value on the
+    ///     wire — for both Command and StreamClip modes.</item>
     /// </list>
     ///
     /// This helper drives the <b>test-play</b> path and the Entry Detail "missing

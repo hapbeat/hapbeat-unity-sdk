@@ -47,7 +47,13 @@ namespace Hapbeat.Editor
                         EditorGUILayout.TextField("Event ID", entry.eventId);
                     else
                         EditorGUILayout.TextField("Mode", entry.mode.ToString());
-                    EditorGUILayout.FloatField("Gain", entry.gain);
+                    EditorGUILayout.FloatField(
+                        new GUIContent("Gain",
+                            "Authored gain (0–2). " +
+                            "Wire = Gain × Manifest Intensity × Trigger Multiplier.\n" +
+                            "The device plays req.gain directly; manifest.intensity is " +
+                            "applied by the SDK before sending."),
+                        entry.gain);
                     if (entry.HasTarget)
                         EditorGUILayout.TextField("Target", entry.target);
                     EditorGUI.EndDisabledGroup();

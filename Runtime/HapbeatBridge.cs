@@ -22,10 +22,23 @@ namespace Hapbeat
         public HapbeatEventMap EventMap => _eventMap;
 
         /// <summary>
+        /// Apply the cached manifest intensity to a raw gain value.
+        /// Wire gain = rawGain × manifest.intensity; falls back to rawGain when the
+        /// cache is unresolved (sentinel -1). The device is a pure executor that
+        /// plays req.gain as-is — it no longer reads manifest.intensity itself.
+        /// </summary>
+        private static float ApplyManifestIntensity(HapbeatEventEntry entry, float rawGain)
+        {
+            float intensity = entry.CachedManifestIntensity;
+            return intensity < 0f ? rawGain : rawGain * intensity;
+        }
+
+        /// <summary>
         /// Play a haptic event by display name from the event map.
         /// </summary>
         /// <param name="displayName">Display name of the entry in the event map.</param>
-        /// <param name="gainOverride">If >= 0, overrides the entry's gain value.</param>
+        /// <param name="gainOverride">If >= 0, overrides the entry's gain value (before
+        /// manifest.intensity is applied).</param>
         protected void Play(string displayName, float gainOverride = -1f)
         {
             if (_eventMap == null || HapbeatManager.Instance == null) return;
@@ -37,7 +50,8 @@ namespace Hapbeat
                 return;
             }
 
-            float g = gainOverride >= 0f ? gainOverride : entry.gain;
+            float rawGain = gainOverride >= 0f ? gainOverride : entry.gain;
+            float g = ApplyManifestIntensity(entry, rawGain);
             HapbeatManager.Instance.Play(entry.eventId, g, entry.group);
         }
 
@@ -51,13 +65,15 @@ namespace Hapbeat
             var entry = _eventMap.GetEntry(entryIndex);
             if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
 
-            float g = gainOverride >= 0f ? gainOverride : entry.gain;
+            float rawGain = gainOverride >= 0f ? gainOverride : entry.gain;
+            float g = ApplyManifestIntensity(entry, rawGain);
             HapbeatManager.Instance.Play(entry.eventId, g, entry.group);
         }
 
         /// <summary>
         /// Play a haptic event with gain scaled by a velocity value.
         /// Useful for collision-based triggers where impact strength matters.
+        /// manifest.intensity is applied on top of the velocity-scaled gain.
         /// </summary>
         /// <param name="displayName">Display name of the entry.</param>
         /// <param name="velocity">Current velocity magnitude.</param>
@@ -73,12 +89,14 @@ namespace Hapbeat
             if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
 
             float t = Mathf.Clamp01((velocity - minVelocity) / (maxVelocity - minVelocity));
-            float gain = t * entry.gain;
+            float rawGain = t * entry.gain;
+            float gain = ApplyManifestIntensity(entry, rawGain);
             HapbeatManager.Instance.Play(entry.eventId, gain, entry.group);
         }
 
         /// <summary>
         /// Play a haptic event with gain mapped through a custom curve.
+        /// manifest.intensity is applied on top of the curve-evaluated gain.
         /// </summary>
         /// <param name="displayName">Display name of the entry.</param>
         /// <param name="inputValue">Input value (0-1 range recommended).</param>
@@ -90,7 +108,8 @@ namespace Hapbeat
             var entry = _eventMap.FindByName(displayName);
             if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
 
-            float gain = curve.Evaluate(inputValue) * entry.gain;
+            float rawGain = curve.Evaluate(inputValue) * entry.gain;
+            float gain = ApplyManifestIntensity(entry, rawGain);
             HapbeatManager.Instance.Play(entry.eventId, gain, entry.group);
         }
 
