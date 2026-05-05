@@ -28,9 +28,10 @@ namespace Hapbeat.Samples.Editor
         private const string kEventMapName = "BasicExampleEventMap";
         private const string kSceneName = "BasicExample";
 
-        private const string kSdkRoot = "Assets/HapbeatSDK";
-        private const string kScenesDir = kSdkRoot + "/Scenes";
-        private const string kEventMapsDir = kSdkRoot + "/EventMaps";
+        // Layout constants are owned by HapbeatSDKFolderCreator so the standalone
+        // "Create HapbeatSDK Folder" menu and the Build Samples flow can't drift apart.
+        private static string kScenesDir => HapbeatSDKFolderCreator.kScenesDir;
+        private static string kEventMapsDir => HapbeatSDKFolderCreator.kEventMapsDir;
 
         [MenuItem("Hapbeat/Build Samples/1. Basic Example", false, 100)]
         public static void Build()
@@ -54,16 +55,12 @@ namespace Hapbeat.Samples.Editor
                 return;
             }
 
-            // 1. HapbeatKits root + this kit folder.
-            HapbeatKitsFolderCreator.EnsureFolderAndReadme(openReadme: false);
-            string kitsRoot = HapbeatKitsReadme.FindKitsRootPath() ?? HapbeatKitsReadme.DefaultKitsRootPath;
+            // 1. Ensure HapbeatSDK/{Kits, Scenes, EventMaps} layout (idempotent).
+            string kitsRoot = HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
+
+            // 2. Copy the bundled Kit into HapbeatSDK/Kits/.
             string kitDir = $"{kitsRoot}/{kKitName}";
             CopyKit(sampleRoot + "/Kit", kitDir);
-
-            // 2. HapbeatSDK/{Scenes, EventMaps} layout.
-            EnsureFolder(kSdkRoot);
-            EnsureFolder(kScenesDir);
-            EnsureFolder(kEventMapsDir);
 
             // 3. EventMap referencing the kit's wav.
             string mapPath = $"{kEventMapsDir}/{kEventMapName}.asset";
@@ -282,14 +279,6 @@ namespace Hapbeat.Samples.Editor
                 if (slash >= 0) return p.Substring(0, slash);
             }
             return null;
-        }
-
-        private static void EnsureFolder(string assetPath)
-        {
-            string abs = ToAbsolute(assetPath);
-            if (!Directory.Exists(abs))
-                Directory.CreateDirectory(abs);
-            AssetDatabase.Refresh();
         }
 
         private static string ToAbsolute(string assetPath)
