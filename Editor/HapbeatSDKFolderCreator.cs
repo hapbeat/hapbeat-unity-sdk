@@ -23,6 +23,7 @@ namespace Hapbeat.Editor
     {
         private const string kMenu = "Hapbeat/Setup/Create HapbeatSDK Folder";
         public const string kSdkRoot = "Assets/HapbeatSDK";
+        public const string kKitsDir = kSdkRoot + "/Kits";
         public const string kScenesDir = kSdkRoot + "/Scenes";
         public const string kEventMapsDir = kSdkRoot + "/EventMaps";
 
@@ -39,12 +40,15 @@ namespace Hapbeat.Editor
         public static string EnsureLayout(bool verbose = false)
         {
             EnsureFolder(kSdkRoot);
+            EnsureFolder(kKitsDir);
             EnsureFolder(kScenesDir);
             EnsureFolder(kEventMapsDir);
 
-            // Defer Kits creation (and marker placement) to the Kits-specific
-            // creator so we don't duplicate marker logic. It honours an
-            // existing marker location if the user moved it.
+            // Place the marker asset in HapbeatSDK/Kits/. If a marker already
+            // exists elsewhere in the project (legacy Assets/HapbeatKits/), the
+            // creator honours that location to avoid surprise migrations —
+            // users who want to consolidate can move the marker manually and
+            // re-run this menu.
             HapbeatKitsFolderCreator.EnsureFolderAndReadme(openReadme: false);
             string kitsRoot = HapbeatKitsReadme.FindKitsRootPath()
                               ?? HapbeatKitsReadme.DefaultKitsRootPath;

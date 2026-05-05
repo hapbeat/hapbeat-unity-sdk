@@ -13,7 +13,7 @@ namespace Hapbeat.Editor
     ///
     /// First-time flow:
     ///   1. SDK is imported via UPM or .unitypackage.
-    ///   2. User runs <c>Hapbeat &gt; Setup &gt; Create HapbeatKits Folder</c>
+    ///   2. User runs <c>Hapbeat &gt; Setup &gt; Create HapbeatSDK Folder</c>
     ///      (or triggers the "Create it now?" dialog from EventMap "Reveal").
     ///   3. User reads the Readme (Inspector), clicks "Open Hapbeat Studio".
     ///   4. User points Studio at this folder; Studio auto-scaffolds kits.
@@ -21,37 +21,15 @@ namespace Hapbeat.Editor
     /// </summary>
     internal static class HapbeatKitsFolderCreator
     {
-        private const string kMenu = "Hapbeat/Setup/Create HapbeatKits Folder";
-        private const string kResetMenu = "Hapbeat/Setup/Reset HapbeatKits Readme";
         private const string kReadmeName = "HapbeatKitsReadme.asset";
         private const string kLegacyReadmeName = "README.md";
 
-        [MenuItem(kMenu, false, 100)]
-        private static void CreateFolderMenu()
-        {
-            EnsureFolderAndReadme(openReadme: true);
-        }
-
-        [MenuItem(kResetMenu, false, 101)]
-        private static void ResetReadmeMenu()
-        {
-            string folder = HapbeatKitsReadme.FindKitsRootPath()
-                            ?? HapbeatKitsReadme.DefaultKitsRootPath;
-            string readmeAssetPath = $"{folder}/{kReadmeName}";
-            var existing = AssetDatabase.LoadAssetAtPath<HapbeatKitsReadme>(readmeAssetPath);
-            if (existing == null)
-            {
-                EnsureFolderAndReadme(openReadme: true);
-                return;
-            }
-            // Nothing to reset in the serialized form (content is in the Editor),
-            // so just bump templateVersion and ping so user re-sees the inspector.
-            existing.templateVersion = "2";
-            EditorUtility.SetDirty(existing);
-            AssetDatabase.SaveAssets();
-            Selection.activeObject = existing;
-            EditorGUIUtility.PingObject(existing);
-        }
+        // Note: this class no longer exposes a top-level menu item. Folder /
+        // marker creation is invoked by HapbeatSDKFolderCreator (or directly
+        // from Build Samples flows) via EnsureFolderAndReadme(false). The
+        // previous "Hapbeat / Setup / Create HapbeatKits Folder" and
+        // "Reset HapbeatKits Readme" menu entries were removed in favour of a
+        // single unified "Create HapbeatSDK Folder" entry.
 
         /// <summary>
         /// Create the HapbeatKits folder (at the existing marker location if one

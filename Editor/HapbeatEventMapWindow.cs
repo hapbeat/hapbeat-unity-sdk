@@ -3568,28 +3568,28 @@ namespace Hapbeat.Editor
                 return kitsRoot;
 
             bool confirmed = EditorUtility.DisplayDialog(
-                Tr("Create HapbeatKits Folder?", "HapbeatKits フォルダを作成しますか？"),
+                Tr("Create HapbeatSDK Folder?", "HapbeatSDK フォルダを作成しますか？"),
                 Tr(
-                    "HapbeatKits folder not found.\n\n" +
-                    "This is where Hapbeat Studio exports Kits (manifest.json + audio files).\n" +
-                    $"It will be created at {HapbeatKitsReadme.DefaultKitsRootPath}/ with a " +
-                    "HapbeatKitsReadme marker asset inside.\n" +
-                    "You can move or rename the folder afterwards — the marker tracks it.\n\n" +
+                    "HapbeatSDK folder not found.\n\n" +
+                    "This is the user-owned area where Hapbeat Studio exports Kits and the\n" +
+                    "SDK generates Scenes / EventMaps for sample builds.\n" +
+                    $"Layout: {HapbeatSDKFolderCreator.kSdkRoot}/{{Kits, Scenes, EventMaps}}\n" +
+                    "(A HapbeatKitsReadme marker is placed inside Kits/.)\n" +
+                    "You can move or rename the folder afterwards — the marker tracks Kits.\n\n" +
                     "Create it now?",
 
-                    "HapbeatKits フォルダがまだ見つかりません。\n\n" +
-                    "これは Hapbeat Studio が Kit (manifest.json + 音源) を書き出す先です。\n" +
-                    $"作成する場合、既定の場所 {HapbeatKitsReadme.DefaultKitsRootPath}/ に作り、" +
-                    "マーカーアセット (HapbeatKitsReadme) を中に置きます。\n" +
+                    "HapbeatSDK フォルダがまだ見つかりません。\n\n" +
+                    "ここは Hapbeat Studio が Kit を書き出し、SDK がシーン / EventMap を\n" +
+                    "生成するユーザー領域です。\n" +
+                    $"レイアウト: {HapbeatSDKFolderCreator.kSdkRoot}/{{Kits, Scenes, EventMaps}}\n" +
+                    "(Kits/ 内に HapbeatKitsReadme マーカーが置かれます。)\n" +
                     "後で好きな場所にフォルダごと移動してかまいません — マーカーで追跡します。\n\n" +
                     "いま作成しますか？"),
                 Tr("Create", "作成する"),
                 Tr("Cancel", "キャンセル"));
             if (!confirmed) return null;
 
-            if (!HapbeatKitsFolderCreator.EnsureFolderAndReadme(openReadme: true))
-                return null;
-
+            HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
             return HapbeatKitsReadme.FindKitsRootPath();
         }
 
