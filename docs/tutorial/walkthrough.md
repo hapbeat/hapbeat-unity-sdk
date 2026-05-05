@@ -12,35 +12,33 @@ description: 触覚なし版 (Tutorial_Plain.unity) を起点に、ゾーンご�
 - `Hapbeat → Tutorial → Strip Hapbeat` で `Tutorial_Plain.unity` を生成済み
 - Hapbeat デバイスがオンライン (Studio または Helper で確認)
 
-## 0. EventMap の用意 (StreamClip ファースト)
+## 0. EventMap は Build メニューで自動生成済み
 
 このチュートリアルは **Hapbeat Studio で Kit を作らずに**、Unity 同梱の WAV を StreamClip 経由で送信して動くように設計しています。Studio 連動は本ページ末尾の任意ステップで扱います。
 
-すべての Trigger / Bridge は EventMap を参照するため、最初に作成します。
+`Hapbeat → Build Samples → 2. Tutorial (full scene)` を実行すると、シーンと一緒に **`EventMap/TutorialEventMap.asset`** が自動生成され、12 entry が StreamClip モードで `Audio/` 内の WAV と紐付け済みです。`[Hapbeat Event Router]` の `TutorialBridge.Event Map` フィールドにも自動でリンクされます。
 
-1. Project ウィンドウで `Samples/Hapbeat SDK/.../Tutorial/EventMap/` フォルダに移動
-2. 右クリック → Create → Hapbeat → Event Map で `TutorialEventMap.asset` を作成
-3. `Hapbeat → Window → Event Map` を開く
-4. 作成した asset を選択して、以下の entry を追加:
+### 生成される entry 一覧 (参考)
 
-| Display Name | Mode | streamClip | loop | Target | Gain |
-|---|---|---|---|---|---|
-| pin_hit | StreamClip | `Audio/drum_hit_1.wav` | - | `*/pos_r_arm` | 1.0 |
-| door_open | StreamClip | `Audio/ui_click.wav` | - | `*/pos_neck` | 1.0 |
-| door_close | StreamClip | `Audio/ui_click.wav` | - | `*/pos_neck` | 1.0 |
-| grab_start | StreamClip | `Audio/grab.wav` | - | `*/pos_r_arm` | 1.0 |
-| grab_loop | StreamClip | `Audio/rain_loop.mp3` | ✓ | `*/pos_r_arm` | 1.0 |
-| grab_release | StreamClip | `Audio/release.wav` | - | `*/pos_r_arm` | 1.0 |
-| stream_demo | StreamClip | `Audio/rain_loop.mp3` | ✓ | (空) | 1.0 |
-| slider_tick | StreamClip | `Audio/ui_click.wav` | - | (空) | 1.0 |
-| charge_release | StreamClip | `Audio/explosion.wav` | - | (空) | 1.0 |
-| target_hit | StreamClip | `Audio/target_hit.mp3` | - | (空) | 1.0 |
-| manual_fire | StreamClip | `Audio/punch_impact.wav` | - | (空) | 1.0 |
-| burst | StreamClip | `Audio/gunshot.wav` | - | (空) | 1.0 |
+| Display Name | Mode | streamClip | loop | Target |
+|---|---|---|---|---|
+| pin_hit | StreamClip | `Audio/drum_hit_1.wav` | - | `*/pos_r_arm` |
+| door_open / door_close | StreamClip | `Audio/ui_click.wav` | - | `*/pos_neck` |
+| grab_start | StreamClip | `Audio/grab.wav` | - | `*/pos_r_arm` |
+| grab_loop | StreamClip | `Audio/rain_loop.mp3` | ✓ | `*/pos_r_arm` |
+| grab_release | StreamClip | `Audio/release.wav` | - | `*/pos_r_arm` |
+| stream_demo | StreamClip | `Audio/rain_loop.mp3` | ✓ | (空) |
+| slider_tick | StreamClip | `Audio/ui_click.wav` | - | (空) |
+| charge_release | StreamClip | `Audio/explosion.wav` | - | (空) |
+| target_hit | StreamClip | `Audio/target_hit.mp3` | - | (空) |
+| manual_fire | StreamClip | `Audio/punch_impact.wav` | - | (空) |
+| burst | StreamClip | `Audio/gunshot.wav` | - | (空) |
 
 target が空のものは broadcast (= Picker UI に従う)。Z1〜Z3 は EventMap で固定 target を持つ「設計時点で決まる」例です。
 
 > **ヒント**: Mode を StreamClip にしておけば、デバイスは Unity から送られてくる PCM サンプルをそのまま再生するだけなので、Studio で Kit を作る・配布する手間ゼロで動作確認できます。Command モードへの切替は最後の任意ステップ ([Step 9](#step-9-command-モードに切替-任意-studio-連動)) を参照してください。
+
+> 生成済み asset を再生成したい場合は同じ Build メニューを再実行してください (entries はクリアされて再生成されます — 個別カスタマイズ済みの場合は別 asset として複製してから編集を)。
 
 `grab_loop` の `bindings` には preset を 1 つ追加してください:
 - Source Transform Path: 空 (= target object)

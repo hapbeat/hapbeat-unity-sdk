@@ -37,7 +37,8 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
         {
             if (!EditorUtility.DisplayDialog(
                 "Tutorial シーン生成",
-                "新しい Tutorial.unity シーンを作成します。\n現在のシーンの未保存の変更は失われます。",
+                "新しい Tutorial.unity シーンと TutorialEventMap.asset を作成します。\n" +
+                "現在のシーンの未保存の変更は失われます。",
                 "生成する", "キャンセル"))
                 return;
 
@@ -49,6 +50,9 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
                     "OK");
                 return;
             }
+
+            // Build EventMap first so the bridge / triggers can link to it.
+            var eventMap = BuildOrLoadEventMap(root);
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
@@ -74,7 +78,7 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             var player = BuildPlayer();
 
             // [Hapbeat Event Router] (this is the part removed by Strip).
-            var router = BuildRouter();
+            var router = BuildRouter(eventMap);
 
             // World-space HUD and Picker UI.
             BuildHud(router, player);
@@ -85,8 +89,10 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             EditorSceneManager.SaveScene(scene, scenePath);
             AssetDatabase.SaveAssets();
 
+            string mapPath = $"{root}/EventMap/TutorialEventMap.asset";
             EditorUtility.DisplayDialog("完了",
-                $"Tutorial シーンを生成しました:\n{scenePath}\n\n" +
+                $"Tutorial シーンを生成しました:\n  {scenePath}\n\n" +
+                $"EventMap も生成しました:\n  {mapPath}\n  (12 entry が StreamClip モードで配線済み)\n\n" +
                 "次にメニュー Hapbeat / Tutorial / Strip Hapbeat を実行すると、\n" +
                 "Without 版 Tutorial_Plain.unity を生成できます。",
                 "OK");
@@ -406,12 +412,101 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             return player;
         }
 
-        private static GameObject BuildRouter()
+        private static GameObject BuildRouter(HapbeatEventMap eventMap)
         {
             var go = new GameObject("[Hapbeat Event Router]");
             go.AddComponent<HapbeatManager>();
-            go.AddComponent<TutorialBridge>();
+            var bridge = go.AddComponent<TutorialBridge>();
+            if (eventMap != null)
+            {
+                var so = new SerializedObject(bridge);
+                so.FindProperty("_eventMap").objectReferenceValue = eventMap;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
             return go;
+        }
+
+        // ----------------------------------------------------------------
+        // EventMap auto-generation
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Create or refresh <c>TutorialEventMap.asset</c> with the 12 entries
+        /// described in the Tutorial walkthrough. All entries default to
+        /// StreamClip mode using the WAV files shipped in <c>Audio/</c>, so the
+        /// sample works without a Hapbeat Studio Kit on the device.
+        /// </summary>
+        private static HapbeatEventMap BuildOrLoadEventMap(string root)
+        {
+            string mapPath = $"{root}/EventMap/TutorialEventMap.asset";
+            Directory.CreateDirectory(Path.GetDirectoryName(mapPath));
+
+            var map = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(mapPath);
+            if (map == null)
+            {
+                map = ScriptableObject.CreateInstance<HapbeatEventMap>();
+                AssetDatabase.CreateAsset(map, mapPath);
+            }
+
+            // Reset entries to a deterministic baseline. Users can edit afterwards.
+            map.entries.Clear();
+
+            string audioDir = $"{root}/Audio";
+
+            map.entries.Add(MakeStreamEntry("pin_hit", "physics", "pin_hit", $"{audioDir}/drum_hit_1.wav", "*/pos_r_arm", loop: false));
+            map.entries.Add(MakeStreamEntry("door_open", "door", "open", $"{audioDir}/ui_click.wav", "*/pos_neck", loop: false));
+            map.entries.Add(MakeStreamEntry("door_close", "door", "close", $"{audioDir}/ui_click.wav", "*/pos_neck", loop: false));
+            map.entries.Add(MakeStreamEntry("grab_start", "grab", "start", $"{audioDir}/grab.wav", "*/pos_r_arm", loop: false));
+
+            // grab_loop has a parameter binding for runtime gain modulation by box motion.
+            var grabLoop = MakeStreamEntry("grab_loop", "grab", "loop", $"{audioDir}/rain_loop.mp3", "*/pos_r_arm", loop: true);
+            grabLoop.bindings.Add(new HapbeatBindingPreset
+            {
+                ownerObjectName = "PickupBox",
+                sourceTransformPath = "",
+                sourceProperty = BindingSourceProperty.PositionDeltaMagnitude,
+                inputMin = 0f,
+                inputMax = 0.5f,
+                curveType = BindingCurveType.EaseOut,
+                outputParameter = BindingOutputParameter.StreamGain,
+                outputMin = 0.2f,
+                outputMax = 1.5f,
+            });
+            map.entries.Add(grabLoop);
+
+            map.entries.Add(MakeStreamEntry("grab_release", "grab", "release", $"{audioDir}/release.wav", "*/pos_r_arm", loop: false));
+            map.entries.Add(MakeStreamEntry("stream_demo", "stream", "audio", $"{audioDir}/rain_loop.mp3", target: "", loop: true));
+            map.entries.Add(MakeStreamEntry("slider_tick", "ui", "slider_tick", $"{audioDir}/ui_click.wav", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("charge_release", "combat", "shot", $"{audioDir}/explosion.wav", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("target_hit", "combat", "target_hit", $"{audioDir}/target_hit.mp3", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("manual_fire", "misc", "beep", $"{audioDir}/punch_impact.wav", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("burst", "combat", "burst", $"{audioDir}/gunshot.wav", target: "", loop: false));
+
+            EditorUtility.SetDirty(map);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            return map;
+        }
+
+        private static HapbeatEventEntry MakeStreamEntry(string displayName, string category, string eventName,
+            string clipPath, string target, bool loop)
+        {
+            var clip = AssetDatabase.LoadAssetAtPath<AudioClip>(clipPath);
+            if (clip == null)
+                Debug.LogWarning($"[Tutorial] AudioClip not found: {clipPath}. Entry '{displayName}' will need a clip assigned manually.");
+
+            return new HapbeatEventEntry
+            {
+                mode = HapticMode.StreamClip,
+                displayName = displayName,
+                category = category,
+                eventName = eventName,
+                streamClip = clip,
+                loop = loop,
+                gain = 1.0f,
+                target = target,
+                group = -1,
+            };
         }
 
         private static void BuildHud(GameObject router, GameObject player)

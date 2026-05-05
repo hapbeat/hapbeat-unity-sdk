@@ -41,15 +41,11 @@ Hapbeat → Tutorial → Strip Hapbeat (Tutorial.unity → Tutorial_Plain.unity)
 
 を実行すると、Hapbeat 関連コンポーネントを除去した `Tutorial_Plain.unity` が生成されます。これが「触覚なし版」で、ゲームロジックは動きますが触覚は鳴りません。手順書 (`docs/tutorial/walkthrough.md`) の通りに Plain → With へ自分で組み立てるとチュートリアルになります。
 
-### 3. EventMap を準備
+### 3. EventMap は自動生成済み
 
-このサンプルには EventMap.asset を同梱していません — Build メニュー実行後、以下を Unity Editor で行ってください:
+Build メニュー実行時に **`EventMap/TutorialEventMap.asset`** が同時に生成され、12 entry が StreamClip モードで `Audio/` 内の WAV と紐付け済み・`[Hapbeat Event Router] / TutorialBridge` にもリンク済みです。手動操作は不要。
 
-1. `Hapbeat → Window → Event Map` で EventMap を新規作成
-2. 各 entry を README 末尾の表に従って登録 (display name / mode / target / streamClip)
-3. `[Hapbeat Event Router] / TutorialBridge` の `Event Map` フィールドに作成した asset を割当
-
-EventMap entry の詳細は walkthrough doc を参照。
+`Project` ビューで `Assets/Samples/Hapbeat SDK/<version>/Tutorial/EventMap/TutorialEventMap.asset` を開けば中身を確認・編集できます。
 
 ### 4. Play で動作確認
 
