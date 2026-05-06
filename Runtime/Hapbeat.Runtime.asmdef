@@ -1,7 +1,9 @@
 {
     "name": "Hapbeat.Runtime",
     "rootNamespace": "Hapbeat",
-    "references": [],
+    "references": [
+        "Unity.InputSystem"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
@@ -9,6 +11,12 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.inputsystem",
+            "expression": "1.0.0",
+            "define": "HAPBEAT_HAS_INPUT_SYSTEM"
+        }
+    ],
     "noEngineReferences": false
 }
