@@ -78,5 +78,6 @@ XR Helpers サンプル (`Samples~/XriHelpers/`) を Import すれば XRGrabInte
 ## 次のステップ
 
 - [EventMap で Event ID を一元管理](/docs/unity-sdk/event-map/)
+- [Streaming buffer の調整](/docs/unity-sdk/streaming/) — StreamClip モードの停止遅延・途切れ耐性のトレードオフ
 - [Tutorial サンプル](/docs/unity-sdk/tutorial/) — 各 Trigger の実例 (Z1 Collision / Z2 Animator / Z3 Sequence + Binding / Z4 TickEmitter / Z5 UnityEvent + スクリプト)
 - [BatchSetup vs スクリプトの使い分け](/docs/unity-sdk/tutorial/method-choice/)
