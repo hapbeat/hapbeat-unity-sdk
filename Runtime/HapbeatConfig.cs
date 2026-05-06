@@ -18,8 +18,16 @@ namespace Hapbeat
         public int group = -1;
 
         [Header("App Info")]
-        [Tooltip("デバイスの OLED に表示されるアプリ名（最大8文字）。空欄の場合は Application.productName を使用。")]
+        [Tooltip("Hapbeat デバイスのディスプレイに表示されるクライアントアプリ名。\n" +
+                 "Max 16 文字 (display grid 幅)。デフォルトの app_name 要素 (8x1) では先頭 8 文字のみ表示。\n" +
+                 "空欄の場合は Application.productName を自動使用。")]
+        [Delayed]
         public string appName = "";
+
+        /// <summary>Maximum number of characters allowed for <see cref="appName"/>.
+        /// Matches the device display grid width (16 cols × 1 row).
+        /// Longer strings are truncated when serialized.</summary>
+        public const int MaxAppNameLength = 16;
 
         [Header("Bridge (ESP-NOW)")]
         [Tooltip("Use Bridge for ESP-NOW multi-device transmission. When disabled (default), connects directly to devices via Wi-Fi UDP.")]
@@ -51,5 +59,19 @@ namespace Hapbeat
 
         [Tooltip("Enable verbose logging (PONG, keep-alive, protocol details). Noisy — use for debugging only.")]
         public bool verboseLogging = false;
+
+        // Validate / clamp serialized fields. Inspector edits and asset import both
+        // trigger this. We only enforce bounded fields that the inspector cannot
+        // already constrain via [Range] / dropdown.
+        private void OnValidate()
+        {
+            if (!string.IsNullOrEmpty(appName) && appName.Length > MaxAppNameLength)
+            {
+                Debug.LogWarning(
+                    $"[Hapbeat] appName '{appName}' exceeds the {MaxAppNameLength}-char display limit; " +
+                    $"truncated to '{appName.Substring(0, MaxAppNameLength)}'.", this);
+                appName = appName.Substring(0, MaxAppNameLength);
+            }
+        }
     }
 }

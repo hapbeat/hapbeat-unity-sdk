@@ -89,12 +89,18 @@ namespace Hapbeat.Editor
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("アプリ情報", EditorStyles.boldLabel);
 
-            EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("appName"),
+            var appNameProp = _serializedConfig.FindProperty("appName");
+            EditorGUILayout.PropertyField(appNameProp,
                 new GUIContent("アプリ名",
                     "Hapbeat デバイスのディスプレイに表示されるクライアントアプリ名。\n" +
-                    "8 文字程度を推奨 (デフォルトの app_name 要素は 8x1)。\n" +
+                    $"Max {HapbeatConfig.MaxAppNameLength} 文字 (display grid 幅)。デフォルトの app_name 要素 (8x1) では先頭 8 文字のみ表示。\n" +
                     "空欄の場合は Application.productName が自動使用される。"));
+            // Char-count indicator (right-aligned, mini style).
+            int len = appNameProp.stringValue?.Length ?? 0;
+            EditorGUILayout.LabelField(
+                $"   {len} / {HapbeatConfig.MaxAppNameLength} 文字" +
+                (len == 0 ? "  (空欄: Application.productName を使用)" : ""),
+                EditorStyles.miniLabel);
 
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("検出設定", EditorStyles.boldLabel);

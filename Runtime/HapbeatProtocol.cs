@@ -202,7 +202,15 @@ namespace Hapbeat
         public static byte[] BuildConnectStatusPayload(bool connected, byte group,
             string appName = "", string deviceName = "")
         {
-            byte[] appBytes = Encoding.UTF8.GetBytes(appName ?? "");
+            // Belt-and-suspenders: HapbeatConfig.OnValidate already truncates the
+            // user-edited appName to MaxAppNameLength, but the runtime fallback
+            // (Application.productName) is not constrained. Truncate here so the
+            // device never receives a string wider than its display grid.
+            string clippedApp = appName ?? "";
+            if (clippedApp.Length > HapbeatConfig.MaxAppNameLength)
+                clippedApp = clippedApp.Substring(0, HapbeatConfig.MaxAppNameLength);
+
+            byte[] appBytes = Encoding.UTF8.GetBytes(clippedApp);
             byte[] devBytes = Encoding.UTF8.GetBytes(deviceName ?? "");
             // connected(1) + group(1) + appName(null-term) + deviceName(null-term)
             int size = 1 + 1 + appBytes.Length + 1 + devBytes.Length + 1;
