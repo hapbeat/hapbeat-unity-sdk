@@ -21,7 +21,7 @@ namespace Hapbeat.Samples.Editor
     ///   - HapbeatActionHelper      (Stop / StopStream / Ping を UnityEvent から呼ぶための wrapper)
     ///   - HapbeatUnityEventTrigger × 3 (oneshot stream / loop stream / command の各 entry に bind)
     ///   - HapbeatKeyDispatcher     (Space / L / E / S / P を上記 Trigger / Helper に UnityEvent wiring)
-    ///   - HapbeatDemoUI            (Status と Log の表示専用)
+    ///   - HapbeatStatusOverlay            (Status と Log の表示専用)
     ///
     /// 生成物の配置 (ユーザー領域):
     ///   Assets/HapbeatSDK/Kits/basic-exam-kit/{install-clips, stream-clips}/
@@ -117,19 +117,19 @@ namespace Hapbeat.Samples.Editor
             logRect.offsetMin = new Vector2(20, 20);
             logRect.offsetMax = new Vector2(-20, -20);
 
-            var demoUI = router.AddComponent<HapbeatDemoUI>();
-            var demoUISO = new SerializedObject(demoUI);
-            demoUISO.FindProperty("_statusText").objectReferenceValue = status.GetComponent<Text>();
-            demoUISO.FindProperty("_logText").objectReferenceValue = log.GetComponent<Text>();
-            demoUISO.ApplyModifiedPropertiesWithoutUndo();
+            var overlay = router.AddComponent<HapbeatStatusOverlay>();
+            var overlaySO = new SerializedObject(overlay);
+            overlaySO.FindProperty("_statusText").objectReferenceValue = status.GetComponent<Text>();
+            overlaySO.FindProperty("_logText").objectReferenceValue = log.GetComponent<Text>();
+            overlaySO.ApplyModifiedPropertiesWithoutUndo();
 
             // Key dispatcher with persistent UnityEvent listeners.
             var dispatcher = router.AddComponent<HapbeatKeyDispatcher>();
-            BindKey(dispatcher, "Stream 1-shot", KeyCode.Space, trigOneshot, demoUI, "Stream 1-shot");
-            BindKey(dispatcher, "Stream loop",   KeyCode.L,     trigLoop,    demoUI, "Stream loop");
-            BindKey(dispatcher, "Command",       KeyCode.E,     trigCommand, demoUI, "Fire command");
-            BindStop(dispatcher, helper, demoUI);
-            BindPing(dispatcher, helper, demoUI);
+            BindKey(dispatcher, "Stream 1-shot", KeyCode.Space, trigOneshot, overlay, "Stream 1-shot");
+            BindKey(dispatcher, "Stream loop",   KeyCode.L,     trigLoop,    overlay, "Stream loop");
+            BindKey(dispatcher, "Command",       KeyCode.E,     trigCommand, overlay, "Fire command");
+            BindStop(dispatcher, helper, overlay);
+            BindPing(dispatcher, helper, overlay);
 
             EditorUtility.SetDirty(dispatcher);
 
@@ -187,7 +187,7 @@ namespace Hapbeat.Samples.Editor
         // ----------------------------------------------------------------
 
         private static void BindKey(HapbeatKeyDispatcher dispatcher, string label, KeyCode key,
-            HapbeatUnityEventTrigger trigger, HapbeatDemoUI ui, string logMessage)
+            HapbeatUnityEventTrigger trigger, HapbeatStatusOverlay ui, string logMessage)
         {
             var b = new HapbeatKeyDispatcher.Binding { label = label, key = key };
             UnityEventTools.AddPersistentListener(b.onPressed, trigger.Fire);
@@ -196,7 +196,7 @@ namespace Hapbeat.Samples.Editor
             dispatcher.Bindings.Add(b);
         }
 
-        private static void BindStop(HapbeatKeyDispatcher dispatcher, HapbeatActionHelper helper, HapbeatDemoUI ui)
+        private static void BindStop(HapbeatKeyDispatcher dispatcher, HapbeatActionHelper helper, HapbeatStatusOverlay ui)
         {
             var b = new HapbeatKeyDispatcher.Binding { label = "Stop all", key = KeyCode.S };
             UnityEventTools.AddPersistentListener(b.onPressed, helper.StopEverything);
@@ -205,7 +205,7 @@ namespace Hapbeat.Samples.Editor
             dispatcher.Bindings.Add(b);
         }
 
-        private static void BindPing(HapbeatKeyDispatcher dispatcher, HapbeatActionHelper helper, HapbeatDemoUI ui)
+        private static void BindPing(HapbeatKeyDispatcher dispatcher, HapbeatActionHelper helper, HapbeatStatusOverlay ui)
         {
             var b = new HapbeatKeyDispatcher.Binding { label = "Ping", key = KeyCode.P };
             UnityEventTools.AddPersistentListener(b.onPressed, helper.Ping);
@@ -371,20 +371,14 @@ namespace Hapbeat.Samples.Editor
 
         private static string FindSampleRoot()
         {
+            // BasicExampleSceneBuilder.cs lives in <SampleRoot>/Editor/, so the
+            // sample root is always the parent of the /Editor/ segment.
             var guids = AssetDatabase.FindAssets("t:Script BasicExampleSceneBuilder");
             foreach (var guid in guids)
             {
                 var p = AssetDatabase.GUIDToAssetPath(guid);
                 int editorIdx = p.LastIndexOf("/Editor/");
                 if (editorIdx >= 0) return p.Substring(0, editorIdx);
-            }
-            // Fallback: locate via HapbeatDemoUI (still lives in the sample).
-            guids = AssetDatabase.FindAssets("t:Script HapbeatDemoUI");
-            foreach (var guid in guids)
-            {
-                var p = AssetDatabase.GUIDToAssetPath(guid);
-                int slash = p.LastIndexOf("/");
-                if (slash >= 0) return p.Substring(0, slash);
             }
             return null;
         }
