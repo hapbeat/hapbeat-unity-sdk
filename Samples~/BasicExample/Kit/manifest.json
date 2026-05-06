@@ -10,17 +10,17 @@
     "firmware_version_min": "0.0.2"
   },
   "events": {
-    "demo.stream_sine": {
+    "basic-exam-kit.sine_100hz_1s": {
       "mode": "stream_clip",
       "clip": "stream-clips/sine_100hz_1s.wav",
       "description": "100Hz サイン波 1 秒 (host streaming)",
       "tags": ["demo", "tone", "stream"],
       "parameters": {
         "intensity": 1.0,
-        "loop": true
+        "loop": false
       }
     },
-    "demo.command_sine": {
+    "basic-exam-kit.sine_200hz_1s": {
       "mode": "command",
       "clip": "sine_200hz_1s.wav",
       "description": "200Hz サイン波 1 秒 (device-flashed)。Studio から Hapbeat に書き込んだ Kit の動作確認用。",

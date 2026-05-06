@@ -266,12 +266,16 @@ namespace Hapbeat.Samples.Editor
             string streamClipPath = $"{kitDir}/stream-clips/sine_100hz_1s.wav";
             var streamClip = AssetDatabase.LoadAssetAtPath<AudioClip>(streamClipPath);
 
+            // Event IDs follow the <kit-id>.<bare-filename> convention so
+            // they line up with the manifest.json keys verbatim. The loop
+            // variant uses a "_loop" suffix to keep its id distinct (same
+            // wav, but different EventMap entry / runtime behaviour).
             map.entries.Add(new HapbeatEventEntry
             {
                 mode = HapticMode.StreamClip,
                 displayName = kEntryStreamOneshot,
-                category = "demo",
-                eventName = "stream_sine",
+                category = kKitName,
+                eventName = "sine_100hz_1s",
                 streamClip = streamClip,
                 loop = false,
                 gain = 1.0f,
@@ -282,8 +286,8 @@ namespace Hapbeat.Samples.Editor
             {
                 mode = HapticMode.StreamClip,
                 displayName = kEntryStreamLoop,
-                category = "demo",
-                eventName = "stream_loop",
+                category = kKitName,
+                eventName = "sine_100hz_1s_loop",
                 streamClip = streamClip,
                 loop = true,
                 gain = 1.0f,
@@ -294,8 +298,8 @@ namespace Hapbeat.Samples.Editor
             {
                 mode = HapticMode.Command,
                 displayName = kEntryCommand,
-                category = "demo",
-                eventName = "command_sine",
+                category = kKitName,
+                eventName = "sine_200hz_1s",
                 streamClip = null,
                 loop = false,
                 gain = 1.0f,
