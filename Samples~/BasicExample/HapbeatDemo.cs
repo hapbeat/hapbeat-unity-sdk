@@ -121,14 +121,12 @@ public class HapbeatDemo : MonoBehaviour
         Debug.Log("[HapbeatDemo] Stop all");
         _ui?.Log("Stop all");
 
-        // Stop any active stream (loop or one-shot).
+        // Two independent transports must both be told to stop:
+        //  - StopStream() halts the host-side streaming coroutine (Stream mode).
+        //  - StopAll() asks the device to stop any locally-playing clip
+        //    (Command mode) on the configured group, regardless of event id.
         HapbeatManager.Instance.StopStream();
-
-        // Also send a Stop command for the Command-mode entry so the device
-        // can halt a long-tail clip if it's still playing.
-        var cmdEntry = ResolveEntry(_commandEntry);
-        if (cmdEntry != null && !string.IsNullOrEmpty(cmdEntry.eventId))
-            HapbeatManager.Instance.Stop(cmdEntry.eventId, cmdEntry.group);
+        HapbeatManager.Instance.StopAll(_group);
     }
 
     private HapbeatEventEntry ResolveEntry(string entryName)
