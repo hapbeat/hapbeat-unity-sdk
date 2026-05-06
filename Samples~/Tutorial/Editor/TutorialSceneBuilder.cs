@@ -12,16 +12,14 @@ using Hapbeat.Samples.Tutorial;
 namespace Hapbeat.Samples.Tutorial.EditorTools
 {
     /// <summary>
-    /// Scene generator + Strip utility for the Tutorial sample.
+    /// Scene generator for the Tutorial sample.
     ///
-    /// Menus:
+    /// Menu:
     ///   Hapbeat / Build Samples / 2. Tutorial (full scene)
-    ///     → Creates Tutorial.unity with 5 zones, [Hapbeat Event Router],
-    ///       Picker UI, hotkeys, and a primitive-based world. Run this first.
-    ///   Hapbeat / Tutorial / Strip Hapbeat (Tutorial.unity → Tutorial_Plain.unity)
-    ///     → Loads Tutorial.unity, removes all Hapbeat components / GameObject,
-    ///       saves the result as Tutorial_Plain.unity. Re-run after edits to
-    ///       refresh the Without version.
+    ///     → Creates two scenes: Tutorial.unity (触覚適用済み, "With" 版) and
+    ///       Tutorial_Plain.unity (触覚なし, "Without" 版). The Plain version
+    ///       is the starting point for the self-learning walkthrough; the
+    ///       With version is the reference completed form.
     /// </summary>
     public static class TutorialSceneBuilder
     {
@@ -32,12 +30,13 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
         // Build menu
         // ----------------------------------------------------------------
 
-        [MenuItem("Hapbeat/Build Samples/2. Tutorial (full scene)", false, 110)]
+        [MenuItem("Hapbeat/Build Samples/2. Tutorial (full scene)", false, 61)]
         public static void Build()
         {
             if (!EditorUtility.DisplayDialog(
                 "Tutorial シーン生成",
-                "新しい Tutorial.unity シーンと TutorialEventMap.asset を作成します。\n" +
+                "Tutorial.unity (With 版) と Tutorial_Plain.unity (Without 版) の\n" +
+                "2 つのシーン + TutorialEventMap.asset を作成します。\n" +
                 "現在のシーンの未保存の変更は失われます。",
                 "生成する", "キャンセル"))
                 return;
@@ -83,95 +82,51 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             // World-space HUD and Picker UI.
             BuildHud(router, player);
 
-            // Save scene.
+            // Save the With version first.
             string scenePath = $"{root}/Scenes/{SCENE_FILE}";
             Directory.CreateDirectory(Path.GetDirectoryName(scenePath));
             EditorSceneManager.SaveScene(scene, scenePath);
             AssetDatabase.SaveAssets();
 
-            string mapPath = $"{root}/EventMap/TutorialEventMap.asset";
-            EditorUtility.DisplayDialog("完了",
-                $"Tutorial シーンを生成しました:\n  {scenePath}\n\n" +
-                $"EventMap も生成しました:\n  {mapPath}\n  (12 entry が StreamClip モードで配線済み)\n\n" +
-                "次にメニュー Hapbeat / Tutorial / Strip Hapbeat を実行すると、\n" +
-                "Without 版 Tutorial_Plain.unity を生成できます。",
-                "OK");
-        }
-
-        // ----------------------------------------------------------------
-        // Strip menu
-        // ----------------------------------------------------------------
-
-        [MenuItem("Hapbeat/Tutorial/Strip Hapbeat (Tutorial.unity → Tutorial_Plain.unity)", false, 200)]
-        public static void StripHapbeat()
-        {
-            string root = FindTutorialRoot();
-            if (root == null)
-            {
-                EditorUtility.DisplayDialog("エラー", "Tutorial サンプルのフォルダが見つかりません。", "OK");
-                return;
-            }
-            string srcPath = $"{root}/Scenes/{SCENE_FILE}";
-            string dstPath = $"{root}/Scenes/{PLAIN_FILE}";
-            if (!File.Exists(srcPath))
-            {
-                EditorUtility.DisplayDialog("エラー",
-                    $"{srcPath} が見つかりません。先に Build メニューで Tutorial.unity を生成してください。",
-                    "OK");
-                return;
-            }
-
-            if (!EditorUtility.DisplayDialog(
-                "Strip Hapbeat",
-                $"Tutorial.unity から Hapbeat 関連コンポーネントを除去し、\n{PLAIN_FILE} として保存します。\n\n" +
-                "既存の Tutorial_Plain.unity は上書きされます。",
-                "実行する", "キャンセル"))
-                return;
-
-            var scene = EditorSceneManager.OpenScene(srcPath, OpenSceneMode.Single);
-
-            int removedComponents = 0;
-            int removedGameObjects = 0;
-
-            // Remove HapbeatTriggerBase / HapbeatParameterBinding / TutorialBridge / HapbeatBridge components.
-            // We collect first then destroy to avoid mutating during iteration.
-            var triggers = Object.FindObjectsByType<HapbeatTriggerBase>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            foreach (var t in triggers)
+            // Generate the Without (Plain) version by stripping all Hapbeat
+            // components & router GameObject from the in-memory scene, then
+            // saving as Tutorial_Plain.unity. The walkthrough starts from
+            // this Plain copy and rebuilds toward the With version.
+            int strippedComponents = 0;
+            int strippedGameObjects = 0;
+            foreach (var t in Object.FindObjectsByType<HapbeatTriggerBase>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
                 Object.DestroyImmediate(t);
-                removedComponents++;
+                strippedComponents++;
             }
-            var bindings = Object.FindObjectsByType<HapbeatParameterBinding>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            foreach (var b in bindings)
+            foreach (var b in Object.FindObjectsByType<HapbeatParameterBinding>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
                 Object.DestroyImmediate(b);
-                removedComponents++;
+                strippedComponents++;
             }
-            var bridges = Object.FindObjectsByType<HapbeatBridge>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            foreach (var br in bridges)
+            foreach (var br in Object.FindObjectsByType<HapbeatBridge>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
                 Object.DestroyImmediate(br);
-                removedComponents++;
+                strippedComponents++;
             }
-
-            // Remove [Hapbeat Event Router] GameObject(s) (Manager + bridge holder).
-            var managers = Object.FindObjectsByType<HapbeatManager>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            foreach (var m in managers)
+            foreach (var m in Object.FindObjectsByType<HapbeatManager>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
                 Object.DestroyImmediate(m.gameObject);
-                removedGameObjects++;
+                strippedGameObjects++;
             }
+            string plainPath = $"{root}/Scenes/{PLAIN_FILE}";
+            EditorSceneManager.SaveScene(scene, plainPath);
 
-            // Save as Plain.
-            EditorSceneManager.SaveScene(scene, dstPath);
+            // Reload the With version so the user lands on the master scene
+            // (not the Plain copy) after the build finishes.
+            EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
 
-            // Reload the master scene so the user doesn't accidentally edit the Plain copy.
-            EditorSceneManager.OpenScene(srcPath, OpenSceneMode.Single);
-
-            EditorUtility.DisplayDialog("Strip 完了",
-                $"Tutorial_Plain.unity を生成しました。\n\n" +
-                $"除去コンポーネント: {removedComponents}\n" +
-                $"除去 GameObject: {removedGameObjects}",
+            string mapPath = $"{root}/EventMap/TutorialEventMap.asset";
+            EditorUtility.DisplayDialog("完了",
+                $"Tutorial シーンを生成しました:\n" +
+                $"  {scenePath} (With 版・触覚適用済み)\n" +
+                $"  {plainPath} (Without 版・触覚なし、walkthrough の起点)\n\n" +
+                $"EventMap:\n  {mapPath} (12 entry が StreamClip モードで配線済み)",
                 "OK");
         }
 

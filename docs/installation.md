@@ -100,3 +100,4 @@ UI に `Pong: RTT=...ms` が表示されれば SDK ↔ デバイスの通信は�
 - [Trigger コンポーネント](/docs/unity-sdk/triggers/) — Animator / Collision / Sequence 等
 - [EventMap ウィンドウ](/docs/unity-sdk/event-map/) — Event ID と波形の対応を GUI 管理
 - [Streaming buffer](/docs/unity-sdk/streaming/) — StreamClip 用バッファの調整
+- [AI 支援ワークフロー](/docs/unity-sdk/ai-assisted-workflow/) — Claude Code 等で既存シーンに触覚を後付けする実践フロー

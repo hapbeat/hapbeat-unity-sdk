@@ -29,25 +29,20 @@ Unity Editor のメニューから:
 Hapbeat → Build Samples → 2. Tutorial (full scene)
 ```
 
-を実行すると `Scenes/Tutorial.unity` が生成されます。これが「触覚適用済み (With) 版」です。
+を実行すると、`Scenes/` 配下に 2 つのシーンが同時に生成されます:
 
-### 2. Without 版を生成
+- `Tutorial.unity` — 「触覚適用済み (With) 版」。すぐ Play で動作確認できる完成形
+- `Tutorial_Plain.unity` — 「触覚なし (Without) 版」。Hapbeat コンポーネントを除いてあり、ゲームロジックは動くが触覚は鳴らない
 
-`Tutorial.unity` を開いた状態で:
+`Tutorial_Plain.unity` を起点に手順書 (`docs/tutorial/walkthrough.md`) の通りに Hapbeat を組み立てると `Tutorial.unity` と同じ動作になります — 自分で実装を学ぶ用途に向いています。
 
-```
-Hapbeat → Tutorial → Strip Hapbeat (Tutorial.unity → Tutorial_Plain.unity)
-```
-
-を実行すると、Hapbeat 関連コンポーネントを除去した `Tutorial_Plain.unity` が生成されます。これが「触覚なし版」で、ゲームロジックは動きますが触覚は鳴りません。手順書 (`docs/tutorial/walkthrough.md`) の通りに Plain → With へ自分で組み立てるとチュートリアルになります。
-
-### 3. EventMap は自動生成済み
+### 2. EventMap は自動生成済み
 
 Build メニュー実行時に **`EventMap/TutorialEventMap.asset`** が同時に生成され、12 entry が StreamClip モードで `Audio/` 内の WAV と紐付け済み・`[Hapbeat Event Router] / TutorialBridge` にもリンク済みです。手動操作は不要。
 
 `Project` ビューで `Assets/Samples/Hapbeat SDK/<version>/Tutorial/EventMap/TutorialEventMap.asset` を開けば中身を確認・編集できます。
 
-### 4. Play で動作確認
+### 3. Play で動作確認
 
 Hapbeat デバイスを Studio または Helper でオンラインにし、Play ボタンを押します。
 WASD で移動、マウスで視点、各ゾーンで操作を試してください。

@@ -294,7 +294,7 @@ namespace Hapbeat.Editor
 
         // ── Menu for manual control (diagnostics) ────────────────────────────
 
-        [MenuItem("Hapbeat/Debug/Close Edit-mode Transport", false, 510)]
+        [MenuItem("Hapbeat/Debug/Close Edit-mode Transport", false, 300)]
         private static void CloseMenu() => Dispose();
     }
 }

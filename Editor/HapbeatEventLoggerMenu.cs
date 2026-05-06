@@ -21,7 +21,7 @@ namespace Hapbeat.Editor
         private const string kAttachMenu = "Hapbeat/Debug/Attach Event Logger to Selected";
         private const string kRemoveMenu = "Hapbeat/Debug/Remove Event Logger Wiring from Selected";
 
-        [MenuItem(kAttachMenu, false, 510)]
+        [MenuItem(kAttachMenu, false, 200)]
         private static void AttachAndWire()
         {
             var go = Selection.activeGameObject;
@@ -83,7 +83,7 @@ namespace Hapbeat.Editor
                 $"Enter Play mode to see the firing order in the Console.", "OK");
         }
 
-        [MenuItem(kRemoveMenu, false, 511)]
+        [MenuItem(kRemoveMenu, false, 201)]
         private static void RemoveWiring()
         {
             var go = Selection.activeGameObject;

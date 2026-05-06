@@ -89,15 +89,14 @@ namespace Hapbeat.Editor
             public List<string> wiredEvents; // e.g. "XRGrabInteractable.selectEntered"
         }
 
-        [MenuItem("Hapbeat/Event Map")]
-        [MenuItem("Window/Hapbeat/Event Map")]
+        [MenuItem("Hapbeat/Event Map", false, 2)]
         public static void ShowWindow()
         {
             var window = GetWindow<HapbeatEventMapWindow>("Hapbeat Event Map");
             window.minSize = new Vector2(500, 300);
         }
 
-        [MenuItem("Hapbeat/Create Event Router", false, 50)]
+        [MenuItem("Hapbeat/Create Event Router", false, 20)]
         [MenuItem("GameObject/Hapbeat/Event Router", false, 10)]
         public static void CreateEventRouter()
         {
@@ -2903,25 +2902,6 @@ namespace Hapbeat.Editor
             }
         }
 
-        // Toggle with Hapbeat > Debug > Log Drag&Drop menu (off by default).
-        private const string kDragDebugPrefKey = "Hapbeat.EventMap.DragDropDebug";
-        private static bool DragDebugEnabled => EditorPrefs.GetBool(kDragDebugPrefKey, false);
-
-        [MenuItem("Hapbeat/Debug/Log Drag&Drop Events", false, 500)]
-        private static void ToggleDragDebug()
-        {
-            bool v = !DragDebugEnabled;
-            EditorPrefs.SetBool(kDragDebugPrefKey, v);
-            Debug.Log($"[Hapbeat] Drag&Drop event logging: {(v ? "ON" : "OFF")}");
-        }
-
-        [MenuItem("Hapbeat/Debug/Log Drag&Drop Events", true)]
-        private static bool ToggleDragDebugValidate()
-        {
-            Menu.SetChecked("Hapbeat/Debug/Log Drag&Drop Events", DragDebugEnabled);
-            return true;
-        }
-
         /// <summary>
         /// Accepts a drag&drop of a GameObject into the sourceTransformPath field.
         /// <paramref name="zone"/> identifies which hit-test rect matched (for diagnostics).
@@ -2938,10 +2918,6 @@ namespace Hapbeat.Editor
             if (e.type == EventType.Used) return;
 
             bool inside = dropRect.Contains(e.mousePosition);
-
-            if (DragDebugEnabled)
-                Debug.Log($"[DragDrop:{zone}] event={e.type} pos={e.mousePosition} rect={dropRect} inside={inside} refs={DragAndDrop.objectReferences.Length}");
-
             if (!inside) return;
 
             GameObject droppedGo = null;
@@ -2960,8 +2936,6 @@ namespace Hapbeat.Editor
                 pathProp.stringValue = ComputeRelativePath(droppedGo);
                 pathProp.serializedObject.ApplyModifiedProperties();
                 GUI.FocusControl(null);
-                if (DragDebugEnabled)
-                    Debug.Log($"[DragDrop:{zone}] DROPPED '{droppedGo.name}' → '{pathProp.stringValue}'");
             }
             e.Use();
         }

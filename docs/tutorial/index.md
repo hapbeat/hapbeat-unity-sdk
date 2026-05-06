@@ -43,10 +43,9 @@ Z1〜Z3 は EventMap entry に target を固定しているため Picker 操作�
 ## 始め方
 
 1. Unity Editor で **Window → Package Manager → Hapbeat SDK → Samples → Tutorial → Import**
-2. **Hapbeat → Build Samples → 2. Tutorial (full scene)** を実行 → `Tutorial.unity` 生成
-3. **Hapbeat → Tutorial → Strip Hapbeat** を実行 → `Tutorial_Plain.unity` 生成
-4. EventMap を作成して `[Hapbeat Event Router]` の TutorialBridge にリンク (詳細は [walkthrough](/docs/unity-sdk/tutorial/walkthrough/))
-5. Hapbeat Studio または Helper でデバイスをオンラインにして Play
+2. **Hapbeat → Build Samples → 2. Tutorial (full scene)** を実行 → `Tutorial.unity` (With 版) と `Tutorial_Plain.unity` (Without 版) が同時に生成される
+3. EventMap を作成して `[Hapbeat Event Router]` の TutorialBridge にリンク (詳細は [walkthrough](/docs/unity-sdk/tutorial/walkthrough/))
+4. Hapbeat Studio または Helper でデバイスをオンラインにして Play
 
 ## 関連ドキュメント
 

@@ -20,7 +20,7 @@ namespace Hapbeat.Samples.Editor
     ///   - HapbeatManager           (singleton)
     ///   - HapbeatActionHelper      (Stop / StopStream / Ping を UnityEvent から呼ぶための wrapper)
     ///   - HapbeatUnityEventTrigger × 3 (oneshot stream / loop stream / command の各 entry に bind)
-    ///   - HapbeatKeyDispatcher     (Space / L / E / S / P を上記 Trigger / Helper に UnityEvent wiring)
+    ///   - HapbeatKeyDispatcher     (Space / R / F / S / C を上記 Trigger / Helper に UnityEvent wiring)
     ///   - HapbeatStatusOverlay            (Status と Log の表示専用)
     ///
     /// 生成物の配置 (ユーザー領域):
@@ -41,7 +41,7 @@ namespace Hapbeat.Samples.Editor
         private static string kScenesDir => HapbeatSDKFolderCreator.kScenesDir;
         private static string kEventMapsDir => HapbeatSDKFolderCreator.kEventMapsDir;
 
-        [MenuItem("Hapbeat/Build Samples/1. Basic Example", false, 100)]
+        [MenuItem("Hapbeat/Build Samples/1. Basic Example", false, 60)]
         public static void Build()
         {
             if (!EditorUtility.DisplayDialog(
@@ -106,9 +106,18 @@ namespace Hapbeat.Samples.Editor
                 TextAnchor.MiddleCenter, 28, new Vector2(0.5f, 1f), new Vector2(0, -40));
             var status = CreateText(canvas.transform, "Status", "",
                 TextAnchor.MiddleCenter, 20, new Vector2(0.5f, 1f), new Vector2(0, -80));
-            CreateText(canvas.transform, "Instructions",
-                "Space: Stream 1-shot (100Hz)   L: Stream loop (100Hz)   E: Command (200Hz)   S: Stop all   P: Ping",
-                TextAnchor.MiddleCenter, 16, new Vector2(0.5f, 1f), new Vector2(0, -120));
+            CreateInstructions(canvas.transform,
+                new[] { "Space", "R", "F", "S", "C" },
+                new[]
+                {
+                    "CLIP (Stream) 1-shot (100Hz)",
+                    "CLIP (Stream) loop (100Hz)",
+                    "FIRE (Command) (200Hz)",
+                    "Stop all",
+                    "Ping",
+                },
+                fontSize: 16, yOffset: -120,
+                keyColor: new Color(0.43f, 0.78f, 1.0f)); // soft cyan
             var log = CreateText(canvas.transform, "Log", "",
                 TextAnchor.MiddleCenter, 16, new Vector2(0.5f, 0.5f), new Vector2(0, 0));
             var logRect = log.GetComponent<RectTransform>();
@@ -126,8 +135,8 @@ namespace Hapbeat.Samples.Editor
             // Key dispatcher with persistent UnityEvent listeners.
             var dispatcher = router.AddComponent<HapbeatKeyDispatcher>();
             BindKey(dispatcher, "Stream 1-shot", KeyCode.Space, trigOneshot, overlay, "Stream 1-shot");
-            BindKey(dispatcher, "Stream loop",   KeyCode.L,     trigLoop,    overlay, "Stream loop");
-            BindKey(dispatcher, "Command",       KeyCode.E,     trigCommand, overlay, "Fire command");
+            BindKey(dispatcher, "Stream loop",   KeyCode.R,     trigLoop,    overlay, "Stream loop");
+            BindKey(dispatcher, "Command",       KeyCode.F,     trigCommand, overlay, "Fire command");
             BindStop(dispatcher, helper, overlay);
             BindPing(dispatcher, helper, overlay);
 
@@ -143,7 +152,7 @@ namespace Hapbeat.Samples.Editor
                 $"  Kit       : {kitDir}/\n" +
                 $"  EventMap  : {mapPath}\n" +
                 $"  Scene     : {scenePath}\n\n" +
-                "Play で Space / L / E / S / P を試してみてください。",
+                "Play で Space / R / F / S / C を試してみてください。",
                 "OK");
         }
 
@@ -207,7 +216,7 @@ namespace Hapbeat.Samples.Editor
 
         private static void BindPing(HapbeatKeyDispatcher dispatcher, HapbeatActionHelper helper, HapbeatStatusOverlay ui)
         {
-            var b = new HapbeatKeyDispatcher.Binding { label = "Ping", key = KeyCode.P };
+            var b = new HapbeatKeyDispatcher.Binding { label = "Ping", key = KeyCode.C };
             UnityEventTools.AddPersistentListener(b.onPressed, helper.Ping);
             if (ui != null)
                 UnityEventTools.AddStringPersistentListener(b.onPressed, ui.Log, "Ping sent");
@@ -339,6 +348,55 @@ namespace Hapbeat.Samples.Editor
             }
 
             return canvas;
+        }
+
+        // Two-column instructions block: keys on the left (right-aligned, colored),
+        // descriptions on the right (left-aligned, white). The two columns meet at
+        // canvas-center horizontally so the colons line up regardless of key length.
+        private static void CreateInstructions(Transform parent, string[] keys, string[] descriptions,
+            int fontSize, float yOffset, Color keyColor)
+        {
+            var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+            // Keys column (right-aligned, right edge at canvas horizontal center).
+            var keysGo = new GameObject("InstructionsKeys");
+            keysGo.transform.SetParent(parent, false);
+            var keysRect = keysGo.AddComponent<RectTransform>();
+            keysRect.anchorMin = new Vector2(0.5f, 1f);
+            keysRect.anchorMax = new Vector2(0.5f, 1f);
+            keysRect.pivot = new Vector2(1f, 1f);
+            keysRect.sizeDelta = new Vector2(240, 200);
+            keysRect.anchoredPosition = new Vector2(0, yOffset);
+            var keysText = keysGo.AddComponent<Text>();
+            keysText.text = string.Join("\n", keys);
+            keysText.alignment = TextAnchor.UpperRight;
+            keysText.fontSize = fontSize;
+            keysText.color = keyColor;
+            keysText.font = font;
+            keysText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            keysText.verticalOverflow = VerticalWrapMode.Overflow;
+
+            // Descriptions column (left-aligned, left edge at canvas horizontal center,
+            // each line prefixed with " : " so the colons share a single column).
+            var descGo = new GameObject("InstructionsDesc");
+            descGo.transform.SetParent(parent, false);
+            var descRect = descGo.AddComponent<RectTransform>();
+            descRect.anchorMin = new Vector2(0.5f, 1f);
+            descRect.anchorMax = new Vector2(0.5f, 1f);
+            descRect.pivot = new Vector2(0f, 1f);
+            descRect.sizeDelta = new Vector2(480, 200);
+            descRect.anchoredPosition = new Vector2(0, yOffset);
+            var descText = descGo.AddComponent<Text>();
+            var descLines = new string[descriptions.Length];
+            for (int i = 0; i < descriptions.Length; i++)
+                descLines[i] = " : " + descriptions[i];
+            descText.text = string.Join("\n", descLines);
+            descText.alignment = TextAnchor.UpperLeft;
+            descText.fontSize = fontSize;
+            descText.color = Color.white;
+            descText.font = font;
+            descText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            descText.verticalOverflow = VerticalWrapMode.Overflow;
         }
 
         private static GameObject CreateText(Transform parent, string name, string text,

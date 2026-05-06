@@ -242,8 +242,7 @@ namespace Hapbeat
                             Debug.LogWarning(
                                 $"[Hapbeat] Command entry '{label}' has no cached manifest " +
                                 $"intensity; firing at plain gain={entry.gain:F2} " +
-                                "(intensity factor skipped). Open the EventMap window or run " +
-                                "'Hapbeat > Migrate Legacy Entry References' to refresh the cache, " +
+                                "(intensity factor skipped). Open the EventMap window to refresh the cache, " +
                                 "and confirm the Kit is deployed on this device.", this);
                             _warnedMissingIntensity = true;
                         }
@@ -276,8 +275,7 @@ namespace Hapbeat
                             Debug.LogWarning(
                                 $"[Hapbeat] StreamClip entry '{label}' has no cached manifest " +
                                 $"intensity; firing at plain gain={entry.gain:F2} " +
-                                "(intensity factor skipped). Open the EventMap window or run " +
-                                "'Hapbeat > Migrate Legacy Entry References' to refresh the cache, " +
+                                "(intensity factor skipped). Open the EventMap window to refresh the cache, " +
                                 "and confirm the clip is in a deployed Kit.", this);
                             _warnedMissingIntensity = true;
                         }

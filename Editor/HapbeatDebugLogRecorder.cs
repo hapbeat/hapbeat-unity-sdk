@@ -44,8 +44,8 @@ namespace Hapbeat.Editor
         // not race on disposal.
         private static readonly object _writerLock = new object();
 
-        private const string kMenuStart  = "Hapbeat/Start Log Recording";
-        private const string kMenuStop   = "Hapbeat/Stop Log Recording";
+        private const string kMenuStart  = "Hapbeat/Debug/Logs/Start Recording";
+        private const string kMenuStop   = "Hapbeat/Debug/Logs/Stop Recording";
         private const string kMenuReveal = "Hapbeat/Debug/Logs/Reveal Current File";
         private const string kMenuFolder = "Hapbeat/Debug/Logs/Open Logs Folder";
         private const string kMenuDump   = "Hapbeat/Debug/Logs/Dump Last Recording to Console";
@@ -70,7 +70,7 @@ namespace Hapbeat.Editor
 
         // ----------------- menu commands -----------------
 
-        [MenuItem(kMenuStart, false, 520)]
+        [MenuItem(kMenuStart, false, 220)]
         private static void StartRecording()
         {
             lock (_writerLock)
@@ -105,7 +105,7 @@ namespace Hapbeat.Editor
         [MenuItem(kMenuStart, true)]
         private static bool StartRecordingValidate() => _writer == null;
 
-        [MenuItem(kMenuStop, false, 521)]
+        [MenuItem(kMenuStop, false, 221)]
         private static void StopRecording()
         {
             // Detach the handler first. Removing a delegate while another thread is
@@ -138,7 +138,7 @@ namespace Hapbeat.Editor
         [MenuItem(kMenuStop, true)]
         private static bool StopRecordingValidate() => _writer != null;
 
-        [MenuItem(kMenuReveal, false, 522)]
+        [MenuItem(kMenuReveal, false, 222)]
         private static void RevealCurrent()
         {
             if (string.IsNullOrEmpty(_activePath) || !File.Exists(_activePath))
@@ -152,7 +152,7 @@ namespace Hapbeat.Editor
         [MenuItem(kMenuReveal, true)]
         private static bool RevealCurrentValidate() => _writer != null && File.Exists(_activePath);
 
-        [MenuItem(kMenuFolder, false, 523)]
+        [MenuItem(kMenuFolder, false, 223)]
         private static void OpenLogsFolder()
         {
             string dir = GetLogsDirectory();
@@ -160,7 +160,7 @@ namespace Hapbeat.Editor
             EditorUtility.RevealInFinder(dir);
         }
 
-        [MenuItem(kMenuDump, false, 524)]
+        [MenuItem(kMenuDump, false, 224)]
         private static void DumpLastToConsole()
         {
             string dir = GetLogsDirectory();

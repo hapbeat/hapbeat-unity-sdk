@@ -8,8 +8,7 @@ description: 触覚なし版 (Tutorial_Plain.unity) を起点に、ゾーンご�
 ## 前提
 
 - Tutorial サンプルを Package Manager から Import 済み
-- `Hapbeat → Build Samples → 2. Tutorial (full scene)` で `Tutorial.unity` を 1 回生成済み
-- `Hapbeat → Tutorial → Strip Hapbeat` で `Tutorial_Plain.unity` を生成済み
+- `Hapbeat → Build Samples → 2. Tutorial (full scene)` を 1 回実行 (`Tutorial.unity` と `Tutorial_Plain.unity` が同時生成される)
 - Hapbeat デバイスがオンライン (Studio または Helper で確認)
 
 ## 0. EventMap は Build メニューで自動生成済み
@@ -48,7 +47,7 @@ target が空のものは broadcast (= Picker UI に従う)。Z1〜Z3 は EventM
 
 ## 1. シーンを開く
 
-`Tutorial_Plain.unity` を開きます。`[Hapbeat Event Router]` GameObject は **存在しません** (Strip 済み)。
+`Tutorial_Plain.unity` を開きます。`[Hapbeat Event Router]` GameObject は **存在しません** (Hapbeat コンポーネントが除かれた Without 版なので)。
 
 各ゾーン GameObject (Z1_Bowling 等) と Player は存在しますが、Hapbeat 系コンポーネントが一切貼られていない状態です。Play すると操作はできますが触覚は鳴りません。
 
