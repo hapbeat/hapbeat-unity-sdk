@@ -87,6 +87,16 @@ namespace Hapbeat.Editor
                 new GUIContent("グループ ID", "送信先グループ。0 = 全デバイス、1-254 = 特定グループ（マルチプレイヤー時）"));
 
             EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("アプリ情報", EditorStyles.boldLabel);
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("appName"),
+                new GUIContent("アプリ名",
+                    "Hapbeat デバイスのディスプレイに表示されるクライアントアプリ名。\n" +
+                    "8 文字程度を推奨 (デフォルトの app_name 要素は 8x1)。\n" +
+                    "空欄の場合は Application.productName が自動使用される。"));
+
+            EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("検出設定", EditorStyles.boldLabel);
 
             EditorGUILayout.PropertyField(

@@ -51,6 +51,7 @@ Hapbeat/
 |---|---|
 | Port | UDP ポート (デフォルト 7700) |
 | Group | 送信先デバイスのグループ ID (0 = 全デバイス) |
+| アプリ名 | Hapbeat デバイスのディスプレイに表示するクライアントアプリ名 (8 文字推奨)。空欄なら `Application.productName` が自動使用される |
 | Use Bridge | ESP-NOW 経由 (上位構成) を使う場合のみ ON |
 | Ping Interval | キープアライブ送信間隔 (秒) |
 
