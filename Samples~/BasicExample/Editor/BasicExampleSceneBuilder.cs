@@ -24,7 +24,9 @@ namespace Hapbeat.Samples.Editor
     /// </summary>
     public static class BasicExampleSceneBuilder
     {
-        private const string kKitName = "BasicExampleKit";
+        // Hyphen-cased to match the kit_id convention (manifest.json) and the
+        // device-side directory layout (/kits/<kit-id>/).
+        private const string kKitName = "basic-exam-kit";
         private const string kEventMapName = "BasicExampleEventMap";
         private const string kSceneName = "BasicExample";
 
@@ -69,12 +71,21 @@ namespace Hapbeat.Samples.Editor
             // 4. Scene generation.
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
+            // Black background for better text contrast.
+            var mainCam = Camera.main;
+            if (mainCam != null)
+            {
+                mainCam.clearFlags = CameraClearFlags.SolidColor;
+                mainCam.backgroundColor = Color.black;
+            }
+
             var router = CreateRouter();
             var demo = router.AddComponent<HapbeatDemo>();
             var demoUI = router.AddComponent<HapbeatDemoUI>();
 
             // Wire AudioClip from the kit (so the user sees the kit-routed flow).
-            var clipPath = $"{kitDir}/sine_100hz_1s.wav";
+            // The clip lives under stream-clips/ per kit-format spec.
+            var clipPath = $"{kitDir}/stream-clips/sine_100hz_1s.wav";
             var clip = AssetDatabase.LoadAssetAtPath<AudioClip>(clipPath);
             if (clip != null)
             {
@@ -96,10 +107,10 @@ namespace Hapbeat.Samples.Editor
             var status = CreateText(canvas.transform, "Status", "",
                 TextAnchor.MiddleCenter, 20, new Vector2(0.5f, 1f), new Vector2(0, -80));
             CreateText(canvas.transform, "Instructions",
-                "Space: Stream AudioClip  /  E: Event Command (demo.sine)  /  S: Stop  /  P: Ping",
+                "Space: Stream (100Hz, loop)   E: Command (demo.command_sine, 200Hz)   S: Stop   P: Ping",
                 TextAnchor.MiddleCenter, 16, new Vector2(0.5f, 1f), new Vector2(0, -120));
             var log = CreateText(canvas.transform, "Log", "",
-                TextAnchor.UpperLeft, 14, new Vector2(0f, 0f), new Vector2(20, 20));
+                TextAnchor.MiddleCenter, 16, new Vector2(0.5f, 0.5f), new Vector2(0, 0));
             var logRect = log.GetComponent<RectTransform>();
             logRect.anchorMin = new Vector2(0, 0);
             logRect.anchorMax = new Vector2(1, 0.5f);
@@ -111,14 +122,28 @@ namespace Hapbeat.Samples.Editor
             demoUISO.FindProperty("_logText").objectReferenceValue = log.GetComponent<Text>();
             demoUISO.ApplyModifiedPropertiesWithoutUndo();
 
-            // Use the EventMap's first entry as the default Event ID for the E key.
-            if (eventMap != null && eventMap.entries.Count > 0)
+            // Wire HapbeatDemo._ui so Stop/Ping key presses show up in the on-screen log.
+            var demoUiLink = new SerializedObject(demo);
+            demoUiLink.FindProperty("_ui").objectReferenceValue = demoUI;
+            demoUiLink.ApplyModifiedPropertiesWithoutUndo();
+
+            // Wire E key to the Command-mode entry (200Hz). The Stream entry
+            // (100Hz) is reachable via Space key through the AudioClip path.
+            if (eventMap != null)
             {
-                var firstEntry = eventMap.entries[0];
-                if (!string.IsNullOrEmpty(firstEntry.eventId))
+                HapbeatEventEntry commandEntry = null;
+                foreach (var e in eventMap.entries)
+                {
+                    if (e.mode == HapticMode.Command && !string.IsNullOrEmpty(e.eventId))
+                    {
+                        commandEntry = e;
+                        break;
+                    }
+                }
+                if (commandEntry != null)
                 {
                     var demoSO = new SerializedObject(demo);
-                    demoSO.FindProperty("_eventId").stringValue = firstEntry.eventId;
+                    demoSO.FindProperty("_eventId").stringValue = commandEntry.eventId;
                     demoSO.ApplyModifiedPropertiesWithoutUndo();
                 }
             }
@@ -150,6 +175,12 @@ namespace Hapbeat.Samples.Editor
                 Debug.LogWarning($"[Hapbeat] Kit source not found: {srcAssetPath}");
                 return;
             }
+            CopyDirectoryRecursive(srcAbs, dstAbs);
+            AssetDatabase.Refresh();
+        }
+
+        private static void CopyDirectoryRecursive(string srcAbs, string dstAbs)
+        {
             Directory.CreateDirectory(dstAbs);
             foreach (var file in Directory.GetFiles(srcAbs))
             {
@@ -159,7 +190,11 @@ namespace Hapbeat.Samples.Editor
                 if (!File.Exists(dst))
                     File.Copy(file, dst);
             }
-            AssetDatabase.Refresh();
+            foreach (var dir in Directory.GetDirectories(srcAbs))
+            {
+                string name = Path.GetFileName(dir);
+                CopyDirectoryRecursive(dir, Path.Combine(dstAbs, name));
+            }
         }
 
         // ----------------------------------------------------------------
@@ -176,16 +211,35 @@ namespace Hapbeat.Samples.Editor
             }
             map.entries.Clear();
 
-            string clipAssetPath = $"{kitDir}/sine_100hz_1s.wav";
-            var clip = AssetDatabase.LoadAssetAtPath<AudioClip>(clipAssetPath);
-
+            // Stream entry — wav delivered from host via UDP. Works without a
+            // device-side flashed kit.
+            string streamClipPath = $"{kitDir}/stream-clips/sine_100hz_1s.wav";
+            var streamClip = AssetDatabase.LoadAssetAtPath<AudioClip>(streamClipPath);
             map.entries.Add(new HapbeatEventEntry
             {
                 mode = HapticMode.StreamClip,
-                displayName = "demo_sine",
+                displayName = "demo_stream_sine_100hz",
                 category = "demo",
-                eventName = "sine",
-                streamClip = clip,
+                eventName = "stream_sine",
+                streamClip = streamClip,
+                loop = true,   // loop so Stop has an audible effect
+                gain = 1.0f,
+                target = "",
+                group = -1,
+            });
+
+            // Command entry — uses a different frequency (200Hz) so the user
+            // can audibly tell whether the device is playing the flashed kit
+            // (Command path) or the host stream (StreamClip path) when both
+            // succeed. Requires the user to deploy the kit to the device via
+            // Hapbeat Studio (install-clips/sine_200hz_1s.wav).
+            map.entries.Add(new HapbeatEventEntry
+            {
+                mode = HapticMode.Command,
+                displayName = "demo_command_sine_200hz",
+                category = "demo",
+                eventName = "command_sine",
+                streamClip = null,
                 loop = false,
                 gain = 1.0f,
                 target = "",

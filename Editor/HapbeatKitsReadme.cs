@@ -173,10 +173,6 @@ namespace Hapbeat.Editor
                     Tr("SDK streams a Kit WAV over UDP as PCM16",
                        "SDK が Kit の WAV を UDP でストリーム（PCM16）"),
                     "stream-clips/");
-                DrawModeRow("LIVE", "(stream_source)",
-                    Tr("SDK captures an AudioSource and streams it live",
-                       "SDK が AudioSource をリアルタイムでキャプチャしてストリーム"),
-                    Tr("stream-clips/ (optional)", "stream-clips/（任意）"));
             }
 
             // ── Strength model ───────────────────────────────────────────────

@@ -15,6 +15,7 @@ namespace Hapbeat.Samples
 
         private string _logBuffer = "";
         private const int MaxLogLines = 8;
+        private bool _wasStreaming;
 
         private void Start()
         {
@@ -28,14 +29,29 @@ namespace Hapbeat.Samples
 
         private void Update()
         {
-            if (_statusText != null && HapbeatManager.Instance != null)
+            var mgr = HapbeatManager.Instance;
+            if (mgr == null) return;
+
+            if (_statusText != null)
             {
-                string streaming = HapbeatManager.Instance.IsStreaming ? " [STREAMING]" : "";
-                _statusText.text = HapbeatManager.Instance.IsConnected
-                    ? $"Status: Connected (group={HapbeatManager.Instance.DefaultGroup}){streaming}"
+                string streaming = mgr.IsStreaming ? " [STREAMING]" : "";
+                _statusText.text = mgr.IsConnected
+                    ? $"Status: Connected (group={mgr.DefaultGroup}){streaming}"
                     : "Status: Disconnected";
             }
+
+            // Surface stream start/stop transitions in the log so the user can
+            // visually confirm Space (start) and S (stop) had effect.
+            bool nowStreaming = mgr.IsStreaming;
+            if (nowStreaming != _wasStreaming)
+            {
+                AppendLog(nowStreaming ? "Stream started" : "Stream stopped");
+                _wasStreaming = nowStreaming;
+            }
         }
+
+        /// <summary>Append a one-line entry to the on-screen log.</summary>
+        public void Log(string message) => AppendLog(message);
 
         private void AppendLog(string message)
         {

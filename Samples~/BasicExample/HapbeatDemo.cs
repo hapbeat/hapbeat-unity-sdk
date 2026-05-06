@@ -38,6 +38,9 @@ public class HapbeatDemo : MonoBehaviour
     [SerializeField]
     private int _group = -1;
 
+    [SerializeField, Tooltip("On-screen log (optional). When wired, S / E / P actions are surfaced visually.")]
+    private Hapbeat.Samples.HapbeatDemoUI _ui;
+
     private float _lastGain;
     private bool _isStreamingFromThisDemo;
 
@@ -78,7 +81,7 @@ public class HapbeatDemo : MonoBehaviour
             if (_audioClip != null && HapbeatManager.Instance.IsStreaming)
             {
                 Debug.Log($"[HapbeatDemo] Gain changed → restart stream (gain={_gain:F2})");
-                HapbeatManager.Instance.StreamAudioClip(_audioClip, _gain);
+                HapbeatManager.Instance.StreamAudioClip(_audioClip, _gain, target: null, loop: true);
             }
         }
 
@@ -86,13 +89,13 @@ public class HapbeatDemo : MonoBehaviour
         if (_isStreamingFromThisDemo && !HapbeatManager.Instance.IsStreaming)
             _isStreamingFromThisDemo = false;
 
-        // Space: ストリーミング再生
+        // Space: ストリーミング再生 (loop で開始 → S で止める動作確認用)
         if (WasPressedThisFrame(KeySpace))
         {
             if (_audioClip != null)
             {
-                Debug.Log($"[HapbeatDemo] Stream: {_audioClip.name} (gain={_gain:F2})");
-                HapbeatManager.Instance.StreamAudioClip(_audioClip, _gain);
+                Debug.Log($"[HapbeatDemo] Stream (loop): {_audioClip.name} (gain={_gain:F2})");
+                HapbeatManager.Instance.StreamAudioClip(_audioClip, _gain, target: null, loop: true);
                 _isStreamingFromThisDemo = true;
                 _lastGain = _gain;
             }
@@ -113,6 +116,7 @@ public class HapbeatDemo : MonoBehaviour
         if (WasPressedThisFrame(KeyS))
         {
             Debug.Log("[HapbeatDemo] Stop");
+            _ui?.Log($"Stop pressed (event={_eventId})");
             HapbeatManager.Instance.StopStream();
             HapbeatManager.Instance.Stop(_eventId, _group);
             _isStreamingFromThisDemo = false;
@@ -122,6 +126,7 @@ public class HapbeatDemo : MonoBehaviour
         if (WasPressedThisFrame(KeyP))
         {
             Debug.Log("[HapbeatDemo] Ping");
+            _ui?.Log("Ping sent");
             HapbeatManager.Instance.Ping();
         }
     }
