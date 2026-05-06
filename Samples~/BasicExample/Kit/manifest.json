@@ -1,8 +1,7 @@
 {
   "schema_version": "1.0.0",
-  "kit_id": "basic-exam-kit",
   "version": "1.0.0",
-  "name": "Basic Exam Kit",
+  "name": "basic-exam-kit",
   "description": "Hapbeat Unity SDK の Basic Example サンプル用 Kit。Stream 用 100Hz サイン波と Command 用 200Hz サイン波を収録。",
   "author": "Hapbeat",
   "created_at": "2026-05-06T00:00:00Z",
