@@ -1,8 +1,10 @@
 #if UNITY_EDITOR
 using System.IO;
 using UnityEditor;
+using UnityEditor.Events;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using Hapbeat;
@@ -14,24 +16,28 @@ namespace Hapbeat.Samples.Editor
     /// BasicExample シーンを自動生成する Editor スクリプト。
     /// Menu: Hapbeat > Build Samples > 1. Basic Example
     ///
+    /// 構成:
+    ///   - HapbeatManager           (singleton)
+    ///   - HapbeatActionHelper      (Stop / StopStream / Ping を UnityEvent から呼ぶための wrapper)
+    ///   - HapbeatUnityEventTrigger × 3 (oneshot stream / loop stream / command の各 entry に bind)
+    ///   - HapbeatKeyDispatcher     (Space / L / E / S / P を上記 Trigger / Helper に UnityEvent wiring)
+    ///   - HapbeatDemoUI            (Status と Log の表示専用)
+    ///
     /// 生成物の配置 (ユーザー領域):
-    ///   Assets/HapbeatSDK/Kits/BasicExampleKit/  (manifest.json + sine_100hz_1s.wav)
+    ///   Assets/HapbeatSDK/Kits/basic-exam-kit/{install-clips, stream-clips}/
     ///   Assets/HapbeatSDK/EventMaps/BasicExampleEventMap.asset
     ///   Assets/HapbeatSDK/Scenes/BasicExample.unity
-    ///
-    /// `Samples~/BasicExample/` は Package Manager から import される読み取り専用
-    /// 雛形として残す。Build を再実行すると Kit / EventMap / Scene が再生成される。
     /// </summary>
     public static class BasicExampleSceneBuilder
     {
-        // Hyphen-cased to match the kit_id convention (manifest.json) and the
-        // device-side directory layout (/kits/<kit-id>/).
         private const string kKitName = "basic-exam-kit";
         private const string kEventMapName = "BasicExampleEventMap";
         private const string kSceneName = "BasicExample";
 
-        // Layout constants are owned by HapbeatSDKFolderCreator so the standalone
-        // "Create HapbeatSDK Folder" menu and the Build Samples flow can't drift apart.
+        private const string kEntryStreamOneshot = "demo_stream_sine_100hz";
+        private const string kEntryStreamLoop    = "demo_stream_loop_100hz";
+        private const string kEntryCommand       = "demo_command_sine_200hz";
+
         private static string kScenesDir => HapbeatSDKFolderCreator.kScenesDir;
         private static string kEventMapsDir => HapbeatSDKFolderCreator.kEventMapsDir;
 
@@ -57,18 +63,18 @@ namespace Hapbeat.Samples.Editor
                 return;
             }
 
-            // 1. Ensure HapbeatSDK/{Kits, Scenes, EventMaps} layout (idempotent).
+            // 1. HapbeatSDK layout (Kits/Scenes/EventMaps).
             string kitsRoot = HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
 
-            // 2. Copy the bundled Kit into HapbeatSDK/Kits/.
+            // 2. Kit copy.
             string kitDir = $"{kitsRoot}/{kKitName}";
             CopyKit(sampleRoot + "/Kit", kitDir);
 
-            // 3. EventMap referencing the kit's wav.
+            // 3. EventMap.
             string mapPath = $"{kEventMapsDir}/{kEventMapName}.asset";
             var eventMap = BuildOrLoadEventMap(mapPath, kitDir);
 
-            // 4. Scene generation.
+            // 4. Scene.
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
             // Make the scene render as a black 2D UI: clear camera to solid black
@@ -85,20 +91,17 @@ namespace Hapbeat.Samples.Editor
             RenderSettings.ambientLight = Color.black;
             RenderSettings.fog = false;
 
-            var router = CreateRouter();
-            var demo = router.AddComponent<HapbeatDemo>();
-            var demoUI = router.AddComponent<HapbeatDemoUI>();
+            // Router with Manager + Helper + 3 Triggers + Dispatcher + UI.
+            var router = new GameObject("[Hapbeat Event Router]");
+            router.AddComponent<HapbeatManager>();
+            var helper = router.AddComponent<HapbeatActionHelper>();
 
-            // Wire EventMap to HapbeatDemo so all key actions resolve through
-            // the EventMap entries (mode / streamClip / loop / target are honoured).
-            var demoSO = new SerializedObject(demo);
-            demoSO.FindProperty("_eventMap").objectReferenceValue = eventMap;
-            demoSO.ApplyModifiedPropertiesWithoutUndo();
-            Debug.Log($"[Hapbeat] EventMap wired: {AssetDatabase.GetAssetPath(eventMap)}");
+            var trigOneshot = AddTrigger(router, eventMap, kEntryStreamOneshot);
+            var trigLoop    = AddTrigger(router, eventMap, kEntryStreamLoop);
+            var trigCommand = AddTrigger(router, eventMap, kEntryCommand);
 
-            // Canvas + UI (unchanged from original layout).
+            // UI canvas + status / instructions / log.
             var canvas = CreateScreenCanvas("Canvas");
-
             CreateText(canvas.transform, "Title", "Hapbeat Basic Demo",
                 TextAnchor.MiddleCenter, 28, new Vector2(0.5f, 1f), new Vector2(0, -40));
             var status = CreateText(canvas.transform, "Status", "",
@@ -114,22 +117,23 @@ namespace Hapbeat.Samples.Editor
             logRect.offsetMin = new Vector2(20, 20);
             logRect.offsetMax = new Vector2(-20, -20);
 
+            var demoUI = router.AddComponent<HapbeatDemoUI>();
             var demoUISO = new SerializedObject(demoUI);
             demoUISO.FindProperty("_statusText").objectReferenceValue = status.GetComponent<Text>();
             demoUISO.FindProperty("_logText").objectReferenceValue = log.GetComponent<Text>();
             demoUISO.ApplyModifiedPropertiesWithoutUndo();
 
-            // Wire HapbeatDemo._ui so Stop/Ping key presses show up in the on-screen log.
-            var demoUiLink = new SerializedObject(demo);
-            demoUiLink.FindProperty("_ui").objectReferenceValue = demoUI;
-            demoUiLink.ApplyModifiedPropertiesWithoutUndo();
+            // Key dispatcher with persistent UnityEvent listeners.
+            var dispatcher = router.AddComponent<HapbeatKeyDispatcher>();
+            BindKey(dispatcher, "Stream 1-shot", KeyCode.Space, trigOneshot, demoUI, "Stream 1-shot");
+            BindKey(dispatcher, "Stream loop",   KeyCode.L,     trigLoop,    demoUI, "Stream loop");
+            BindKey(dispatcher, "Command",       KeyCode.E,     trigCommand, demoUI, "Fire command");
+            BindStop(dispatcher, helper, demoUI);
+            BindPing(dispatcher, helper, demoUI);
 
-            // Entry name fields (_oneshotStreamEntry / _loopStreamEntry / _commandEntry)
-            // already match the displayNames generated by BuildOrLoadEventMap, so no
-            // additional wiring is needed here. Override here if a project-specific
-            // sample diverges.
+            EditorUtility.SetDirty(dispatcher);
 
-            // 5. Save scene.
+            // Save scene.
             string scenePath = $"{kScenesDir}/{kSceneName}.unity";
             EditorSceneManager.SaveScene(scene, scenePath);
             Debug.Log($"[Hapbeat] BasicExample scene saved: {scenePath}");
@@ -139,8 +143,75 @@ namespace Hapbeat.Samples.Editor
                 $"  Kit       : {kitDir}/\n" +
                 $"  EventMap  : {mapPath}\n" +
                 $"  Scene     : {scenePath}\n\n" +
-                "Play で動作確認できます。",
+                "Play で Space / L / E / S / P を試してみてください。",
                 "OK");
+        }
+
+        // ----------------------------------------------------------------
+        // Trigger setup
+        // ----------------------------------------------------------------
+
+        private static HapbeatUnityEventTrigger AddTrigger(GameObject host, HapbeatEventMap map, string displayName)
+        {
+            var trig = host.AddComponent<HapbeatUnityEventTrigger>();
+            int idx = -1;
+            HapbeatEventEntry entry = null;
+            for (int i = 0; i < map.entries.Count; i++)
+            {
+                if (map.entries[i].displayName == displayName)
+                {
+                    entry = map.entries[i];
+                    idx = i;
+                    break;
+                }
+            }
+            if (entry == null)
+            {
+                Debug.LogWarning($"[Hapbeat] EventMap entry '{displayName}' not found.");
+                return trig;
+            }
+
+            // Materialize the stable id (lazy-assign on first read).
+            string id = entry.id;
+
+            var so = new SerializedObject(trig);
+            so.FindProperty("_eventMap").objectReferenceValue = map;
+            so.FindProperty("_entryId").stringValue = id;
+            so.FindProperty("_entryIndex").intValue = idx;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            return trig;
+        }
+
+        // ----------------------------------------------------------------
+        // Key binding helpers
+        // ----------------------------------------------------------------
+
+        private static void BindKey(HapbeatKeyDispatcher dispatcher, string label, KeyCode key,
+            HapbeatUnityEventTrigger trigger, HapbeatDemoUI ui, string logMessage)
+        {
+            var b = new HapbeatKeyDispatcher.Binding { label = label, key = key };
+            UnityEventTools.AddPersistentListener(b.onPressed, trigger.Fire);
+            if (ui != null && !string.IsNullOrEmpty(logMessage))
+                UnityEventTools.AddStringPersistentListener(b.onPressed, ui.Log, logMessage);
+            dispatcher.Bindings.Add(b);
+        }
+
+        private static void BindStop(HapbeatKeyDispatcher dispatcher, HapbeatActionHelper helper, HapbeatDemoUI ui)
+        {
+            var b = new HapbeatKeyDispatcher.Binding { label = "Stop all", key = KeyCode.S };
+            UnityEventTools.AddPersistentListener(b.onPressed, helper.StopEverything);
+            if (ui != null)
+                UnityEventTools.AddStringPersistentListener(b.onPressed, ui.Log, "Stop all");
+            dispatcher.Bindings.Add(b);
+        }
+
+        private static void BindPing(HapbeatKeyDispatcher dispatcher, HapbeatActionHelper helper, HapbeatDemoUI ui)
+        {
+            var b = new HapbeatKeyDispatcher.Binding { label = "Ping", key = KeyCode.P };
+            UnityEventTools.AddPersistentListener(b.onPressed, helper.Ping);
+            if (ui != null)
+                UnityEventTools.AddStringPersistentListener(b.onPressed, ui.Log, "Ping sent");
+            dispatcher.Bindings.Add(b);
         }
 
         // ----------------------------------------------------------------
@@ -192,13 +263,13 @@ namespace Hapbeat.Samples.Editor
             }
             map.entries.Clear();
 
-            // 1. Stream one-shot — Space key. Plays once.
             string streamClipPath = $"{kitDir}/stream-clips/sine_100hz_1s.wav";
             var streamClip = AssetDatabase.LoadAssetAtPath<AudioClip>(streamClipPath);
+
             map.entries.Add(new HapbeatEventEntry
             {
                 mode = HapticMode.StreamClip,
-                displayName = "demo_stream_sine_100hz",
+                displayName = kEntryStreamOneshot,
                 category = "demo",
                 eventName = "stream_sine",
                 streamClip = streamClip,
@@ -207,13 +278,10 @@ namespace Hapbeat.Samples.Editor
                 target = "",
                 group = -1,
             });
-
-            // 2. Stream loop — L key. Same clip but loop=true; demonstrates
-            //    that S key actually stops a continuous stream.
             map.entries.Add(new HapbeatEventEntry
             {
                 mode = HapticMode.StreamClip,
-                displayName = "demo_stream_loop_100hz",
+                displayName = kEntryStreamLoop,
                 category = "demo",
                 eventName = "stream_loop",
                 streamClip = streamClip,
@@ -222,15 +290,10 @@ namespace Hapbeat.Samples.Editor
                 target = "",
                 group = -1,
             });
-
-            // 3. Command — E key. Uses a different frequency (200Hz) so the
-            //    user can audibly tell whether the device is playing the flashed
-            //    kit (Command path) or the host stream (StreamClip path).
-            //    Requires deploying the kit to the device via Hapbeat Studio.
             map.entries.Add(new HapbeatEventEntry
             {
                 mode = HapticMode.Command,
-                displayName = "demo_command_sine_200hz",
+                displayName = kEntryCommand,
                 category = "demo",
                 eventName = "command_sine",
                 streamClip = null,
@@ -240,23 +303,17 @@ namespace Hapbeat.Samples.Editor
                 group = -1,
             });
 
+            // Force id materialization so Trigger _entryId references stay stable.
+            foreach (var e in map.entries) { var _ = e.id; }
+
             EditorUtility.SetDirty(map);
             AssetDatabase.SaveAssets();
             return map;
         }
 
         // ----------------------------------------------------------------
-        // Helpers (Canvas / Text / Router)
+        // Helpers
         // ----------------------------------------------------------------
-
-        private static GameObject CreateRouter()
-        {
-            var existing = Object.FindObjectsByType<HapbeatManager>(FindObjectsSortMode.None);
-            var router = new GameObject("[Hapbeat Event Router]");
-            if (existing.Length == 0)
-                router.AddComponent<HapbeatManager>();
-            return router;
-        }
 
         private static Canvas CreateScreenCanvas(string name)
         {
@@ -310,7 +367,6 @@ namespace Hapbeat.Samples.Editor
 
         private static string FindSampleRoot()
         {
-            // BasicExampleSceneBuilder.cs 自身の場所からサンプルルートを逆引き。
             var guids = AssetDatabase.FindAssets("t:Script BasicExampleSceneBuilder");
             foreach (var guid in guids)
             {
@@ -318,8 +374,8 @@ namespace Hapbeat.Samples.Editor
                 int editorIdx = p.LastIndexOf("/Editor/");
                 if (editorIdx >= 0) return p.Substring(0, editorIdx);
             }
-            // フォールバック: HapbeatDemo.cs を探す。
-            guids = AssetDatabase.FindAssets("t:Script HapbeatDemo");
+            // Fallback: locate via the dispatcher script.
+            guids = AssetDatabase.FindAssets("t:Script HapbeatKeyDispatcher");
             foreach (var guid in guids)
             {
                 var p = AssetDatabase.GUIDToAssetPath(guid);
