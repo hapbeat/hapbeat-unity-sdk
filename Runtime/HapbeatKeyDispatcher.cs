@@ -21,14 +21,11 @@ namespace Hapbeat
     /// </para>
     ///
     /// <para>
-    /// <b>Input system support</b>: works under all three <i>Active Input
-    /// Handling</i> settings. When the project uses the legacy <see cref="Input"/>
-    /// manager (Old / Both), key presses are read via <c>Input.GetKeyDown</c>.
-    /// When the project uses the Input System Package only, the dispatcher
-    /// falls back to <c>Keyboard.current</c> (requires the
-    /// <c>com.unity.inputsystem</c> package, which is automatically referenced
-    /// via the SDK's asmdef <i>versionDefines</i>). If neither input backend
-    /// is active, the dispatcher silently no-ops.
+    /// <b>Input system requirement</b>: requires the
+    /// <c>com.unity.inputsystem</c> package (≥ 1.0.0). Key presses are
+    /// read via <c>Keyboard.current</c> and work under all three <i>Active
+    /// Input Handling</i> settings (Old, Both, Input System Package).
+    /// Legacy <c>UnityEngine.Input</c> is never called.
     /// </para>
     /// </summary>
     [AddComponentMenu("Hapbeat/Hapbeat Key Dispatcher")]
@@ -69,10 +66,7 @@ namespace Hapbeat
 
         private static bool IsKeyPressedThisFrame(KeyCode legacyKey)
         {
-#if ENABLE_LEGACY_INPUT_MANAGER
-            // Legacy path is the cheapest and matches the KeyCode enum directly.
-            return Input.GetKeyDown(legacyKey);
-#elif HAPBEAT_HAS_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
+#if HAPBEAT_HAS_INPUT_SYSTEM
             var k = LegacyToNewKey(legacyKey);
             return k != Key.None
                    && Keyboard.current != null
@@ -82,7 +76,7 @@ namespace Hapbeat
 #endif
         }
 
-#if HAPBEAT_HAS_INPUT_SYSTEM && ENABLE_INPUT_SYSTEM
+#if HAPBEAT_HAS_INPUT_SYSTEM
         // Minimal mapping of the keys typically used by Hapbeat samples /
         // demos. Extend if you bind additional keys.
         private static Key LegacyToNewKey(KeyCode k)
@@ -142,6 +136,6 @@ namespace Hapbeat
                 default: return Key.None;
             }
         }
-#endif
+#endif // HAPBEAT_HAS_INPUT_SYSTEM
     }
 }

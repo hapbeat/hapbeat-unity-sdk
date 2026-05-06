@@ -10,7 +10,7 @@ Hapbeat Unity SDK は Unity Package Manager (UPM) 経由で **Git URL から直�
 - **Unity 2022.3 LTS 以上**（Unity 6 で動作確認）
 - **Git** が PC にインストール済み・PATH 通り済み (Unity が裏で `git clone` するため必須)
 - Wi-Fi UDP broadcast でデバイスと同一ネットワークに接続できる環境
-- Active Input Handling は **"Both"**（Unity 2022+ デフォルト）または "Old" を推奨 (`HapbeatKeyDispatcher` が legacy Input を使用)
+- Active Input Handling は **"Both"** / "Old" / "Input System Package" いずれでも動作します
 
 ## インストール
 
@@ -90,7 +90,7 @@ UI に `Pong: RTT=...ms` が表示されれば SDK ↔ デバイスの通信は�
 |---|---|
 | `Package Manager` で URL を貼っても進まない | Git が PATH に通っているか確認 (`git --version` がコマンドラインで通る必要あり) |
 | `Hapbeat → Build Samples → ...` が出ない | 該当 Sample が Import 済みか確認。古い Sample を再 Import すると最新の Editor スクリプトが反映される |
-| Play しても触覚が来ない | Studio/Helper が起動・デバイスがオンラインか / `HapbeatConfig` の Group 設定がデバイスと一致するか / Active Input Handling が "Both" か |
+| Play しても触覚が来ない | Studio/Helper が起動・デバイスがオンラインか / `HapbeatConfig` の Group 設定がデバイスと一致するか |
 | `'InputSystem' does not exist` 等のコンパイルエラー | 古い import が残っている可能性。`Assets/Samples/Hapbeat SDK/` 配下の該当 Sample を削除して再 Import |
 
 ## 次のステップ
