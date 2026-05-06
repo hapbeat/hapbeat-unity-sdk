@@ -15,6 +15,7 @@ namespace Hapbeat.Editor
         private string _pingResult = "";
         private bool _isPinging;
         private Vector2 _scrollPosition;
+        private bool _bridgeFoldout;
 
         [MenuItem("Hapbeat/Settings")]
         [MenuItem("Window/Hapbeat/Settings")]
@@ -49,8 +50,7 @@ namespace Hapbeat.Editor
             EditorGUILayout.LabelField("Hapbeat SDK 設定", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
                 "Hapbeat デバイスへの接続設定を行います。\n" +
-                "標準: Wi-Fi UDP でデバイスを自動検出して接続します。\n" +
-                "Bridge (ESP-NOW): Bridge 経由で複数デバイスに送信します。",
+                "標準は Wi-Fi UDP でデバイスを自動検出して接続します。",
                 MessageType.Info);
         }
 
@@ -78,6 +78,7 @@ namespace Hapbeat.Editor
 
             _serializedConfig.Update();
 
+            // ── 基本設定 ──────────────────────────────────────────────
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("port"),
                 new GUIContent("UDP ポート", "通信用 UDP ポート番号"));
@@ -87,19 +88,6 @@ namespace Hapbeat.Editor
                 new GUIContent("グループ ID", "送信先グループ。0 = 全デバイス、1-254 = 特定グループ（マルチプレイヤー時）"));
 
             EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("Bridge (ESP-NOW)", EditorStyles.boldLabel);
-
-            EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("useBridge"),
-                new GUIContent("Bridge を使用", "ESP-NOW 経由の多デバイス送信時に有効化"));
-
-            EditorGUI.BeginDisabledGroup(!_config.useBridge);
-            EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("bridgeHost"),
-                new GUIContent("Bridge ホスト", "Bridge のホスト名または IP アドレス"));
-            EditorGUI.EndDisabledGroup();
-
-            EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("検出設定", EditorStyles.boldLabel);
 
             EditorGUILayout.PropertyField(
@@ -107,22 +95,58 @@ namespace Hapbeat.Editor
                 new GUIContent("検出タイムアウト (ms)", "デバイス検出のタイムアウト"));
 
             EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("動作設定", EditorStyles.boldLabel);
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("pingInterval"),
                 new GUIContent("Ping 間隔 (秒)", "キープアライブ Ping の送信間隔"));
 
             EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("streamSendAheadSeconds"),
+                new GUIContent(
+                    "Stream バッファ (秒)",
+                    "StreamClip 送信時にホスト側で先送りするバッファ長。\n" +
+                    "短い: Stop の応答が速い、ジッタで途切れやすい\n" +
+                    "長い: 安定、Stop 後に短い残響あり\n" +
+                    "Range 10–200ms / Default 50ms。詳しくは docs/streaming"));
+
+            EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("enableLogging"),
                 new GUIContent("ログ出力", "詳細ログをコンソールに出力"));
-
-            _serializedConfig.ApplyModifiedProperties();
 
             EditorGUILayout.Space(5);
 
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.ObjectField("Config アセット", _config, typeof(HapbeatConfig), false);
             EditorGUILayout.EndHorizontal();
+
+            // ── Advanced: Bridge (ESP-NOW) ───────────────────────────
+            // Most users won't touch ESP-NOW — keep it folded by default at the
+            // bottom of the window so the common settings stay above the fold.
+            EditorGUILayout.Space(10);
+            _bridgeFoldout = EditorGUILayout.Foldout(_bridgeFoldout,
+                "Advanced: Bridge (ESP-NOW)", toggleOnLabelClick: true);
+            if (_bridgeFoldout)
+            {
+                using (new EditorGUI.IndentLevelScope())
+                {
+                    EditorGUILayout.HelpBox(
+                        "ESP-NOW で複数 Hapbeat に同報する用途向け。通常の Wi-Fi UDP で\n" +
+                        "事足りる場合は触る必要ありません。",
+                        MessageType.None);
+                    EditorGUILayout.PropertyField(
+                        _serializedConfig.FindProperty("useBridge"),
+                        new GUIContent("Bridge を使用", "ESP-NOW 経由の多デバイス送信時に有効化"));
+
+                    EditorGUI.BeginDisabledGroup(!_config.useBridge);
+                    EditorGUILayout.PropertyField(
+                        _serializedConfig.FindProperty("bridgeHost"),
+                        new GUIContent("Bridge ホスト", "Bridge のホスト名または IP アドレス"));
+                    EditorGUI.EndDisabledGroup();
+                }
+            }
+
+            _serializedConfig.ApplyModifiedProperties();
         }
 
         private void DrawConnectionSection()

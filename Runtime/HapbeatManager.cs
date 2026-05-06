@@ -437,7 +437,11 @@ namespace Hapbeat
             float bytesPerSecond = sampleRate * channels * 2f;
             // Smaller send-ahead buffer makes StopStream() audibly stop faster but
             // raises underrun risk on slow links. Configurable via HapbeatConfig.
+            // A floor of 10ms protects against legacy assets that don't have the
+            // field serialised yet (Unity defaults to 0 when migrating, which would
+            // cause constant underrun).
             float sendAheadSeconds = _config != null ? _config.streamSendAheadSeconds : 0.05f;
+            if (sendAheadSeconds < 0.01f) sendAheadSeconds = 0.05f;
 
             // Seamless loop: emit a SINGLE STREAM_BEGIN up front (totalSamples=0
             // for "unknown length"), then keep feeding STREAM_DATA with a

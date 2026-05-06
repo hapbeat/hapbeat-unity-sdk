@@ -7,19 +7,25 @@ using UnityEngine.Events;
 using UnityEngine.InputSystem;
 #endif
 
-namespace Hapbeat.Samples
+namespace Hapbeat
 {
     /// <summary>
-    /// Sample utility: maps single key presses to Inspector-wired UnityEvents.
-    /// Intended as a stand-in for full PlayerInput / InputAction setups in
-    /// minimal Hapbeat samples.
+    /// Maps single key presses to Inspector-wired UnityEvents. Useful as a
+    /// drop-in replacement for short, single-key UI when full PlayerInput /
+    /// InputAction setups are overkill (samples, prototypes, debug tools).
     ///
     /// Each <see cref="Binding"/> serializes a legacy <see cref="KeyCode"/>
     /// (used directly when the legacy Input Manager is enabled) and the
     /// dispatcher transparently routes through <see cref="UnityEngine.InputSystem.Keyboard"/>
     /// when the new Input System is the only active backend.
+    ///
+    /// <para>
+    /// Pair with <see cref="HapbeatUnityEventTrigger"/> and
+    /// <see cref="HapbeatActionHelper"/> to build keyboard-driven haptic demos
+    /// without writing a custom MonoBehaviour.
+    /// </para>
     /// </summary>
-    [AddComponentMenu("Hapbeat/Sample/Hapbeat Key Dispatcher")]
+    [AddComponentMenu("Hapbeat/Hapbeat Key Dispatcher")]
     public class HapbeatKeyDispatcher : MonoBehaviour
     {
         [Serializable]

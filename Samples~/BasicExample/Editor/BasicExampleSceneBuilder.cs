@@ -378,8 +378,8 @@ namespace Hapbeat.Samples.Editor
                 int editorIdx = p.LastIndexOf("/Editor/");
                 if (editorIdx >= 0) return p.Substring(0, editorIdx);
             }
-            // Fallback: locate via the dispatcher script.
-            guids = AssetDatabase.FindAssets("t:Script HapbeatKeyDispatcher");
+            // Fallback: locate via HapbeatDemoUI (still lives in the sample).
+            guids = AssetDatabase.FindAssets("t:Script HapbeatDemoUI");
             foreach (var guid in guids)
             {
                 var p = AssetDatabase.GUIDToAssetPath(guid);
