@@ -38,6 +38,13 @@ namespace Hapbeat
         [Range(1f, 60f)]
         public float pingInterval = 5.0f;
 
+        [Tooltip("Audio data the SDK keeps queued ahead of real-time playback while " +
+                 "streaming a clip. Smaller values stop the haptic faster after " +
+                 "StopStream() but increase risk of stutter on slow links. " +
+                 "Range: 10–200 ms. Typical LAN: 30–60 ms. Default: 50 ms.")]
+        [Range(0.01f, 0.2f)]
+        public float streamSendAheadSeconds = 0.05f;
+
         [Header("Debugging")]
         [Tooltip("Enable logging to the Unity console (Play, Stop, Connect, errors).")]
         public bool enableLogging = true;

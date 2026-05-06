@@ -16,7 +16,7 @@
       "description": "100Hz サイン波 1 秒 (host streaming)",
       "tags": ["demo", "tone", "stream"],
       "parameters": {
-        "intensity": 1.0,
+        "intensity": 0.5,
         "loop": false
       }
     },
@@ -26,7 +26,7 @@
       "description": "200Hz サイン波 1 秒 (device-flashed)。Studio から Hapbeat に書き込んだ Kit の動作確認用。",
       "tags": ["demo", "tone", "command"],
       "parameters": {
-        "intensity": 1.0,
+        "intensity": 0.5,
         "loop": false
       }
     }

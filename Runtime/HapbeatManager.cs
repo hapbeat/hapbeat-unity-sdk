@@ -435,7 +435,9 @@ namespace Hapbeat
             byte[] pcmChunk = new byte[samplesPerChunk * 2];
 
             float bytesPerSecond = sampleRate * channels * 2f;
-            const float sendAheadSeconds = 0.1f; // 100 ms buffer
+            // Smaller send-ahead buffer makes StopStream() audibly stop faster but
+            // raises underrun risk on slow links. Configurable via HapbeatConfig.
+            float sendAheadSeconds = _config != null ? _config.streamSendAheadSeconds : 0.05f;
 
             // Seamless loop: emit a SINGLE STREAM_BEGIN up front (totalSamples=0
             // for "unknown length"), then keep feeding STREAM_DATA with a
