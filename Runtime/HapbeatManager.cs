@@ -632,6 +632,19 @@ namespace Hapbeat
 
         private void Cleanup()
         {
+            // Send a final CONNECT_STATUS connected=false so the device updates
+            // its display immediately instead of waiting the full 15-second
+            // CONNECT_TIMEOUT_MS to age out. This is fire-and-forget; UDP
+            // teardown can race with app shutdown so we swallow any error.
+            if (_client != null && _client.IsConnected)
+            {
+                try
+                {
+                    _client.SendConnectStatus(false, DefaultGroup, AppName, SystemInfo.deviceName);
+                }
+                catch { /* shutdown race — ignore */ }
+            }
+
             _discovery?.Dispose();
             _discovery = null;
 
