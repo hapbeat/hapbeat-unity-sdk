@@ -375,7 +375,7 @@ namespace Hapbeat
                         if (_verboseLog) Debug.Log($"[Hapbeat] Sequence {phase}-shot: Command mode but eventId is empty on entry '{label}'", this);
                         return;
                     }
-                    HapbeatManager.Instance.Play(entry.eventId, gain, entry.group, label, target);
+                    HapbeatManager.Instance.Play(entry.eventId, gain, label, target);
                     break;
 
                 case HapticMode.StreamClip:

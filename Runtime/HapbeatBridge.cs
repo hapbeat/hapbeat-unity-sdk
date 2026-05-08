@@ -52,7 +52,7 @@ namespace Hapbeat
 
             float rawGain = gainOverride >= 0f ? gainOverride : entry.gain;
             float g = ApplyManifestIntensity(entry, rawGain);
-            HapbeatManager.Instance.Play(entry.eventId, g, entry.group);
+            HapbeatManager.Instance.Play(entry.eventId, g, target: entry.target);
         }
 
         /// <summary>
@@ -67,7 +67,7 @@ namespace Hapbeat
 
             float rawGain = gainOverride >= 0f ? gainOverride : entry.gain;
             float g = ApplyManifestIntensity(entry, rawGain);
-            HapbeatManager.Instance.Play(entry.eventId, g, entry.group);
+            HapbeatManager.Instance.Play(entry.eventId, g, target: entry.target);
         }
 
         /// <summary>
@@ -91,7 +91,7 @@ namespace Hapbeat
             float t = Mathf.Clamp01((velocity - minVelocity) / (maxVelocity - minVelocity));
             float rawGain = t * entry.gain;
             float gain = ApplyManifestIntensity(entry, rawGain);
-            HapbeatManager.Instance.Play(entry.eventId, gain, entry.group);
+            HapbeatManager.Instance.Play(entry.eventId, gain, target: entry.target);
         }
 
         /// <summary>
@@ -110,7 +110,7 @@ namespace Hapbeat
 
             float rawGain = curve.Evaluate(inputValue) * entry.gain;
             float gain = ApplyManifestIntensity(entry, rawGain);
-            HapbeatManager.Instance.Play(entry.eventId, gain, entry.group);
+            HapbeatManager.Instance.Play(entry.eventId, gain, target: entry.target);
         }
 
         /// <summary>
@@ -123,7 +123,7 @@ namespace Hapbeat
             var entry = _eventMap.FindByName(displayName);
             if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
 
-            HapbeatManager.Instance.Stop(entry.eventId, entry.group);
+            HapbeatManager.Instance.Stop(entry.eventId, target: entry.target);
         }
 
         /// <summary>

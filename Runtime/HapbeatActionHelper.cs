@@ -18,8 +18,9 @@ namespace Hapbeat
     [AddComponentMenu("Hapbeat/Hapbeat Action Helper")]
     public class HapbeatActionHelper : MonoBehaviour
     {
-        [Tooltip("Default group ID for Stop / StopAll. -1 = use HapbeatConfig default.")]
-        [SerializeField] private int _group = -1;
+        [Tooltip("Default device-addressing target for Stop / StopAll. Empty = broadcast.\n" +
+                 "Examples: player_1, */pos_neck, player_1/pos_chest")]
+        [SerializeField] private string _target = "";
 
         /// <summary>Stop the host-side audio stream (if any).</summary>
         public void StopStream()
@@ -30,13 +31,13 @@ namespace Hapbeat
         /// <summary>Tell the device to stop a specific event id.</summary>
         public void Stop(string eventId)
         {
-            HapbeatManager.Instance?.Stop(eventId, _group);
+            HapbeatManager.Instance?.Stop(eventId, target: _target);
         }
 
-        /// <summary>Tell the device to stop every active event in the configured group.</summary>
+        /// <summary>Tell the device to stop every active event matching the configured target.</summary>
         public void StopAll()
         {
-            HapbeatManager.Instance?.StopAll(_group);
+            HapbeatManager.Instance?.StopAll(_target);
         }
 
         /// <summary>Stop both: host-side stream (if any) AND every device-side event.</summary>
@@ -45,7 +46,7 @@ namespace Hapbeat
             var mgr = HapbeatManager.Instance;
             if (mgr == null) return;
             mgr.StopStream();
-            mgr.StopAll(_group);
+            mgr.StopAll(_target);
         }
 
         /// <summary>Send a Ping for keep-alive / latency measurement.</summary>

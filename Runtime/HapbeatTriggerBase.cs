@@ -251,7 +251,7 @@ namespace Hapbeat
                             Debug.Log($"[Hapbeat] Fire Command: eventId='{entry.eventId}' target='{target ?? "(broadcast)"}' " +
                                       $"gain={entry.gain:F2} × intensity={(entry.CachedManifestIntensity >= 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
                                       $"× triggerMult={_gainMultiplier:F2} = {commandGain:F2}", this);
-                        HapbeatManager.Instance.Play(entry.eventId, commandGain, entry.group, label, target);
+                        HapbeatManager.Instance.Play(entry.eventId, commandGain, label, target);
                     }
                     break;
 
@@ -337,7 +337,9 @@ namespace Hapbeat
                 case HapticMode.Command:
                     if (string.IsNullOrEmpty(entry.eventId)) return;
                     string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
-                    HapbeatManager.Instance.Stop(entry.eventId, entry.group, label);
+                    // Use entry.target so Stop matches the same scope the Play targeted.
+                    string stopTarget = entry.HasTarget ? entry.target : null;
+                    HapbeatManager.Instance.Stop(entry.eventId, label, stopTarget);
                     break;
 
                 case HapticMode.StreamClip:

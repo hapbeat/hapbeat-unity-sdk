@@ -15,11 +15,11 @@ namespace Hapbeat.Editor
     {
         private const string PREF_EVENT_ID = "Hapbeat_TestEventId";
         private const string PREF_GAIN = "Hapbeat_TestGain";
-        private const string PREF_GROUP = "Hapbeat_TestGroup";
+        private const string PREF_TARGET = "Hapbeat_TestTarget";
 
         private string _testEventId;
         private float _testGain;
-        private int _testGroup;
+        private string _testTarget;
         private bool _showTestSection = true;
         private bool _showDeviceSection = true;
 
@@ -34,7 +34,7 @@ namespace Hapbeat.Editor
         {
             _testEventId = SessionState.GetString(PREF_EVENT_ID, "weapon.gunshot");
             _testGain = SessionState.GetFloat(PREF_GAIN, 0.3f);
-            _testGroup = SessionState.GetInt(PREF_GROUP, -1);
+            _testTarget = SessionState.GetString(PREF_TARGET, "");
         }
 
         public override void OnInspectorGUI()
@@ -199,15 +199,15 @@ namespace Hapbeat.Editor
                 new GUIContent("ゲイン", "再生ゲイン"),
                 _testGain, 0f, 2f);
 
-            _testGroup = EditorGUILayout.IntSlider(
-                new GUIContent("グループ", "ターゲットグループ ID (-1=デフォルト)"),
-                _testGroup, -1, 254);
+            _testTarget = EditorGUILayout.TextField(
+                new GUIContent("ターゲット", "device-addressing target string. 空 = ブロードキャスト。\n例: player_1, */pos_neck, player_1/pos_chest"),
+                _testTarget ?? "");
 
             if (EditorGUI.EndChangeCheck())
             {
                 SessionState.SetString(PREF_EVENT_ID, _testEventId);
                 SessionState.SetFloat(PREF_GAIN, _testGain);
-                SessionState.SetInt(PREF_GROUP, _testGroup);
+                SessionState.SetString(PREF_TARGET, _testTarget ?? "");
             }
 
             EditorGUI.BeginDisabledGroup(!canTest);
@@ -303,33 +303,25 @@ namespace Hapbeat.Editor
             Repaint();
         }
 
-        private byte EditorResolveGroup()
-        {
-            return _testGroup >= 0 ? (byte)_testGroup : (byte)0;
-        }
-
         private void EditorSendPlay()
         {
             if (_editorClient == null || !_editorClient.IsConnected) return;
-            byte g = EditorResolveGroup();
-            _editorClient.SendPlay(_testEventId, 0, g, _testGain);
-            Debug.Log($"[Hapbeat Edit] Play: eventId={_testEventId}, gain={_testGain}, group={g}");
+            _editorClient.SendPlay(_testEventId, 0, _testGain, _testTarget);
+            Debug.Log($"[Hapbeat Edit] Play: eventId={_testEventId}, gain={_testGain}, target={_testTarget ?? "(broadcast)"}");
         }
 
         private void EditorSendStop()
         {
             if (_editorClient == null || !_editorClient.IsConnected) return;
-            byte g = EditorResolveGroup();
-            _editorClient.SendStop(_testEventId, g);
-            Debug.Log($"[Hapbeat Edit] Stop: eventId={_testEventId}, group={g}");
+            _editorClient.SendStop(_testEventId, _testTarget);
+            Debug.Log($"[Hapbeat Edit] Stop: eventId={_testEventId}, target={_testTarget ?? "(broadcast)"}");
         }
 
         private void EditorSendStopAll()
         {
             if (_editorClient == null || !_editorClient.IsConnected) return;
-            byte g = EditorResolveGroup();
-            _editorClient.SendStopAll(g);
-            Debug.Log($"[Hapbeat Edit] StopAll: group={g}");
+            _editorClient.SendStopAll(_testTarget);
+            Debug.Log($"[Hapbeat Edit] StopAll: target={_testTarget ?? "(broadcast)"}");
         }
 
         private void EditorPing()

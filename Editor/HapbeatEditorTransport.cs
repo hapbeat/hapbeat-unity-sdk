@@ -121,10 +121,7 @@ namespace Hapbeat.Editor
             }
         }
 
-        private static byte ResolveGroup(int group)
-            => group >= 0 ? (byte)group : DefaultGroup;
-
-        public static void Play(string eventId, float gain, int group, string target)
+        public static void Play(string eventId, float gain, string target = null)
         {
             if (!EnsureOpen()) return;
             if (string.IsNullOrEmpty(eventId))
@@ -132,26 +129,24 @@ namespace Hapbeat.Editor
                 Debug.LogWarning("[Hapbeat] Editor Play: eventId is empty.");
                 return;
             }
-            byte g = ResolveGroup(group);
-            _client.SendPlay(eventId, 0, g, gain, target);
+            _client.SendPlay(eventId, 0, gain, target);
             Debug.Log($"[Hapbeat:Editor] \u25b6 Play \"{eventId}\" gain={gain:F2} " +
-                      (string.IsNullOrEmpty(target) ? $"group={g}" : $"target={target}"));
+                      (string.IsNullOrEmpty(target) ? "(broadcast)" : $"target={target}"));
         }
 
-        public static void Stop(string eventId, int group)
+        public static void Stop(string eventId, string target = null)
         {
             if (!EnsureOpen()) return;
-            byte g = ResolveGroup(group);
             if (string.IsNullOrEmpty(eventId))
-                _client.SendStopAll(g);
+                _client.SendStopAll(target);
             else
-                _client.SendStop(eventId, g);
+                _client.SendStop(eventId, target);
         }
 
-        public static void StopAll(int group = -1)
+        public static void StopAll(string target = null)
         {
             if (!EnsureOpen()) return;
-            _client.SendStopAll(ResolveGroup(group));
+            _client.SendStopAll(target);
         }
 
         // ── Stream (AudioClip) ───────────────────────────────────────────────

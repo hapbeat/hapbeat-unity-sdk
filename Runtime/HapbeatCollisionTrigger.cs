@@ -153,7 +153,7 @@ namespace Hapbeat
             {
                 string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
                 string target = entry.HasTarget ? entry.target : null;
-                HapbeatManager.Instance.Play(entry.eventId, gain, entry.group, label, target);
+                HapbeatManager.Instance.Play(entry.eventId, gain, label, target);
             }
         }
 

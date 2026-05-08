@@ -460,7 +460,6 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
                 loop = loop,
                 gain = 1.0f,
                 target = target,
-                group = -1,
             };
         }
 

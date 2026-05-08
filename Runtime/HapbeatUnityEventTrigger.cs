@@ -33,7 +33,8 @@ namespace Hapbeat
             if (HapbeatManager.Instance != null)
             {
                 string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
-                HapbeatManager.Instance.Play(entry.eventId, gain, entry.group, label);
+                string target = entry.HasTarget ? entry.target : null;
+                HapbeatManager.Instance.Play(entry.eventId, gain, label, target);
             }
         }
 

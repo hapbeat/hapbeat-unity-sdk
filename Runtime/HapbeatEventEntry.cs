@@ -189,8 +189,11 @@ namespace Hapbeat
                  "Examples: player_1, */pos_neck, player_1/pos_chest")]
         public string target = "";
 
-        [Tooltip("(Legacy) Target group ID. -1 = use config default, 0 = all devices.\n" +
-                 "Ignored when target is set.")]
+        // Legacy: kept on the data model for backward compat with existing
+        // serialized assets. Not used on the wire — current contracts spec
+        // (device-addressing.md §5) uses the `target` string only.
+        [System.Obsolete("Use 'target' string. The legacy group byte was removed from the wire protocol.")]
+        [HideInInspector]
         public int group = -1;
 
         // ---- Notes ----

@@ -1,6 +1,8 @@
 ---
 title: Getting Started
 description: SDK 導入から最初の Event 発火までの 5 分ガイド。
+sidebar:
+  order: 1
 ---
 
 このガイドでは、まっさらな Unity シーンに Hapbeat SDK を組み込んで Event を発火するまでの最短手順を示します。

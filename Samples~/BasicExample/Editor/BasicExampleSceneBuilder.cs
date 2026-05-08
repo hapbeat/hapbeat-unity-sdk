@@ -289,7 +289,6 @@ namespace Hapbeat.Samples.Editor
                 loop = false,
                 gain = 1.0f,
                 target = "",
-                group = -1,
             });
             map.entries.Add(new HapbeatEventEntry
             {
@@ -301,7 +300,6 @@ namespace Hapbeat.Samples.Editor
                 loop = true,
                 gain = 1.0f,
                 target = "",
-                group = -1,
             });
             map.entries.Add(new HapbeatEventEntry
             {
@@ -313,7 +311,6 @@ namespace Hapbeat.Samples.Editor
                 loop = false,
                 gain = 1.0f,
                 target = "",
-                group = -1,
             });
 
             // Force id materialization so Trigger _entryId references stay stable.

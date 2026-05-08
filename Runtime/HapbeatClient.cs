@@ -142,31 +142,27 @@ namespace Hapbeat
             EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(false));
         }
 
-        /// <summary>
-        /// Send a PLAY command.
-        /// </summary>
-        public void SendPlay(string eventId, long targetTimeUs, byte group, float gain,
-            string target = null)
+        /// <summary>Send a PLAY command. <paramref name="target"/> is the device-addressing
+        /// target string ("" = broadcast).</summary>
+        public void SendPlay(string eventId, long targetTimeUs, float gain, string target = null)
         {
-            byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, group, gain, target);
+            byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, gain, target);
             SendPacket(HapbeatProtocol.CMD_PLAY, payload);
         }
 
-        /// <summary>
-        /// Send a STOP command.
-        /// </summary>
-        public void SendStop(string eventId, byte group)
+        /// <summary>Send a STOP command. <paramref name="target"/> is the device-addressing
+        /// target string ("" = broadcast).</summary>
+        public void SendStop(string eventId, string target = null)
         {
-            byte[] payload = HapbeatProtocol.BuildStopPayload(eventId, group);
+            byte[] payload = HapbeatProtocol.BuildStopPayload(eventId, target);
             SendPacket(HapbeatProtocol.CMD_STOP, payload);
         }
 
-        /// <summary>
-        /// Send a STOP_ALL command.
-        /// </summary>
-        public void SendStopAll(byte group)
+        /// <summary>Send a STOP_ALL command. <paramref name="target"/> is the device-addressing
+        /// target string ("" = broadcast).</summary>
+        public void SendStopAll(string target = null)
         {
-            byte[] payload = HapbeatProtocol.BuildStopAllPayload(group);
+            byte[] payload = HapbeatProtocol.BuildStopAllPayload(target);
             SendPacket(HapbeatProtocol.CMD_STOP_ALL, payload);
         }
 

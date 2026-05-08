@@ -125,75 +125,60 @@ namespace Hapbeat
 
         /// <summary>
         /// Play a haptic event immediately.
-        /// Uses the default group from config if not specified.
         /// </summary>
         /// <param name="eventId">Event identifier.</param>
         /// <param name="gain">Gain multiplier (0.0 to 1.0+). Default is 1.0.</param>
-        /// <param name="group">Target group ID. -1 = use config default, 0 = all devices. Ignored when target is set.</param>
         /// <param name="displayName">Optional display name for logging (e.g. "Grab"). Not sent to devices.</param>
-        /// <param name="target">Path-based target filter (e.g. "player_1/pos_neck"). Empty = broadcast.</param>
-        public void Play(string eventId, float gain = 1.0f, int group = -1,
-            string displayName = null, string target = null)
+        /// <param name="target">Device-addressing target string. Empty = broadcast. See contracts/specs/device-addressing.md (e.g. "player_1/pos_neck", "*/pos_chest").</param>
+        public void Play(string eventId, float gain = 1.0f, string displayName = null, string target = null)
         {
             if (!EnsureConnected())
                 return;
 
-            byte g = ResolveGroup(group);
             long targetTimeUs = 0;
-            _client.SendPlay(eventId, targetTimeUs, g, gain, target);
+            _client.SendPlay(eventId, targetTimeUs, gain, target);
 
             string label = string.IsNullOrEmpty(displayName) ? eventId : $"{displayName} ({eventId})";
-            string targetInfo = string.IsNullOrEmpty(target) ? $"group={g}" : $"target={target}";
+            string targetInfo = string.IsNullOrEmpty(target) ? "(broadcast)" : $"target={target}";
             Log($"\u25b6 Play \"{label}\" gain={gain:F1} {targetInfo}");
         }
 
         /// <summary>
         /// Schedule a haptic event to play at a specific target time.
         /// </summary>
-        /// <param name="eventId">Event identifier.</param>
-        /// <param name="targetTimeUs">Target time in microseconds (remote clock).</param>
-        /// <param name="gain">Gain multiplier (0.0 to 1.0+). Default is 1.0.</param>
-        /// <param name="group">Target group ID. -1 = use config default, 0 = all devices.</param>
-        public void PlayScheduled(string eventId, long targetTimeUs, float gain = 1.0f, int group = -1)
+        public void PlayScheduled(string eventId, long targetTimeUs, float gain = 1.0f, string target = null)
         {
             if (!EnsureConnected())
                 return;
-
-            byte g = ResolveGroup(group);
-            _client.SendPlay(eventId, targetTimeUs, g, gain);
-            Log($"\u25b6 PlayScheduled \"{eventId}\" (target={targetTimeUs}us, gain={gain:F1}, group={g})");
+            _client.SendPlay(eventId, targetTimeUs, gain, target);
+            Log($"\u25b6 PlayScheduled \"{eventId}\" (target_time={targetTimeUs}us, gain={gain:F1}, target={target ?? "(broadcast)"})");
         }
 
         /// <summary>
         /// Stop a specific haptic event.
         /// </summary>
-        /// <param name="eventId">Event identifier to stop.</param>
-        /// <param name="group">Target group ID. -1 = use config default, 0 = all devices.</param>
-        /// <param name="displayName">Optional display name for logging. Not sent to devices.</param>
-        public void Stop(string eventId, int group = -1, string displayName = null)
+        /// <param name="target">Device-addressing target string. Empty = broadcast.</param>
+        public void Stop(string eventId, string displayName = null, string target = null)
         {
             if (!EnsureConnected())
                 return;
-
-            byte g = ResolveGroup(group);
-            _client.SendStop(eventId, g);
+            _client.SendStop(eventId, target);
 
             string label = string.IsNullOrEmpty(displayName) ? eventId : $"{displayName} ({eventId})";
-            Log($"\u25a0 Stop \"{label}\" group={g}");
+            string targetInfo = string.IsNullOrEmpty(target) ? "(broadcast)" : $"target={target}";
+            Log($"\u25a0 Stop \"{label}\" {targetInfo}");
         }
 
         /// <summary>
         /// Stop all haptic events.
         /// </summary>
-        /// <param name="group">Target group ID. -1 = use config default, 0 = all devices.</param>
-        public void StopAll(int group = -1)
+        /// <param name="target">Device-addressing target string. Empty = broadcast (stop all on every matching device).</param>
+        public void StopAll(string target = null)
         {
             if (!EnsureConnected())
                 return;
-
-            byte g = ResolveGroup(group);
-            _client.SendStopAll(g);
-            Log($"\u25a0 StopAll (group={g})");
+            _client.SendStopAll(target);
+            Log($"\u25a0 StopAll target={target ?? "(broadcast)"}");
         }
 
         /// <summary>
@@ -569,13 +554,6 @@ namespace Hapbeat
 
             // Auto-connect on startup
             Connect();
-        }
-
-        private byte ResolveGroup(int group)
-        {
-            if (group >= 0)
-                return (byte)group;
-            return DefaultGroup;
         }
 
         private HapbeatClient CreateClient()

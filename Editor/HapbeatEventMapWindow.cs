@@ -1158,7 +1158,6 @@ namespace Hapbeat.Editor
                 bindings = CloneBindings(src.bindings),
                 gain = src.gain,
                 target = src.target,
-                group = src.group,
                 notes = src.notes,
             };
             // Propagate the manifest intensity cache. The new entry points at
@@ -1514,7 +1513,6 @@ namespace Hapbeat.Editor
             dst.bindings = CloneBindings(_clipboardEntry.bindings);
             dst.gain = _clipboardEntry.gain;
             dst.target = _clipboardEntry.target;
-            dst.group = _clipboardEntry.group;
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
             // Pasted category/eventName/clip may point at a different manifest
@@ -2166,9 +2164,9 @@ namespace Hapbeat.Editor
                                 $"[Hapbeat] Test-play Command: manifest intensity not found for '{entry.eventId}'. " +
                                 $"Sending gain={eff:F2} without intensity factor. Deploy the Kit from Studio or Refresh the EventMap.");
                         if (usePlayPath)
-                            HapbeatManager.Instance.Play(entry.eventId, eff, entry.group, label, target);
+                            HapbeatManager.Instance.Play(entry.eventId, eff, label, target);
                         else
-                            HapbeatEditorTransport.Play(entry.eventId, eff, entry.group, target);
+                            HapbeatEditorTransport.Play(entry.eventId, eff, target);
                     }
                     break;
 
@@ -2206,19 +2204,22 @@ namespace Hapbeat.Editor
             switch (entry.mode)
             {
                 case HapticMode.Command:
+                {
+                    string stopTarget = entry.HasTarget ? entry.target : null;
                     if (usePlayPath)
                     {
                         var mgr = HapbeatManager.Instance;
                         if (!string.IsNullOrEmpty(entry.eventId))
-                            mgr.Stop(entry.eventId, entry.group, entry.displayName);
+                            mgr.Stop(entry.eventId, entry.displayName, stopTarget);
                         else
-                            mgr.StopAll();
+                            mgr.StopAll(stopTarget);
                     }
                     else
                     {
-                        HapbeatEditorTransport.Stop(entry.eventId, entry.group);
+                        HapbeatEditorTransport.Stop(entry.eventId, stopTarget);
                     }
                     break;
+                }
                 case HapticMode.StreamClip:
                     if (usePlayPath)
                         HapbeatManager.Instance.StopStream();

@@ -19,9 +19,10 @@ namespace Hapbeat
         [SerializeField]
         private float _gain = 1.0f;
 
-        [Tooltip("Target group ID. -1 = use config default, 0 = all devices.")]
+        [Tooltip("Device-addressing target string. Empty = broadcast.\n" +
+                 "Examples: player_1, */pos_neck, player_1/pos_chest")]
         [SerializeField]
-        private int _group = -1;
+        private string _target = "";
 
         [Header("Behavior")]
         [Tooltip("Automatically trigger Play when this component is enabled.")]
@@ -42,11 +43,11 @@ namespace Hapbeat
             set => _gain = value;
         }
 
-        /// <summary>Target group ID. -1 = use config default.</summary>
-        public int Group
+        /// <summary>Device-addressing target string. Empty = broadcast.</summary>
+        public string Target
         {
-            get => _group;
-            set => _group = value;
+            get => _target;
+            set => _target = value;
         }
 
         private void OnEnable()
@@ -75,7 +76,7 @@ namespace Hapbeat
                 return;
             }
 
-            HapbeatManager.Instance.Play(_eventId, _gain, _group);
+            HapbeatManager.Instance.Play(_eventId, _gain, target: _target);
         }
 
         /// <summary>
@@ -96,7 +97,7 @@ namespace Hapbeat
                 return;
             }
 
-            HapbeatManager.Instance.Stop(_eventId, _group);
+            HapbeatManager.Instance.Stop(_eventId, target: _target);
         }
     }
 }
