@@ -67,17 +67,6 @@ contracts / bridge / kit の上に薄く載せる最初の正式 SDK。
 - サンプルは Samples~ に配置し、UPM の Import Samples で導入可能にする
 - Player Demo（体験者向け）と Creator Tutorial（開発者向け）の2系統
 
-## 最初の着手タスク
-
-1. C# 公開 API 設計
-2. Bridge UDP クライアント実装
-3. 最小サンプルシーン
-4. Editor tools 基本設計
-
-## 実装優先順位
-
-C# API → Bridge 接続 → サンプルシーン → Editor tools → diagnostics
-
 ## テスト
 
 - C# API のユニットテスト
@@ -92,25 +81,3 @@ Bridge がローカルにいれば動作可能。クラウド不要。
 - **Event ID** — これで再生指示を送る
 - **Bridge** — 接続先（オプション）。UDP でメッセージを送信する。Wi-Fi UDP 直接通信が標準方式であり、Bridge は中継が必要な場合に使用する
 - **Discovery** — UDP ブロードキャスト PING によるデバイス自動検出。LAN 上の Hapbeat デバイスを検出し直接接続する
-
-## 開発用 Unity プロジェクト
-
-サンプルシーンの開発・動作確認用の Unity プロジェクト。SDK リポジトリとは別の場所に配置。
-
-- **パス**: `M:\GameEngine\Unity\Projects\HapbeatSDKSamples\`
-- **サンプル Import 先**: `Assets\Samples\Hapbeat SDK\0.1.0\`
-- **編集許可**: このプロジェクト内のファイルは自由に編集・削除してよい
-- **方針**: プロジェクト側で直接編集・動作確認し、完了後にシーンビルダー（Samples~/Editor/）にまとめて反映する
-
-## 指示書
-
-- `instructions/` — 他セッションからの未実行の指示書
-- `instructions/completed/` — 完了済みの指示書
-- セッション開始時に `instructions/` を確認し、該当する指示書があれば適用する
-
-## エージェント共通メモリ（Claude / OpenAI 系共通）
-
-- セッション間で引き継ぐ知見・ログ・ルールはワークスペースルートの `docs/agent-memory/` に保存する
-- インデックスは `docs/agent-memory/INDEX.md`
-- この repo から参照する場合の相対パスは `../docs/agent-memory/`
-- メモリを新規作成・更新した場合は、必ず `INDEX.md` も更新する
