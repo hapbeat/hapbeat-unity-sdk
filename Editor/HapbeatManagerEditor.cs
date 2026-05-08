@@ -217,7 +217,7 @@ namespace Hapbeat.Editor
             if (GUILayout.Button("Play"))
             {
                 if (canTestRuntime)
-                    manager.Play(_testEventId, _testGain, _testGroup);
+                    manager.Play(_testEventId, _testGain, target: _testTarget);
                 else
                     EditorSendPlay();
             }
@@ -225,7 +225,7 @@ namespace Hapbeat.Editor
             if (GUILayout.Button("Stop"))
             {
                 if (canTestRuntime)
-                    manager.Stop(_testEventId, _testGroup);
+                    manager.Stop(_testEventId, target: _testTarget);
                 else
                     EditorSendStop();
             }
@@ -233,7 +233,7 @@ namespace Hapbeat.Editor
             if (GUILayout.Button("Stop All"))
             {
                 if (canTestRuntime)
-                    manager.StopAll(_testGroup);
+                    manager.StopAll(_testTarget);
                 else
                     EditorSendStopAll();
             }
