@@ -134,7 +134,7 @@ namespace Hapbeat.Samples.Tutorial
         /// Send a one-shot fire respecting <c>entry.mode</c>:
         /// <list type="bullet">
         ///   <item>StreamClip → <c>Manager.StreamAudioClip(entry.streamClip, gain, target, loop)</c></item>
-        ///   <item>Command → <c>Manager.Play(entry.eventId, gain, group, displayName, target)</c></item>
+        ///   <item>Command → <c>Manager.Play(entry.eventId, gain, displayName, target)</c></item>
         /// </list>
         /// </summary>
         private void DispatchOneShot(HapbeatEventEntry entry, float gain)
@@ -162,7 +162,7 @@ namespace Hapbeat.Samples.Tutorial
                         Debug.LogWarning($"[TutorialBridge] Command entry '{entry.displayName}' has no event id.");
                         return;
                     }
-                    mgr.Play(entry.eventId, gain, entry.group, entry.displayName, CurrentTarget);
+                    mgr.Play(entry.eventId, gain, entry.displayName, CurrentTarget);
                     break;
             }
         }
