@@ -1281,12 +1281,17 @@ namespace Hapbeat.Editor
                         ? $"[{i}] {name}"
                         : $"[{i}] {icon} {name}";
 
-                    ParseTarget(entry.target, out _, out int pl, out string pos);
+                    ParseTarget(entry.target, out _, out int pl, out int gr, out string pos);
                     string tgt = "all";
-                    if (pl >= 1 || !string.IsNullOrEmpty(pos))
+                    if (pl >= 1 || gr >= 1 || !string.IsNullOrEmpty(pos))
                     {
                         tgt = "";
                         if (pl >= 1) tgt += $"P{pl}";
+                        if (gr >= 1)
+                        {
+                            if (tgt.Length > 0) tgt += "/";
+                            tgt += $"G{gr}";
+                        }
                         if (!string.IsNullOrEmpty(pos))
                         {
                             if (tgt.Length > 0) tgt += "/";
@@ -1618,12 +1623,12 @@ namespace Hapbeat.Editor
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Targeting", EditorStyles.miniBoldLabel);
             var targetProp = entryProp.FindPropertyRelative("target");
-            ParseTarget(targetProp.stringValue, out string curPrefix, out int curPlayer, out string curPos);
+            ParseTarget(targetProp.stringValue, out string curPrefix, out int curPlayer, out int curGroup, out string curPos);
 
             // Prefix
             string newPrefix = EditorGUILayout.TextField(
                 new GUIContent("Prefix",
-                    "Optional team/group prefix for large multi-team setups.\n" +
+                    "Optional team prefix for large multi-team setups.\n" +
                     "Example: team_red, booth_a.\n" +
                     "Leave empty for most projects."),
                 curPrefix);
@@ -1632,8 +1637,15 @@ namespace Hapbeat.Editor
             int newPlayer = EditorGUILayout.IntField(
                 new GUIContent("Player",
                     "Player number (1-99). Set -1 to target all players.\n" +
-                    "For broadcast to all devices, set Player = -1 and Position = (none)."),
+                    "For broadcast to all devices, set Player = -1, Group = -1, Position = (none)."),
                 curPlayer);
+
+            // Group (between Player and Position \u2014 same -1=all semantics as Player)
+            int newGroup = EditorGUILayout.IntField(
+                new GUIContent("Group",
+                    "Group ID (1-99). Set -1 to target all groups.\n" +
+                    "Encoded as 'group_<N>' segment in the target path."),
+                curGroup);
 
             // Position
             var posOptions = new string[HapbeatEventEntry.StandardPositions.Length + 1];
@@ -1651,12 +1663,12 @@ namespace Hapbeat.Editor
                 new GUIContent("Position",
                     "Body position of the target device.\n" +
                     "Select (none) to target all positions for the selected player.\n" +
-                    "For broadcast, set both Player = -1 and Position = (none)."),
+                    "For broadcast, set Player = -1, Group = -1, Position = (none)."),
                 posIdx, posOptions);
             string newPos = posValues[newPosIdx];
 
             // Build and preview
-            string builtTarget = BuildTargetFromParts(newPrefix, newPlayer, newPos);
+            string builtTarget = BuildTargetFromParts(newPrefix, newPlayer, newGroup, newPos);
             if (builtTarget != targetProp.stringValue)
                 targetProp.stringValue = builtTarget;
 
@@ -3951,10 +3963,11 @@ namespace Hapbeat.Editor
         /// Parse a target string back into prefix, player, position parts.
         /// Handles: "", "player_1", "*/pos_neck", "player_1/pos_neck", "red/player_1/pos_neck"
         /// </summary>
-        private static void ParseTarget(string target, out string prefix, out int player, out string position)
+        private static void ParseTarget(string target, out string prefix, out int player, out int group, out string position)
         {
             prefix = "";
             player = -1;
+            group = -1;
             position = "";
 
             if (string.IsNullOrEmpty(target)) return;
@@ -3966,6 +3979,8 @@ namespace Hapbeat.Editor
             {
                 if (part.StartsWith("player_") && int.TryParse(part.Substring(7), out int p))
                     player = p;
+                else if (part.StartsWith("group_") && int.TryParse(part.Substring(6), out int g))
+                    group = g;
                 else if (part.StartsWith("pos_"))
                     position = part;
                 else if (part != "*")
@@ -3976,15 +3991,21 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Build a target string from separate parts (matching manager's _build_address format).
-        /// player=-1 → wildcard or omit. position="" → omit.
+        /// Build a target string from separate parts.
+        /// Path layout: <c>[prefix/][group_N/]player_M[/pos_X]</c>.
+        /// Group is placed before player so the spec rule
+        /// "末尾2セグメントは player_{N}/{position}" still holds.
+        /// player=-1 → wildcard or omit. position="" → omit. group=-1 → omit.
         /// </summary>
-        private static string BuildTargetFromParts(string prefix, int player, string position)
+        private static string BuildTargetFromParts(string prefix, int player, int group, string position)
         {
             var parts = new List<string>();
 
             if (!string.IsNullOrEmpty(prefix))
                 parts.Add(prefix.Trim());
+
+            if (group >= 1)
+                parts.Add($"group_{group}");
 
             if (player >= 1)
                 parts.Add($"player_{player}");
