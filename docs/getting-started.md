@@ -92,7 +92,7 @@ EventMap は SDK が発火する触覚イベントの一覧と設定を管理す
 |---|---|---|
 | basic-exam-kit.sine_100hz_1s | StreamClip | Space |
 | basic-exam-kit.sine_100hz_1s_loop | StreamClip | R |
-| basic-exam-kit.sine_200hz_1s | Command | F |
+| basic-exam-kit.sine_200hz_1s | Fire (Command) | F |
 
 各エントリ右端の **▶ ボタン（Test Play）** を押すと、Unity の Play モードに入らなくてもエディタ上から直接デバイスに発火できます。
 
@@ -113,11 +113,23 @@ EventMap の詳細: [EventMap ウィンドウ](/docs/unity-sdk/event-map/)
 Command モード（F キー）を動かすには、デバイスに `basic-exam-kit` をインストールします。Studio からのデプロイには **hapbeat-helper** が必要です（[初期セットアップ](/docs/studio/initial-setup/) 参照）。
 
 1. **Hapbeat Studio** を開く（`https://devtools.hapbeat.com/studio/`）
-2. **Kit タブ** → フォルダ選択（「フォルダを開く」）で Unity の `Assets/HapbeatSDK/Kits/` を指定
+2. **Kit タブ（右側）** → フォルダ選択（「フォルダを開く」）で Unity の `Assets/HapbeatSDK/Kits/` を指定
 3. `basic-exam-kit` が一覧に表示されたら選択
-4. **Manage タブ** → デバイスを選択 → **Kit** サブタブ → **Deploy** を実行
+4. デバイスが選択されていることを確認（ページ内右上）→ **Deploy** を実行
 
 デプロイ完了後、Unity の Play モードに戻って **F キー**を押すとデバイスが振動します（200 Hz 正弦波）。
+
+:::tip
+ここまでで **Clip（Stream）** と **Fire（Command）** の両モードを体験できました。
+
+**Clip** はデバイスへのデプロイ不要で手軽に使えますが、音声データを無線でストリーミングするため、環境によって不安定になったり停止に若干の遅れが出ることがあります。長い音声を鳴らしたい場合はこちらが唯一の選択肢です。
+
+**Fire** はデプロイが必要ですが、デバイスは本体に保存した音声を再生するだけで、無線では短いコマンドを受け取るのみです。遅延が少なく安定しているため、即時性が求められる効果音では本番環境での使用を推奨します。
+
+詳しい使い分けは [Fire と Clip の比較](/docs/unity-sdk/fire-vs-clip/) を参照してください。
+
+また、Hapbeat SDK の **gain は乗算構造**になっています。Studio で Kit を設計する際に manifest に記録した基準 gain が「1.0 倍時の振動強度」となり、SDK 側の gain や EventMap の gain はそれに対する倍率として機能します。Kit の設計方法と gain の考え方は [Kit デザインガイド](/docs/studio/kit-design/) で解説しています。
+:::
 
 ## 次のステップ
 
