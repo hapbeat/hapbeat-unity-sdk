@@ -11,16 +11,27 @@ sidebar:
 
 ## 前提
 
-### Unity Editor
-
-- **Unity 2022.3 LTS 以上**（動作確認済み: **Unity 6000.3.12f1**）
-- `git` が PATH に通っている（UPM の Git URL 解決に必要）
-
-### Hapbeat 環境
-
 - **Hapbeat デバイス** が Wi-Fi に接続されてオンライン（Stream 振動はこれだけで動作します）
 
-## 1. SDK をインストール
+## 1. Unity Editor をインストール
+
+> 対応バージョンの Editor が既にインストール済みであれば、このステップはスキップできます。
+
+**対応バージョン**: Unity 2022.3 LTS 以上（動作確認済み: **Unity 6000.3.12f1**）
+
+[Unity Hub](https://unity.com/download) から対応バージョンをインストールします。
+
+### 新規プロジェクトの作成
+
+Unity Hub → **New project** → テンプレートは **任意**（例: `3D (Core)`）。
+SDK は描画パイプライン非依存なので、URP / HDRP / Built-in どれでも動作します。
+
+### git のインストール
+
+UPM が Git URL でパッケージを取得するために **git** が必要です。
+[git-scm.com](https://git-scm.com/) からインストールし、PATH が通っていることを確認してください（`git --version` がターミナルで通れば OK）。
+
+## 2. SDK をインストール
 
 1. Unity Editor: `Window → Package Manager`
 2. 左上の **`+`** → **`Add package from git URL...`**
@@ -32,16 +43,16 @@ https://github.com/Hapbeat/hapbeat-unity-sdk.git
 
 インポートが完了すると **`Hapbeat`** メニューがメニューバーに現れます。
 
-動作環境・バージョン固定・トラブルシューティングの詳細は [インストール](/docs/unity-sdk/installation/) を参照。
+バージョン固定・更新・トラブルシューティングの詳細は [インストール](/docs/unity-sdk/installation/) を参照。
 
-## 2. Basic Example をインポート
+## 3. Basic Example をインポート
 
 1. `Window → Package Manager` で **Hapbeat SDK** を選択
 2. 右パネル → **Samples** タブ → **Basic Example** の **Import**
 
 `Assets/Samples/Hapbeat SDK/<バージョン>/BasicExample/` に展開されます。
 
-## 3. Build Setup でシーン・Kit・EventMap を生成
+## 4. Build Setup でシーン・Kit・EventMap を生成
 
 メニューバー → **`Hapbeat → Build Samples → 1. Basic Example`** を実行します。
 
@@ -54,7 +65,7 @@ Assets/HapbeatSDK/
   Scenes/BasicExample.unity
 ```
 
-## 4. Play して振動を確認（Stream）
+## 5. Play して振動を確認（Stream）
 
 `Assets/HapbeatSDK/Scenes/BasicExample.unity` を開いて **Play** します。
 
@@ -70,13 +81,13 @@ Assets/HapbeatSDK/
 
 **Space** を押してデバイスが振動すれば、SDK ↔ デバイスの通信は確立しています。
 
-> UI に `Pong: RTT=...ms` が表示されていれば通信 OK。表示されない場合は hapbeat-helper の起動状態とデバイスのオンライン状態を確認してください。
+> UI に `Pong: RTT=...ms` が表示されていれば通信 OK。表示されない場合はデバイスのオンライン状態を確認してください。
 
 Stream モード（Space / R）は PCM データをリアルタイムでデバイスに送るため、デバイス側に Kit は不要です。
 
 **F キーを押しても反応なし** — これは正常です。Command モードはデバイスに Kit がインストールされていないと動作しません。次のステップで解決します。
 
-## 5. EventMap を開いて設定を確認
+## 6. EventMap を開いて設定を確認
 
 メニューバー → **`Hapbeat → Event Map`** を開きます。
 
@@ -92,7 +103,7 @@ BasicExample の 3 エントリが並んでいます:
 
 EventMap の詳細: [EventMap ウィンドウ](/docs/unity-sdk/event-map/)
 
-## 6. Studio で Kit をデプロイして FIRE を有効化
+## 7. Studio で Kit をデプロイして FIRE を有効化
 
 Command モード（F キー）を動かすには、デバイスに `basic-exam-kit` をインストールします。Studio からのデプロイには **hapbeat-helper** が必要です（[初期セットアップ](/docs/studio/initial-setup/) 参照）。
 
