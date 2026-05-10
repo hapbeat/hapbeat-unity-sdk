@@ -17,7 +17,7 @@ Hapbeat Unity SDK は Unity Package Manager (UPM) 経由で **Git URL から直�
 ### 1. Package Manager から Git URL で追加
 
 1. Unity Editor で `Window` → `Package Manager`
-2. 左上の **`+`** → **`Add package from git URL...`**
+2. 左上の **`+`** → **`Install package from git URL...`**
 3. 次の URL を貼り付けて **Add**:
 
 ```

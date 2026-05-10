@@ -53,8 +53,8 @@ XRI の HandDemo シーンは Unity 公式の配布物で、Hapbeat 側からそ
 
 ### 2. Hapbeat SDK を入れる
 
-1. Package Manager の **+ → Add package from git URL...** を選択
-2. Hapbeat Unity SDK の Git URL を貼り付けて **Add**
+1. Package Manager の **+ → Install package from git URL...** を選択
+2. Hapbeat Unity SDK の Git URL を貼り付けて **Install**
 
 > SDK の詳しい導入手順は [Installation](/docs/unity-sdk/installation/) を参照してください。
 

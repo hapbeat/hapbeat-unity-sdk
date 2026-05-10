@@ -34,7 +34,7 @@ UPM が Git URL でパッケージを取得するために **git** が必要で�
 ## 1. SDK をインストール
 
 1. Unity Editor: `Window → Package Manager`
-2. 左上の **`+`** → **`Add package from git URL...`**
+2. 左上の **`+`** → **`Install package from git URL...`**
 3. 次の URL を貼り付けて **Add**:
 
 ```
