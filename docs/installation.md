@@ -7,7 +7,7 @@ Hapbeat Unity SDK は Unity Package Manager (UPM) 経由で **Git URL から直�
 
 ## 動作環境
 
-- **Unity 2022.3 LTS 以上**（Unity 6 で動作確認）
+- **Unity 2022.3 LTS 以上**（動作確認済み: Unity 6000.3.12f1）
 - **Git** が PC にインストール済み・PATH 通り済み (Unity が裏で `git clone` するため必須)
 - Wi-Fi UDP broadcast でデバイスと同一ネットワークに接続できる環境
 - Active Input Handling は **"Both"** / "Old" / "Input System Package" いずれでも動作します

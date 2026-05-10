@@ -11,6 +11,15 @@ sidebar:
 
 ## 前提
 
+### Unity Editor
+
+- **Unity 2022.3 LTS 以上**（動作確認済み: **Unity 6000.3.12f1**）
+- **Active Input Handling**: `Both` / `Input System Package` / `Input Manager (Old)` いずれでも動作
+- **レンダーパイプライン**: Built-in / URP / HDRP 問わず動作（SDK に描画依存なし）
+- `git` が PATH に通っている（Unity が UPM で Git URL を解決するために必要）
+
+### Hapbeat 環境
+
 - **Hapbeat デバイス** が Wi-Fi に接続されてオンライン
 - **hapbeat-helper** が起動済み（[初期セットアップ](/docs/studio/initial-setup/) 参照）
 
