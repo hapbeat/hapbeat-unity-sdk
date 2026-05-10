@@ -163,6 +163,13 @@ namespace Hapbeat.Samples.Editor
         private static HapbeatUnityEventTrigger AddTrigger(GameObject host, HapbeatEventMap map, string displayName)
         {
             var trig = host.AddComponent<HapbeatUnityEventTrigger>();
+
+            if (map == null)
+            {
+                Debug.LogError($"[Hapbeat] EventMap is null when wiring trigger '{displayName}'.");
+                return trig;
+            }
+
             int idx = -1;
             HapbeatEventEntry entry = null;
             for (int i = 0; i < map.entries.Count; i++)
@@ -176,7 +183,8 @@ namespace Hapbeat.Samples.Editor
             }
             if (entry == null)
             {
-                Debug.LogWarning($"[Hapbeat] EventMap entry '{displayName}' not found.");
+                Debug.LogWarning($"[Hapbeat] EventMap entry '{displayName}' not found " +
+                                 $"(map has {map.entries.Count} entries).");
                 return trig;
             }
 
@@ -188,6 +196,7 @@ namespace Hapbeat.Samples.Editor
             so.FindProperty("_entryId").stringValue = id;
             so.FindProperty("_entryIndex").intValue = idx;
             so.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(trig);
             return trig;
         }
 
@@ -318,7 +327,13 @@ namespace Hapbeat.Samples.Editor
 
             EditorUtility.SetDirty(map);
             AssetDatabase.SaveAssets();
-            return map;
+
+            // Refresh so the AssetDatabase returns the canonical tracked instance.
+            // CreateAsset + SaveAssets can cause Unity to reimport the asset, making
+            // the in-memory reference stale. Reload to guarantee a valid reference.
+            AssetDatabase.Refresh();
+            var canonical = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(assetPath);
+            return canonical != null ? canonical : map;
         }
 
         // ----------------------------------------------------------------

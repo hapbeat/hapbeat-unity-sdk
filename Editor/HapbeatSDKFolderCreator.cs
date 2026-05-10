@@ -130,8 +130,10 @@ namespace Hapbeat.Editor
             string abs = Path.Combine(Application.dataPath,
                 assetPath.Substring("Assets/".Length)).Replace('\\', '/');
             if (!Directory.Exists(abs))
+            {
                 Directory.CreateDirectory(abs);
-            AssetDatabase.Refresh();
+                AssetDatabase.Refresh();
+            }
         }
     }
 }
