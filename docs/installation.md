@@ -95,8 +95,8 @@ UI に `Pong: RTT=...ms` が表示されれば SDK ↔ デバイスの通信は�
 
 ## 次のステップ
 
-- [Getting Started](/docs/unity-sdk/getting-started/) — 最初のシーンを 5 分で作る
-- [Tutorial サンプル](/docs/unity-sdk/tutorial/) — SDK 全機能を 30 分で体験
+- [Getting Started](/docs/unity-sdk/getting-started/) — BasicExample で最短で振動させる
+- [プロジェクトへの組み込み](/docs/unity-sdk/integration/) — 自分のシーンへの追加手順
 - [Trigger コンポーネント](/docs/unity-sdk/triggers/) — Animator / Collision / Sequence 等
 - [EventMap ウィンドウ](/docs/unity-sdk/event-map/) — Event ID と波形の対応を GUI 管理
 - [Streaming buffer](/docs/unity-sdk/streaming/) — StreamClip 用バッファの調整
