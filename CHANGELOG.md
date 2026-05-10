@@ -7,6 +7,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.2] - 2026-05-11
+
+### Fixed
+- BasicExample: EventMap が trigger に null のまま残る問題の根本修正
+  `SerializedObject` で基底クラスの `protected` フィールドを辿れない
+  Unity バージョン依存の問題が根本原因。`HapbeatTriggerBase` に
+  `EditorSetupEntry()` を追加して直接代入に変更。
+
+---
+
 ## [0.1.1] - 2026-05-11
 
 ### Fixed
