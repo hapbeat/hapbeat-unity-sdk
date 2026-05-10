@@ -91,6 +91,7 @@ UI に `Pong: RTT=...ms` が表示されれば SDK ↔ デバイスの通信は�
 | `Package Manager` で URL を貼っても進まない | Git が PATH に通っているか確認 (`git --version` がコマンドラインで通る必要あり) |
 | `Hapbeat → Build Samples → ...` が出ない | 該当 Sample が Import 済みか確認。古い Sample を再 Import すると最新の Editor スクリプトが反映される |
 | Play しても触覚が来ない | Studio/Helper が起動・デバイスがオンラインか / `HapbeatConfig` の Group 設定がデバイスと一致するか |
+| Space / R / F キーに反応しない | `Edit → Project Settings → Player → Active Input Handling` が `Input Manager (Old)` のみになっていないか確認。`Both` または `Input System Package` に変更（Unity 6 のデフォルトは `Both`） |
 | `'InputSystem' does not exist` 等のコンパイルエラー | 古い import が残っている可能性。`Assets/Samples/Hapbeat SDK/` 配下の該当 Sample を削除して再 Import |
 
 ## 次のステップ

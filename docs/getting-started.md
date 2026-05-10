@@ -14,9 +14,8 @@ sidebar:
 ### Unity Editor
 
 - **Unity 2022.3 LTS 以上**（動作確認済み: **Unity 6000.3.12f1**）
-- **Active Input Handling**: `Both` / `Input System Package` / `Input Manager (Old)` いずれでも動作
-- **レンダーパイプライン**: Built-in / URP / HDRP 問わず動作（SDK に描画依存なし）
-- `git` が PATH に通っている（Unity が UPM で Git URL を解決するために必要）
+- `git` が PATH に通っている（UPM の Git URL 解決に必要）
+- レンダーパイプライン不問（Built-in / URP / HDRP 全対応）
 
 ### Hapbeat 環境
 
