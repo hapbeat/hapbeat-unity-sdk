@@ -9,71 +9,81 @@ Hapbeat SDK は多様な Trigger コンポーネントを用意しており、�
 
 | コンポーネント | 発火タイミング | 主な用途 |
 |---------------|--------------|---------|
-| **HapbeatEventTrigger** | コードから `Fire()` 呼び出し | カスタムロジック向けの基本 Trigger |
-| **HapbeatAnimatorTrigger** | Animator state 遷移時 | キャラクターアクション、UI アニメーション |
+| **HapbeatUnityEventTrigger** | UnityEvent から `Fire()` を呼ぶ | UI Button / XR Interactable / Animation Event 等 |
+| **HapbeatAnimatorTrigger** | Animator パラメータ変化時 | キャラクターアクション、UI アニメーション |
 | **HapbeatCollisionTrigger** | OnCollision / OnTrigger | 衝突、当たり判定、銃弾命中 |
 | **HapbeatSequenceTrigger** | grab / hold / release の 3 段階 | XR Interaction（つかむ・持つ・離す） |
+| **HapbeatTickEmitter** | 連続値の変化量に応じてスナップ発火 | Slider / ScrollRect 等のスクロール触覚 |
 
-## HapbeatEventTrigger
+## HapbeatUnityEventTrigger
 
-最もシンプル。コードから `.Fire()` を呼びます。
-
-```csharp
-public class MyController : MonoBehaviour
-{
-    [SerializeField] HapbeatEventTrigger _trigger;
-    public void OnFireButton() => _trigger.Fire();
-}
-```
+UnityEvent（Button.OnClick / XRI Activate / Animation Event 等）の `Fire()` メソッドを紐付けて発火します。コードなしで任意の UnityEvent から触覚を呼べます。
 
 設定:
-- **Event ID**: 発火する Event ID
-- **Method**: Fire / Stop（CLIP モード時に Stop で停止）
+- **Event Map**: EventMap.asset を参照
+- **Event**: EventMap 内のエントリをドロップダウンで選択
+
+```
+On Activated:
+  [Hapbeat Event Router] → HapbeatUnityEventTrigger.Fire()
+```
 
 ## HapbeatAnimatorTrigger
 
-Animator のステート遷移を監視して自動発火。
+Animator のパラメータ変化を監視して自動発火。
 
 設定:
-- **Animator**: 監視対象の Animator
-- **State Name**: 発火対象の state（`Hash` か文字列）
-- **Trigger On**: Enter / Exit / Update
+- **Target Animator**: 監視対象の Animator（別 GO でも指定可）
+- **Parameter**: ドロップダウンで選択（Animator から自動取得）
+- **Condition**: `BoolBecameTrue` / `BoolBecameFalse` / `FloatAbove` 等
+- **Threshold**: Float / Int 条件の閾値
 
 スクリプト不要で、キャラクターのアクション開始タイミングに同期できます。
 
 ## HapbeatCollisionTrigger
 
-Collision / Trigger イベントで発火。**速度連動 (intensity scaling)** が可能。
+Collision / Trigger イベントで発火。**速度連動 (Gain Mode: VelocityScaled)** が可能。
 
 設定:
-- **Layer Filter**: 反応する Layer
-- **Velocity Mapping**: 衝突速度 → intensity の変換 (curve)
+- **Tag Filter**: 反応するオブジェクトの Tag（空 = 全対象）
+- **Layer Mask**: レイヤーフィルタ
+- **Gain Mode**: Fixed（固定）/ VelocityScaled（速度連動）
 - **Min Velocity**: これ以下の速度では発火しない
+- **Cooldown**: 連続発火防止（秒）
 
-> 強い衝撃ほど強い触覚、というマッピングが組める。
+> 強い衝撃ほど強い触覚、というマッピングが組めます。
 
 ## HapbeatSequenceTrigger
 
 XR Interaction Toolkit や独自の grab system と組み合わせ、**3 段階の Event を 1 コンポーネントで管理**します。
 
 設定:
-- **On Grab**: つかんだ瞬間の Event（例: `grab-start`）
-- **On Hold**: 持っている間の継続 Event（CLIP 推奨、例: `grab-hold`）
-- **On Release**: 離した瞬間の Event（例: `grab-release`）
+- **On Grab**: つかんだ瞬間の Event（例: `bowling.grab`）
+- **On Hold**: 持っている間の継続 Event（CLIP 推奨、例: `bowling.hold`）
+- **On Release**: 離した瞬間の Event（例: `bowling.release`）
 
 XR Helpers サンプル (`Samples~/XriHelpers/`) を Import すれば XRGrabInteractable / XRSocketInteractor との接続が自動でセットアップできます（プロジェクト側で XRI を導入していなくても scaffold 自体は壊れません）。
 
+## HapbeatTickEmitter
+
+Slider / ScrollRect などの連続値の変化量に応じて、スナップアルゴリズムでトリガーします。
+
+- Cooldown 不要（アルゴリズムが連続発火を自制）
+- `snap interval` で感度を調整
+
 ## ParameterBinding と組み合わせる
 
-`HapbeatParameterBinding` を併用すると、Transform / Rigidbody の値を AudioSource や Bridge のパラメータに動的マッピングできます。
+`HapbeatParameterBinding` を併用すると、Transform / Rigidbody の値を StreamClip の gain / pan に毎フレームマッピングできます。
 
-例: 距離が近いほど触覚を強くする。
+例: 距離が近いほど触覚を強くする、移動速度が上がるほど振動が強まる。
 
-詳細は [ParameterBinding](/docs/unity-sdk/parameter-binding/) （TODO: 後日追加）
+詳細は [ParameterBinding](/docs/unity-sdk/parameter-binding/)
 
 ## デバッグ
 
-メニューバー → `Hapbeat` → `Enable Event Logger` を ON にすると、すべての Trigger 発火が `HapbeatEventLogger` に記録され、コンソール / log file で順序確認できます。XRI のイベント順序の可視化に有効。
+メニューバー → `Hapbeat` → `Debug` → `Attach Event Logger to Selected` を実行すると、選択中 GameObject の UnityEvent 発火をコンソールにログ出力できます。XRI のイベント発火順序の可視化に有効です。
+
+詳細ログを記録する場合: `Hapbeat → Debug → Logs → Start Recording`
 
 ## 次のステップ
 

@@ -31,3 +31,7 @@ Thumbs.db
 *.pidb.meta
 *.pdb.meta
 *.mdb.meta
+
+# Internal dev notes (moved to workspace dev-notes/unity-sdk/)
+dev-notes/
+dev-notes.meta

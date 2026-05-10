@@ -4,7 +4,13 @@ Hapbeat デバイスを Unity から制御する公式 SDK。2D / 3D / XR 対応
 
 ## インストール
 
-Unity Package Manager → `+` → `Add package from disk...` → `package.json` を選択
+Unity Package Manager → `+` → **`Add package from git URL...`** → 以下の URL を入力:
+
+```
+https://github.com/Hapbeat/hapbeat-unity-sdk.git
+```
+
+詳細は [インストール手順](/docs/unity-sdk/installation/) を参照。
 
 ## クイックスタート
 
@@ -349,9 +355,11 @@ Player Demo は `PlayerDemoHub.unity` と `PlayerDemoZoneA`〜`PlayerDemoZoneD` 
 | 設定 | デフォルト | 説明 |
 |---|---|---|
 | Port | 7700 | UDP ポート |
-| Group | 0 | 送信先グループ（0=全デバイス、1-254=特定グループ） |
+| アプリ名 | (productName) | デバイス OLED に表示する名前。最大 16 文字 |
 | Use Bridge | OFF | ESP-NOW 経由の場合のみ ON |
 | Ping Interval | 5秒 | キープアライブ間隔 |
+
+グループ指定はデバイスアドレスの suffix として `group_<N>` 形式で指定します（[複数アプリの共存](/docs/unity-sdk/multi-app/)参照）。
 
 ## Edit モード操作
 

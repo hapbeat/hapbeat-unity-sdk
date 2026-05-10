@@ -10,8 +10,9 @@
 | ディレクトリ | 用途 | 公開対象 |
 |------|-----|--------|
 | `docs/` | ユーザー向け解説（このディレクトリ） | ◯ portal site に掲載 |
-| `dev-notes/` | 内部実装の知見・履歴・詳細メモ | ✗ portal には載らない |
 | `Documentation~/` | Unity Package のドキュメント（`~` 接尾辞で import 除外） | Unity package 配布のローカル参照用 |
+
+> 内部実装メモ・履歴・詳細な開発ノートは **workspace の `dev-notes/unity-sdk/`** に集約 (private)。本 repo の `dev-notes/` は `.gitignore` 済み。
 
 ## 書くものの例
 

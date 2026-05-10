@@ -54,7 +54,7 @@ Package Manager で Hapbeat SDK を選択 → 右パネル **Samples** タブか
 
 | サンプル | 内容 | 動作要件 |
 |---|---|---|
-| **Basic Example** | Trigger × 3 + Helper + Dispatcher + StatusOverlay の最小組合せ。Space/L/E/S/P キーで動作確認 | デバイス + Studio または Helper 起動 |
+| **Basic Example** | Trigger × 3 + Helper + Dispatcher + StatusOverlay の最小組合せ。Space/R/F/S/C キーで動作確認 | デバイス + Studio または Helper 起動 |
 | **Tutorial** | 5 ゾーン × Without/With の SDK 全機能ツアー (Bowling / Door / Pickup / Stream Console / Target Range)。キーマウスで完結、XR 不要 | 同上 |
 | **XR Helpers** | XR Interaction Toolkit 連携フィルター (XRGrabFilter / XRSocketFilter) | XRI パッケージが入っているプロジェクトのみ |
 
@@ -74,7 +74,7 @@ Basic Example / Tutorial の **シーンは Sample import 直後にはまだ存�
 1. **Hapbeat Studio** または **Hapbeat Helper** を起動し、デバイスがオンライン表示になることを確認
 2. Unity で `Assets/HapbeatSDK/Scenes/BasicExample.unity` を開く
 3. Play モード突入
-4. **Space** キーで Stream 1-shot, **E** キーで Command が再生され、デバイスから振動が出れば成功
+4. **Space** キーで Stream 1-shot, **F** キーで Command (Fire) が再生され、デバイスから振動が出れば成功（**R** = Stream loop, **S** = Stop all, **C** = Ping）
 
 UI に `Pong: RTT=...ms` が表示されれば SDK ↔ デバイスの通信は確立しています。
 
