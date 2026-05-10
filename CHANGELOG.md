@@ -7,41 +7,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] - 0.1.3-dN
-
-### Fixed
-- BasicExample: `EditorSceneManager.NewScene` が `Resources.UnloadUnusedAssets` を
-  起動して just-created EventMap への C# 参照が失効していた。
-  EventMap の生成を `NewScene` の後に移動。
-- `BuildOrLoadEventMap`: 不要だった `Refresh + LoadAssetAtPath` を撤回
-  （Refresh が in-memory map を destroy する副作用があった）。
-
----
-
-## [0.1.2] - 2026-05-11
-
-### Fixed
-- BasicExample: EventMap が trigger に null のまま残る問題の根本修正
-  `SerializedObject` で基底クラスの `protected` フィールドを辿れない
-  Unity バージョン依存の問題が根本原因。`HapbeatTriggerBase` に
-  `EditorSetupEntry()` を追加して直接代入に変更。
-
----
-
-## [0.1.1] - 2026-05-11
-
-### Fixed
-- BasicExample: fresh project で EventMap がトリガーに自動設定されない問題を修正
-  (`BuildOrLoadEventMap` で `SaveAssets` 後に `Refresh + LoadAssetAtPath` してリロード)
-- `EnsureFolder`: フォルダ作成時のみ `AssetDatabase.Refresh()` を呼ぶよう修正（不要な多重 Refresh の排除）
-
-### Changed
-- `docs/` → `docs~/` にリネーム（Unity Package のインポート対象外に統一）
-- `Documentation~/` を削除（内容が `docs~/` に統合済み）
-
----
-
-## [0.1.0] - 2026-05-07
+## [0.1.0] - 2026-05-11
 
 Initial public release.
 
@@ -95,11 +61,11 @@ Initial public release.
 - Quest 3 / Quest 3s 動作確認済み
 
 **ドキュメント**
-- [installation](docs/installation.md) — UPM Git URL 導線
-- [getting-started](docs/getting-started.md) / [triggers](docs/triggers.md) / [event-map](docs/event-map.md) / [parameter-binding](docs/parameter-binding.md) / [streaming](docs/streaming.md) — 機能別解説
-- [tutorial/](docs/tutorial/) — Tutorial サンプルの walkthrough (Plain → With 構築手順)
-- [editor-menus](docs/editor-menus.md) — Hapbeat メニュー全項目の使い方逆引き
-- [ai-assisted-workflow](docs/ai-assisted-workflow.md) — Claude Code 等で既存シーンに触覚を後付けする 4 ステップ + コピペプロンプト集
-- [multi-app](docs/multi-app.md) — 複数アプリ共存時の運用指針 (LAN 分離 / group ID 切り分け)
+- [installation](docs~/installation.md) — UPM Git URL 導線
+- [getting-started](docs~/getting-started.md) / [triggers](docs~/triggers.md) / [event-map](docs~/event-map.md) / [parameter-binding](docs~/parameter-binding.md) / [streaming](docs~/streaming.md) — 機能別解説
+- [tutorial/](docs~/tutorial/) — Tutorial サンプルの walkthrough (Plain → With 構築手順)
+- [editor-menus](docs~/editor-menus.md) — Hapbeat メニュー全項目の使い方逆引き
+- [ai-assisted-workflow](docs~/ai-assisted-workflow.md) — Claude Code 等で既存シーンに触覚を後付けする 4 ステップ + コピペプロンプト集
+- [multi-app](docs~/multi-app.md) — 複数アプリ共存時の運用指針 (LAN 分離 / group ID 切り分け)
 
 [0.1.0]: https://github.com/Hapbeat/hapbeat-unity-sdk/releases/tag/v0.1.0
