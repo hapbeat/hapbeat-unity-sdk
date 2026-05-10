@@ -15,7 +15,6 @@ sidebar:
 
 - **Unity 2022.3 LTS 以上**（動作確認済み: **Unity 6000.3.12f1**）
 - `git` が PATH に通っている（UPM の Git URL 解決に必要）
-- レンダーパイプライン不問（Built-in / URP / HDRP 全対応）
 
 ### Hapbeat 環境
 
