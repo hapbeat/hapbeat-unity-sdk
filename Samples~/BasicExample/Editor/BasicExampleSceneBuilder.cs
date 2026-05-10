@@ -329,6 +329,17 @@ namespace Hapbeat.Samples.Editor
             // Force id materialization so Trigger _entryId references stay stable.
             foreach (var e in map.entries) { var _ = e.id; }
 
+            // Populate manifest intensity cache. Without this the EventMap Window
+            // refresh pass would be required before runtime gain × intensity works
+            // correctly (otherwise FireHaptic prints "no cached manifest intensity").
+            // Invalidate the helper's cache first because we just copied a fresh Kit.
+            HapbeatManifestIntensity.Invalidate();
+            foreach (var e in map.entries)
+            {
+                if (HapbeatManifestIntensity.TryGetIntensity(e, out float intensity))
+                    e.SetCachedManifestIntensity(intensity);
+            }
+
             EditorUtility.SetDirty(map);
             AssetDatabase.SaveAssets();
             return map;

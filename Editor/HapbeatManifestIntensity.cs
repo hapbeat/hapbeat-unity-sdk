@@ -26,7 +26,7 @@ namespace Hapbeat.Editor
     /// onto each <see cref="HapbeatEventEntry"/> (see <c>CachedManifestIntensity</c>)
     /// so the SDK has no manifest dependency at player runtime.
     /// </summary>
-    internal static class HapbeatManifestIntensity
+    public static class HapbeatManifestIntensity
     {
         private struct ManifestEvent
         {
