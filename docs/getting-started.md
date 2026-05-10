@@ -18,8 +18,7 @@ sidebar:
 
 ### Hapbeat 環境
 
-- **Hapbeat デバイス** が Wi-Fi に接続されてオンライン
-- **hapbeat-helper** が起動済み（[初期セットアップ](/docs/studio/initial-setup/) 参照）
+- **Hapbeat デバイス** が Wi-Fi に接続されてオンライン（Stream 振動はこれだけで動作します）
 
 ## 1. SDK をインストール
 
@@ -95,7 +94,7 @@ EventMap の詳細: [EventMap ウィンドウ](/docs/unity-sdk/event-map/)
 
 ## 6. Studio で Kit をデプロイして FIRE を有効化
 
-Command モード（F キー）を動かすには、デバイスに `basic-exam-kit` をインストールします。
+Command モード（F キー）を動かすには、デバイスに `basic-exam-kit` をインストールします。Studio からのデプロイには **hapbeat-helper** が必要です（[初期セットアップ](/docs/studio/initial-setup/) 参照）。
 
 1. **Hapbeat Studio** を開く（`https://devtools.hapbeat.com/studio/`）
 2. **Kit タブ** → フォルダ選択（「フォルダを開く」）で Unity の `Assets/HapbeatSDK/Kits/` を指定
