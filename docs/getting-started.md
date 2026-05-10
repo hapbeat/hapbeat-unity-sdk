@@ -31,28 +31,23 @@ SDK は描画パイプライン非依存なので、URP / HDRP / Built-in どれ
 UPM が Git URL でパッケージを取得するために **git** が必要です。
 [git-scm.com](https://git-scm.com/) からインストールし、PATH が通っていることを確認してください（`git --version` がターミナルで通れば OK）。
 
-## 1. SDK をインストール
+## 1. SDK をインストールして Basic Example をインポート
 
 1. Unity Editor: `Window → Package Manager`
 2. 左上の **`+`** → **`Install package from git URL...`**
-3. 次の URL を貼り付けて **Add**:
+3. 次の URL を貼り付けて **Install**:
 
 ```
 https://github.com/Hapbeat/hapbeat-unity-sdk.git
 ```
 
-インポートが完了すると **`Hapbeat`** メニューがメニューバーに現れます。
+4. インポートが完了したら、Package Manager で **Hapbeat SDK** が選択された状態のまま右パネル → **Samples** タブ → **Basic Example** の **Import**
+
+インポート完了後、**`Hapbeat`** メニューがメニューバーに現れます。
 
 バージョン固定・更新・トラブルシューティングの詳細は [インストール](/docs/unity-sdk/installation/) を参照。
 
-## 2. Basic Example をインポート
-
-1. `Window → Package Manager` で **Hapbeat SDK** を選択
-2. 右パネル → **Samples** タブ → **Basic Example** の **Import**
-
-`Assets/Samples/Hapbeat SDK/<バージョン>/BasicExample/` に展開されます。
-
-## 3. Build Setup でシーン・Kit・EventMap を生成
+## 2. Build Setup でシーン・Kit・EventMap を生成
 
 メニューバー → **`Hapbeat → Build Samples → 1. Basic Example`** を実行します。
 
@@ -65,7 +60,7 @@ Assets/HapbeatSDK/
   Scenes/BasicExample.unity
 ```
 
-## 4. Play して振動を確認（Stream）
+## 3. Play して振動を確認（Stream）
 
 `Assets/HapbeatSDK/Scenes/BasicExample.unity` を開いて **Play** します。
 
@@ -87,7 +82,7 @@ Stream モード（Space / R）は PCM データをリアルタイムでデバ�
 
 **F キーを押しても反応なし** — これは正常です。Command モードはデバイスに Kit がインストールされていないと動作しません。次のステップで解決します。
 
-## 5. EventMap を開いて設定を確認
+## 4. EventMap を開いて設定を確認
 
 メニューバー → **`Hapbeat → Event Map`** を開きます。
 
@@ -103,7 +98,7 @@ BasicExample の 3 エントリが並んでいます:
 
 EventMap の詳細: [EventMap ウィンドウ](/docs/unity-sdk/event-map/)
 
-## 6. Studio で Kit をデプロイして FIRE を有効化
+## 5. Studio で Kit をデプロイして FIRE を有効化
 
 Command モード（F キー）を動かすには、デバイスに `basic-exam-kit` をインストールします。Studio からのデプロイには **hapbeat-helper** が必要です（[初期セットアップ](/docs/studio/initial-setup/) 参照）。
 
