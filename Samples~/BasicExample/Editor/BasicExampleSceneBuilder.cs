@@ -70,13 +70,11 @@ namespace Hapbeat.Samples.Editor
             string kitDir = $"{kitsRoot}/{kKitName}";
             CopyKit(sampleRoot + "/Kit", kitDir);
 
-            // 3. EventMap.
+            // 3. Scene (must be created before BuildOrLoadEventMap because
+            // EditorSceneManager.NewScene triggers Resources.UnloadUnusedAssets,
+            // which invalidates just-created ScriptableObject asset references
+            // that are only held by local C# variables).
             string mapPath = $"{kEventMapsDir}/{kEventMapName}.asset";
-            var eventMap = BuildOrLoadEventMap(mapPath, kitDir);
-            Debug.Log($"[Hapbeat] EventMap built: name='{(eventMap != null ? eventMap.name : "<null>")}', " +
-                      $"entries={(eventMap != null ? eventMap.entries.Count : -1)}");
-
-            // 4. Scene.
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
             // Make the scene render as a black 2D UI: clear camera to solid black
@@ -92,6 +90,11 @@ namespace Hapbeat.Samples.Editor
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
             RenderSettings.ambientLight = Color.black;
             RenderSettings.fog = false;
+
+            // 4. EventMap (built after NewScene to keep the asset reference alive).
+            var eventMap = BuildOrLoadEventMap(mapPath, kitDir);
+            Debug.Log($"[Hapbeat] EventMap built: name='{(eventMap != null ? eventMap.name : "<null>")}', " +
+                      $"entries={(eventMap != null ? eventMap.entries.Count : -1)}");
 
             // Router with Manager + Helper + 3 Triggers + Dispatcher + UI.
             var router = new GameObject("[Hapbeat Event Router]");

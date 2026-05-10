@@ -1,6 +1,6 @@
 {
   "name": "com.hapbeat.sdk",
-  "version": "0.1.2",
+  "version": "0.1.3-d1",
   "displayName": "Hapbeat SDK",
   "description": "Unity SDK for Hapbeat haptic devices",
   "unity": "2021.3",

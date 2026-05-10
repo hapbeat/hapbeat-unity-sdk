@@ -7,6 +7,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] - 0.1.3-dN
+
+### Fixed
+- BasicExample: `EditorSceneManager.NewScene` が `Resources.UnloadUnusedAssets` を
+  起動して just-created EventMap への C# 参照が失効していた。
+  EventMap の生成を `NewScene` の後に移動。
+- `BuildOrLoadEventMap`: 不要だった `Refresh + LoadAssetAtPath` を撤回
+  （Refresh が in-memory map を destroy する副作用があった）。
+
+---
+
 ## [0.1.2] - 2026-05-11
 
 ### Fixed
