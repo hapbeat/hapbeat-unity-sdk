@@ -82,19 +82,36 @@ Stream モード（Space / R）は PCM データをリアルタイムでデバ�
 
 **F キーを押しても反応なし** — これは正常です。Command モードはデバイスに Kit がインストールされていないと動作しません。次のステップで解決します。
 
-## 4. EventMap を開いて設定を確認
+## 4. EventMap を確認する（任意）
 
 メニューバー → **`Hapbeat → Event Map`** を開きます。
 
-BasicExample の 3 エントリが並んでいます:
+EventMap は SDK が発火する触覚イベントの一覧と設定を管理するウィンドウです。BasicExample には 3 エントリが登録されています:
 
-| displayName | Event ID | Mode |
+| Event ID | Mode | 対応キー |
 |---|---|---|
-| demo_stream_sine_100hz | basic-exam-kit.sine_100hz_1s | StreamClip |
-| demo_stream_loop_100hz | basic-exam-kit.sine_100hz_1s_loop | StreamClip |
-| demo_command_sine_200hz | basic-exam-kit.sine_200hz_1s | Command |
+| basic-exam-kit.sine_100hz_1s | StreamClip | Space |
+| basic-exam-kit.sine_100hz_1s_loop | StreamClip | R |
+| basic-exam-kit.sine_200hz_1s | Command | F |
 
-**gain** スライダーを動かすと振動の強度が変わります（Play 中でも即反映）。**target** フィールドでは送信先のグループ指定ができます（`group_1` など）。
+各エントリ右端の **▶ ボタン（Test Play）** を押すと、Unity の Play モードに入らなくてもエディタ上から直接デバイスに発火できます。
+
+---
+
+以下は任意の実験です。設定を変えて Test Play で動作を確かめてみてください。
+
+### gain を調整する
+
+**gain** を下げると振動が弱くなります。初期値 `1.0` はやや強めなので、`0.3` 程度に下げてから Test Play で確認するのがおすすめです。
+
+### player / group でターゲットを絞り込む
+
+**player** と **group** フィールドで、どのデバイスに振動させるかを絞り込めます。
+
+- **1〜99** を設定すると、Hapbeat 本体の OLED に表示されている player / group 番号と一致したデバイスだけが振動します
+- **−1**（デフォルト）はワイルドカードで、デバイス側の player / group を無視してすべてに振動します
+
+片方だけ値を変えて、一致・不一致のデバイスへの挙動の違いを Test Play で確かめてみましょう。
 
 EventMap の詳細: [EventMap ウィンドウ](/docs/unity-sdk/event-map/)
 
