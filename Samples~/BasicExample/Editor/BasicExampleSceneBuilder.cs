@@ -73,6 +73,8 @@ namespace Hapbeat.Samples.Editor
             // 3. EventMap.
             string mapPath = $"{kEventMapsDir}/{kEventMapName}.asset";
             var eventMap = BuildOrLoadEventMap(mapPath, kitDir);
+            Debug.Log($"[Hapbeat] EventMap built: name='{(eventMap != null ? eventMap.name : "<null>")}', " +
+                      $"entries={(eventMap != null ? eventMap.entries.Count : -1)}");
 
             // 4. Scene.
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
@@ -326,13 +328,7 @@ namespace Hapbeat.Samples.Editor
 
             EditorUtility.SetDirty(map);
             AssetDatabase.SaveAssets();
-
-            // Refresh so the AssetDatabase returns the canonical tracked instance.
-            // CreateAsset + SaveAssets can cause Unity to reimport the asset, making
-            // the in-memory reference stale. Reload to guarantee a valid reference.
-            AssetDatabase.Refresh();
-            var canonical = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(assetPath);
-            return canonical != null ? canonical : map;
+            return map;
         }
 
         // ----------------------------------------------------------------
