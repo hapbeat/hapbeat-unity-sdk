@@ -131,6 +131,7 @@ namespace Hapbeat.Samples.Editor
             overlaySO.FindProperty("_statusText").objectReferenceValue = status.GetComponent<Text>();
             overlaySO.FindProperty("_logText").objectReferenceValue = log.GetComponent<Text>();
             overlaySO.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(overlay);
 
             // Key dispatcher with persistent UnityEvent listeners.
             var dispatcher = router.AddComponent<HapbeatKeyDispatcher>();
@@ -191,11 +192,9 @@ namespace Hapbeat.Samples.Editor
             // Materialize the stable id (lazy-assign on first read).
             string id = entry.id;
 
-            var so = new SerializedObject(trig);
-            so.FindProperty("_eventMap").objectReferenceValue = map;
-            so.FindProperty("_entryId").stringValue = id;
-            so.FindProperty("_entryIndex").intValue = idx;
-            so.ApplyModifiedPropertiesWithoutUndo();
+            // Use the dedicated setup method instead of SerializedObject to avoid
+            // inheritance-traversal issues with protected fields across Unity versions.
+            trig.EditorSetupEntry(map, id, idx);
             EditorUtility.SetDirty(trig);
             return trig;
         }

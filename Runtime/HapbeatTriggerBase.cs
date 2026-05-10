@@ -92,6 +92,20 @@ namespace Hapbeat
             set => _triggerEnabled = value;
         }
 
+#if UNITY_EDITOR
+        /// <summary>
+        /// Direct field assignment for use by scene-builder Editor scripts.
+        /// Bypasses SerializedObject to avoid inheritance-traversal issues.
+        /// Caller must call EditorUtility.SetDirty(this) after.
+        /// </summary>
+        public void EditorSetupEntry(HapbeatEventMap map, string entryId, int entryIndex)
+        {
+            _eventMap   = map;
+            _entryId    = entryId;
+            _entryIndex = entryIndex;
+        }
+#endif
+
         /// <summary>
         /// Per-trigger gain multiplier applied on top of the entry's gain.
         /// 1.0 = use entry default. Range [0, 2].
