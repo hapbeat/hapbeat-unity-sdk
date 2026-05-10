@@ -7,6 +7,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.1] - 2026-05-11
+
+### Fixed
+- BasicExample: fresh project で EventMap がトリガーに自動設定されない問題を修正
+  (`BuildOrLoadEventMap` で `SaveAssets` 後に `Refresh + LoadAssetAtPath` してリロード)
+- `EnsureFolder`: フォルダ作成時のみ `AssetDatabase.Refresh()` を呼ぶよう修正（不要な多重 Refresh の排除）
+
+### Changed
+- `docs/` → `docs~/` にリネーム（Unity Package のインポート対象外に統一）
+- `Documentation~/` を削除（内容が `docs~/` に統合済み）
+
+---
+
 ## [0.1.0] - 2026-05-07
 
 Initial public release.
