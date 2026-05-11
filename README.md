@@ -2,6 +2,9 @@
 
 Hapbeat デバイスを Unity から制御する公式 SDK。2D / 3D / XR 対応。
 
+> **📚 公式ドキュメント**: [https://devtools.hapbeat.com/docs/unity-sdk/](https://devtools.hapbeat.com/docs/unity-sdk/)
+> Getting Started / Trigger コンポーネント / EventMap / Parameter Binding 等の解説はポータルに集約しています。
+
 ## インストール
 
 Unity Package Manager → `+` → **`Add package from git URL...`** → 以下の URL を入力:
@@ -10,7 +13,7 @@ Unity Package Manager → `+` → **`Add package from git URL...`** → 以下�
 https://github.com/Hapbeat/hapbeat-unity-sdk.git
 ```
 
-詳細は [インストール手順](/docs/unity-sdk/installation/) を参照。
+詳細は [インストール手順](https://devtools.hapbeat.com/docs/unity-sdk/installation/) を参照。
 
 ## クイックスタート
 
@@ -359,7 +362,7 @@ Player Demo は `PlayerDemoHub.unity` と `PlayerDemoZoneA`〜`PlayerDemoZoneD` 
 | Use Bridge | OFF | ESP-NOW 経由の場合のみ ON |
 | Ping Interval | 5秒 | キープアライブ間隔 |
 
-グループ指定はデバイスアドレスの suffix として `group_<N>` 形式で指定します（[複数アプリの共存](/docs/unity-sdk/multi-app/)参照）。
+グループ指定はデバイスアドレスの suffix として `group_<N>` 形式で指定します（[複数アプリの共存](https://devtools.hapbeat.com/docs/unity-sdk/multi-app/)参照）。
 
 ## Edit モード操作
 
