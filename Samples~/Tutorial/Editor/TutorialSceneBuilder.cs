@@ -1,12 +1,15 @@
 #if UNITY_EDITOR
 using System.Collections.Generic;
-using System.IO;
 using UnityEditor;
+using UnityEditor.Animations;
+using UnityEditor.Events;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Events;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using Hapbeat;
+using Hapbeat.Editor;
 using Hapbeat.Samples.Tutorial;
 
 namespace Hapbeat.Samples.Tutorial.EditorTools
@@ -25,6 +28,27 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
     {
         private const string SCENE_FILE = "Tutorial.unity";
         private const string PLAIN_FILE = "Tutorial_Plain.unity";
+        private const string EVENT_MAP_FILE = "TutorialEventMap.asset";
+        private const string DOOR_AC_FILE = "DoorAnimator.controller";
+        private const string KIT_NAME = "tutorial-kit";
+
+        // Subfolders inside the imported sample root and inside the
+        // per-sample HapbeatSDK destination — kept symmetric so the
+        // Maintainer Sync menu can mirror them 1:1.
+        private const string SCENES_SUBDIR    = "Scenes";
+        private const string EVENT_MAP_SUBDIR = "EventMaps";
+        private const string ANIMATION_SUBDIR = "Animation";
+        private const string KIT_SUBDIR       = "Kit"; // Samples~ side ships a single Kit/ folder
+
+        // Per-sample user-area root: Assets/HapbeatSDK/SDK_Samples/Tutorial/
+        // (Scenes / EventMaps / Animation live here).
+        // The SDK_Samples/ umbrella keeps SDK-shipped assets visually
+        // separated from Studio-managed user content (HapbeatSDK/Kits,
+        // HapbeatSDK/Scenes, HapbeatSDK/EventMaps).
+        // Kits ALWAYS live at the shared Assets/HapbeatSDK/Kits/ root
+        // (Studio convention) so HapbeatManifestIntensity finds them via
+        // HapbeatKitsReadme.FindKitsRootPath().
+        private const string HAPBEATSDK_SAMPLE_ROOT = "Assets/HapbeatSDK/SDK_Samples/Tutorial";
 
         // ----------------------------------------------------------------
         // Build menu
@@ -33,16 +57,8 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
         [MenuItem("Hapbeat/Build Samples/2. Tutorial (full scene)", false, 61)]
         public static void Build()
         {
-            if (!EditorUtility.DisplayDialog(
-                "Tutorial シーン生成",
-                "Tutorial.unity (With 版) と Tutorial_Plain.unity (Without 版) の\n" +
-                "2 つのシーン + TutorialEventMap.asset を作成します。\n" +
-                "現在のシーンの未保存の変更は失われます。",
-                "生成する", "キャンセル"))
-                return;
-
-            string root = FindTutorialRoot();
-            if (root == null)
+            string sampleRoot = FindTutorialRoot();
+            if (sampleRoot == null)
             {
                 EditorUtility.DisplayDialog("エラー",
                     "Tutorial サンプルのフォルダが見つかりません。\nPackage Manager から Tutorial サンプルを Import してください。",
@@ -50,10 +66,158 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
                 return;
             }
 
-            // Build EventMap first so the bridge / triggers can link to it.
-            var eventMap = BuildOrLoadEventMap(root);
+            // Dual-mode:
+            //   - Deploy mode: when the sample ships authored Scene + EventMap
+            //     (committed in repo), the Build menu COPIES them into the
+            //     user-editable Assets/HapbeatSDK/ area and rebakes references.
+            //   - Scaffold mode: when those files don't exist (e.g. an SDK
+            //     dev is bootstrapping the very first commit of the authored
+            //     scene), the Build menu generates everything from primitives
+            //     and writes it into the sample folder so it can be committed.
+            string srcScene = $"{sampleRoot}/{SCENES_SUBDIR}/{SCENE_FILE}";
+            bool hasAuthoredScene = AssetDatabase.LoadAssetAtPath<SceneAsset>(srcScene) != null;
+            if (hasAuthoredScene)
+                DeployFromSampleToHapbeatSDK(sampleRoot);
+            else
+                ScaffoldIntoSample(sampleRoot);
+        }
 
+        // ----------------------------------------------------------------
+        // Deploy mode — Copy authored assets from imported sample to
+        // Assets/HapbeatSDK/{Scenes,EventMaps,Animation}/.
+        // ----------------------------------------------------------------
+
+        private static void DeployFromSampleToHapbeatSDK(string sampleRoot)
+        {
+            // Per-sample Scenes / EventMaps / Animation under HapbeatSDK/SDK_Samples/Tutorial/.
+            string dstScenesDir = $"{HAPBEATSDK_SAMPLE_ROOT}/{SCENES_SUBDIR}";
+            string dstMapDir    = $"{HAPBEATSDK_SAMPLE_ROOT}/{EVENT_MAP_SUBDIR}";
+            string dstAnimDir   = $"{HAPBEATSDK_SAMPLE_ROOT}/{ANIMATION_SUBDIR}";
+            HapbeatSampleDeployment.EnsureAssetFolder(dstScenesDir);
+            HapbeatSampleDeployment.EnsureAssetFolder(dstMapDir);
+            HapbeatSampleDeployment.EnsureAssetFolder(dstAnimDir);
+
+            // Kit goes to the shared HapbeatSDK/Kits/ root (Studio convention).
+            string kitsRoot = HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
+            string dstKitDir = $"{kitsRoot}/{KIT_NAME}";
+
+            string srcScene = $"{sampleRoot}/{SCENES_SUBDIR}/{SCENE_FILE}";
+            string srcPlain = $"{sampleRoot}/{SCENES_SUBDIR}/{PLAIN_FILE}";
+            string srcMap   = $"{sampleRoot}/{EVENT_MAP_SUBDIR}/{EVENT_MAP_FILE}";
+            string srcAC    = $"{sampleRoot}/{ANIMATION_SUBDIR}/{DOOR_AC_FILE}";
+            string srcKit   = $"{sampleRoot}/{KIT_SUBDIR}";
+
+            string dstScene = $"{dstScenesDir}/{SCENE_FILE}";
+            string dstPlain = $"{dstScenesDir}/{PLAIN_FILE}";
+            string dstMap   = $"{dstMapDir}/{EVENT_MAP_FILE}";
+            string dstAC    = $"{dstAnimDir}/{DOOR_AC_FILE}";
+
+            if (!EditorUtility.DisplayDialog(
+                "Tutorial を展開",
+                "サンプル同梱の Tutorial 資産を Assets/HapbeatSDK/ 配下にコピーします。\n" +
+                $"  - {dstScene} (With 版)\n" +
+                $"  - {dstPlain} (Without 版)\n" +
+                $"  - {dstMap}\n" +
+                $"  - {dstAC}\n" +
+                $"  - {dstKitDir}/ (manifest + clips)\n\n" +
+                "既存のコピーは上書きされます。",
+                "展開する", "キャンセル"))
+                return;
+
+            // Kit: raw file copy (fresh GUIDs for the copy under HapbeatSDK/Kits/).
+            HapbeatSampleDeployment.CopyKitFolder(srcKit, dstKitDir);
+
+            var scenes    = new List<HapbeatSampleDeployment.AssetCopy>
+            {
+                new HapbeatSampleDeployment.AssetCopy { sourcePath = srcScene, destPath = dstScene },
+                new HapbeatSampleDeployment.AssetCopy { sourcePath = srcPlain, destPath = dstPlain },
+            };
+            var eventMaps = new List<HapbeatSampleDeployment.AssetCopy>
+            {
+                new HapbeatSampleDeployment.AssetCopy { sourcePath = srcMap, destPath = dstMap },
+            };
+            var acs       = new List<HapbeatSampleDeployment.AssetCopy>
+            {
+                new HapbeatSampleDeployment.AssetCopy { sourcePath = srcAC, destPath = dstAC },
+            };
+
+            var result = HapbeatSampleDeployment.DeployScene(scenes, eventMaps, acs);
+            if (!string.IsNullOrEmpty(result.primaryScenePath))
+                EditorSceneManager.OpenScene(result.primaryScenePath, OpenSceneMode.Single);
+
+            EditorUtility.DisplayDialog("完了",
+                "Tutorial を展開しました:\n" +
+                $"  Scene (With) : {dstScene}\n" +
+                $"  Scene (Plain): {dstPlain}\n" +
+                $"  EventMap     : {dstMap}\n" +
+                $"  AnimatorCtrl : {dstAC}\n\n" +
+                "AudioClip はサンプルフォルダのまま参照されます (コピーしません)。\n" +
+                "Play で WASD 移動・各ゾーンを試してみてください。",
+                "OK");
+        }
+
+        // ----------------------------------------------------------------
+        // Scaffold mode — Generate Scene + EventMap + AnimatorController from
+        // primitives, writing into the sample folder so the SDK developer
+        // can commit them as the authored shipped version.
+        // ----------------------------------------------------------------
+
+        private static void ScaffoldIntoSample(string sampleRoot)
+        {
+            // Scaffold and Deploy must produce the same end state so the
+            // EventMap's intensity lookup works either way:
+            //   - Kit goes to HapbeatSDK/Kits/<kit-name>/ (Studio convention,
+            //     discovered by HapbeatManifestIntensity)
+            //   - Scenes / EventMaps / Animation go under HapbeatSDK/SDK_Samples/Tutorial/
+            //
+            // Unity's AssetDatabase cannot write into Samples~/ (tilde marks
+            // it non-Asset), so the SDK developer verifies in Play mode here,
+            // then runs
+            //   Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (Tutorial)
+            // to publish the result into Samples~/Tutorial/ for commit.
+            string kitsRoot    = HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
+            string dstKitDir   = $"{kitsRoot}/{KIT_NAME}";
+            string scenesDir   = $"{HAPBEATSDK_SAMPLE_ROOT}/{SCENES_SUBDIR}";
+            string eventMapDir = $"{HAPBEATSDK_SAMPLE_ROOT}/{EVENT_MAP_SUBDIR}";
+            string animDir     = $"{HAPBEATSDK_SAMPLE_ROOT}/{ANIMATION_SUBDIR}";
+
+            if (!EditorUtility.DisplayDialog(
+                "Tutorial シーンを scaffold",
+                "サンプルに同梱されている Tutorial シーンが見つからないため、Assets/HapbeatSDK/ 配下に初期生成します。\n" +
+                "(通常は SDK 開発者がコミット前の bootstrap として 1 回だけ実行する操作)\n\n" +
+                $"  - {dstKitDir}/ (Kit, manifest + clips)\n" +
+                $"  - {scenesDir}/{SCENE_FILE} (With 版・触覚適用済み)\n" +
+                $"  - {scenesDir}/{PLAIN_FILE} (Without 版・walkthrough 起点)\n" +
+                $"  - {eventMapDir}/{EVENT_MAP_FILE}\n" +
+                $"  - {animDir}/{DOOR_AC_FILE}\n\n" +
+                "現在のシーンの未保存の変更は失われます。\n" +
+                "Play で動作確認した後、Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (Tutorial) を実行してください。",
+                "生成する", "キャンセル"))
+                return;
+
+            HapbeatSampleDeployment.EnsureAssetFolder(scenesDir);
+            HapbeatSampleDeployment.EnsureAssetFolder(eventMapDir);
+            HapbeatSampleDeployment.EnsureAssetFolder(animDir);
+
+            // Kit (raw file copy, fresh GUIDs). Tutorial Audio/ stays
+            // referenced from the imported sample folder — only the Kit
+            // (manifest.json + empty install-clips/ + stream-clips/) gets
+            // copied so HapbeatManifestIntensity can resolve intensity.
+            HapbeatSampleDeployment.CopyKitFolder($"{sampleRoot}/{KIT_SUBDIR}", dstKitDir);
+
+            // Scene first. EditorSceneManager.NewScene triggers
+            // Resources.UnloadUnusedAssets, which would invalidate any
+            // ScriptableObject reference held only by a local C# variable —
+            // so we must NOT build the EventMap before this point.
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+
+            // EventMap (built after NewScene so the reference stays alive).
+            string mapPath = $"{eventMapDir}/{EVENT_MAP_FILE}";
+            var eventMap = BuildOrLoadEventMap(mapPath, sampleRoot);
+
+            // Auxiliary assets that the scene references.
+            string acPath = $"{animDir}/{DOOR_AC_FILE}";
+            var doorAnimator = BuildOrLoadDoorAnimatorController(acPath);
 
             // Ground floor — a single shared plane.
             var floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
@@ -68,13 +232,16 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             var z5 = new GameObject("Z5_Target").transform;
 
             BuildBowlingLane(z1);
-            BuildDoor(z2);
+            BuildDoor(z2, doorAnimator);
             BuildPickupBox(z3);
             BuildStreamConsole(z4);
             BuildTargetRange(z5);
 
-            // Player + camera + FPS controller.
+            // Player + camera + FPS controller (also wires camera-dependent
+            // gameplay refs like BallLauncher._aimReference and a HoldAnchor
+            // child for PickupBox to follow).
             var player = BuildPlayer();
+            WireCameraDependentReferences(player);
 
             // [Hapbeat Event Router] (this is the part removed by Strip).
             var router = BuildRouter(eventMap);
@@ -82,9 +249,13 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             // World-space HUD and Picker UI.
             BuildHud(router, player);
 
+            // Attach Hapbeat triggers / bindings to the scene objects so the
+            // With version is the "completed form" (Plain is generated by
+            // stripping these below).
+            AttachTriggersToScene(eventMap);
+
             // Save the With version first.
-            string scenePath = $"{root}/Scenes/{SCENE_FILE}";
-            Directory.CreateDirectory(Path.GetDirectoryName(scenePath));
+            string scenePath = $"{scenesDir}/{SCENE_FILE}";
             EditorSceneManager.SaveScene(scene, scenePath);
             AssetDatabase.SaveAssets();
 
@@ -94,6 +265,31 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             // this Plain copy and rebuilds toward the With version.
             int strippedComponents = 0;
             int strippedGameObjects = 0;
+
+            // First, remove UnityEvent persistent listeners that reference
+            // Hapbeat triggers — otherwise Plain's Slider.onValueChanged /
+            // TargetReceiver.OnHit would carry a "Missing" entry after the
+            // trigger components are destroyed below.
+            foreach (var slider in Object.FindObjectsByType<Slider>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                for (int i = slider.onValueChanged.GetPersistentEventCount() - 1; i >= 0; i--)
+                {
+                    var tgt = slider.onValueChanged.GetPersistentTarget(i);
+                    if (tgt is HapbeatTriggerBase)
+                        UnityEventTools.RemovePersistentListener(slider.onValueChanged, i);
+                }
+            }
+            foreach (var receiver in Object.FindObjectsByType<TargetReceiver>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (receiver.OnHit == null) continue;
+                for (int i = receiver.OnHit.GetPersistentEventCount() - 1; i >= 0; i--)
+                {
+                    var tgt = receiver.OnHit.GetPersistentTarget(i);
+                    if (tgt is HapbeatTriggerBase)
+                        UnityEventTools.RemovePersistentListener(receiver.OnHit, i);
+                }
+            }
+
             foreach (var t in Object.FindObjectsByType<HapbeatTriggerBase>(FindObjectsInactive.Include, FindObjectsSortMode.None))
             {
                 Object.DestroyImmediate(t);
@@ -114,19 +310,21 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
                 Object.DestroyImmediate(m.gameObject);
                 strippedGameObjects++;
             }
-            string plainPath = $"{root}/Scenes/{PLAIN_FILE}";
+            string plainPath = $"{scenesDir}/{PLAIN_FILE}";
             EditorSceneManager.SaveScene(scene, plainPath);
 
             // Reload the With version so the user lands on the master scene
             // (not the Plain copy) after the build finishes.
             EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
 
-            string mapPath = $"{root}/EventMap/TutorialEventMap.asset";
             EditorUtility.DisplayDialog("完了",
-                $"Tutorial シーンを生成しました:\n" +
-                $"  {scenePath} (With 版・触覚適用済み)\n" +
-                $"  {plainPath} (Without 版・触覚なし、walkthrough の起点)\n\n" +
-                $"EventMap:\n  {mapPath} (12 entry が StreamClip モードで配線済み)",
+                "Tutorial を Assets/HapbeatSDK/ に scaffold しました:\n" +
+                $"  Kit          : {dstKitDir}/\n" +
+                $"  Scene (With) : {scenePath}\n" +
+                $"  Scene (Plain): {plainPath}\n" +
+                $"  EventMap     : {mapPath}\n" +
+                $"  AnimatorCtrl : {acPath}\n\n" +
+                "Play で動作確認した後、Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (Tutorial) を実行して repo にコミットしてください。",
                 "OK");
         }
 
@@ -195,12 +393,14 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             launcherSO.ApplyModifiedPropertiesWithoutUndo();
         }
 
-        private static void BuildDoor(Transform parent)
+        private static void BuildDoor(Transform parent, RuntimeAnimatorController controller)
         {
             parent.position = new Vector3(-4f, 0f, 6f);
 
-            // A simple door: hinged cube. Animator wiring is left to user / SceneBuilder
-            // since creating an AnimatorController in code requires AnimationClip authoring.
+            // A simple door: hinged cube. The AnimatorController is created
+            // by BuildOrLoadDoorAnimatorController so DoorController.SetBool
+            // actually drives a parameter (HapbeatAnimatorTrigger needs the
+            // bool parameter to exist for edge detection to fire).
             var door = GameObject.CreatePrimitive(PrimitiveType.Cube);
             door.name = "Door";
             door.transform.SetParent(parent, false);
@@ -209,7 +409,8 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             var rb = door.AddComponent<Rigidbody>();
             rb.useGravity = false;
             rb.isKinematic = true;
-            door.AddComponent<Animator>();
+            var animator = door.AddComponent<Animator>();
+            if (controller != null) animator.runtimeAnimatorController = controller;
             door.AddComponent<DoorController>();
         }
 
@@ -374,11 +575,302 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             var bridge = go.AddComponent<TutorialBridge>();
             if (eventMap != null)
             {
-                var so = new SerializedObject(bridge);
-                so.FindProperty("_eventMap").objectReferenceValue = eventMap;
-                so.ApplyModifiedPropertiesWithoutUndo();
+                // Use the dedicated setup method — SerializedObject doesn't
+                // reliably traverse to parent-class protected fields in
+                // Unity 6 (same root cause as BasicExample fix#1).
+                bridge.EditorSetupEventMap(eventMap);
+                EditorUtility.SetDirty(bridge);
             }
             return go;
+        }
+
+        // ----------------------------------------------------------------
+        // Door AnimatorController auto-generation
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Create (or load) a minimal AnimatorController at
+        /// <c>{sampleRoot}/Animation/DoorAnimator.controller</c> that exposes
+        /// a bool parameter "IsOpen". DoorController.SetBool drives the
+        /// parameter; HapbeatAnimatorTrigger watches the parameter for
+        /// BoolBecameTrue / BoolBecameFalse edges. No state machine is
+        /// required for haptic edge detection.
+        /// </summary>
+        private static AnimatorController BuildOrLoadDoorAnimatorController(string path)
+        {
+            var ac = AssetDatabase.LoadAssetAtPath<AnimatorController>(path);
+            if (ac == null)
+                ac = AnimatorController.CreateAnimatorControllerAtPath(path);
+
+            bool hasIsOpen = false;
+            foreach (var p in ac.parameters)
+            {
+                if (p.name == "IsOpen") { hasIsOpen = true; break; }
+            }
+            if (!hasIsOpen)
+                ac.AddParameter("IsOpen", AnimatorControllerParameterType.Bool);
+
+            EditorUtility.SetDirty(ac);
+            return ac;
+        }
+
+        // ----------------------------------------------------------------
+        // Camera-dependent gameplay refs (BallLauncher aim / Pickup hold)
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Wires the player Camera into gameplay components that need it:
+        ///   - BallLauncher._aimReference (so the ball launches in the
+        ///     direction the player is looking).
+        ///   - A new HoldAnchor (Camera child) consumed by
+        ///     PickupBoxController._holdAnchor (so the picked-up box
+        ///     follows the camera at a fixed offset).
+        /// Called after BuildPlayer because both endpoints are camera
+        /// children that only exist once the player is in the scene.
+        /// </summary>
+        private static void WireCameraDependentReferences(GameObject player)
+        {
+            var cam = player != null ? player.GetComponentInChildren<Camera>(true) : null;
+            if (cam == null) return;
+
+            // HoldAnchor — child of camera, ~0.7m in front of the eye line.
+            var anchor = new GameObject("HoldAnchor").transform;
+            anchor.SetParent(cam.transform, false);
+            anchor.localPosition = new Vector3(0f, -0.2f, 0.7f);
+
+            foreach (var launcher in Object.FindObjectsByType<BallLauncher>(FindObjectsSortMode.None))
+            {
+                var so = new SerializedObject(launcher);
+                so.FindProperty("_aimReference").objectReferenceValue = cam.transform;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+            foreach (var box in Object.FindObjectsByType<PickupBoxController>(FindObjectsSortMode.None))
+            {
+                var so = new SerializedObject(box);
+                so.FindProperty("_holdAnchor").objectReferenceValue = anchor;
+                so.ApplyModifiedPropertiesWithoutUndo();
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Hapbeat trigger attachment (With version only — stripped from Plain)
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Walk the freshly-built scene and attach Hapbeat triggers / bindings
+        /// so Tutorial.unity is a playable "completed form". Tutorial_Plain.unity
+        /// is generated by stripping every Hapbeat component back out.
+        /// </summary>
+        private static void AttachTriggersToScene(HapbeatEventMap map)
+        {
+            if (map == null)
+            {
+                Debug.LogError("[Tutorial] AttachTriggersToScene called with null map.");
+                return;
+            }
+
+            // Z1: HapbeatCollisionTrigger on each Pin (velocity-scaled).
+            foreach (var pin in FindGameObjectsWithNamePrefix("Pin_"))
+                AttachCollisionTrigger(pin, map, "pin_hit");
+
+            // Z2: HapbeatAnimatorTrigger ×2 on the Door.
+            var door = FindGameObjectByName("Door");
+            if (door != null)
+            {
+                AttachAnimatorTrigger(door, map, "door_open",
+                    HapbeatAnimatorTrigger.Condition.BoolBecameTrue);
+                AttachAnimatorTrigger(door, map, "door_close",
+                    HapbeatAnimatorTrigger.Condition.BoolBecameFalse);
+            }
+
+            // Z3: HapbeatSequenceTrigger + HapbeatParameterBinding on PickupBox.
+            var pickup = FindGameObjectByName("PickupBox");
+            if (pickup != null)
+            {
+                var seq = AttachSequenceTrigger(pickup, map,
+                    loopEntryName: "grab_loop",
+                    onStartEntryName: "grab_start",
+                    onStopEntryName: "grab_release");
+                // Wire PickupBoxController._sequence to the trigger we just added.
+                var ctrl = pickup.GetComponent<PickupBoxController>();
+                if (ctrl != null && seq != null)
+                {
+                    var so = new SerializedObject(ctrl);
+                    so.FindProperty("_sequence").objectReferenceValue = seq;
+                    so.ApplyModifiedPropertiesWithoutUndo();
+                }
+                AttachLoopBinding(pickup, map, "grab_loop");
+            }
+
+            // Z4: HapbeatTickEmitter on Gain/Pan sliders, wire onValueChanged.
+            var gainSlider = FindComponentByGameObjectName<Slider>("GainSlider");
+            var panSlider  = FindComponentByGameObjectName<Slider>("PanSlider");
+            if (gainSlider != null) AttachSliderTickEmitter(gainSlider, map, "slider_tick");
+            if (panSlider  != null) AttachSliderTickEmitter(panSlider,  map, "slider_tick");
+
+            // Z5: HapbeatUnityEventTrigger on TargetBoard, wire TargetReceiver.OnHit.
+            var board = FindGameObjectByName("TargetBoard");
+            if (board != null)
+            {
+                var trig = AttachUnityEventTrigger(board, map, "target_hit");
+                var receiver = board.GetComponent<TargetReceiver>();
+                if (receiver != null && trig != null)
+                {
+                    UnityEventTools.AddPersistentListener(receiver.OnHit, trig.Fire);
+                    EditorUtility.SetDirty(receiver);
+                }
+            }
+        }
+
+        // -- Attach helpers ------------------------------------------------
+
+        private static (HapbeatEventEntry entry, int index) FindEntry(HapbeatEventMap map, string displayName)
+        {
+            for (int i = 0; i < map.entries.Count; i++)
+            {
+                if (map.entries[i].displayName == displayName)
+                    return (map.entries[i], i);
+            }
+            Debug.LogWarning($"[Tutorial] EventMap entry '{displayName}' not found.");
+            return (null, -1);
+        }
+
+        private static void AttachCollisionTrigger(GameObject host, HapbeatEventMap map, string entryName)
+        {
+            var (entry, idx) = FindEntry(map, entryName);
+            if (entry == null) return;
+            var trig = host.AddComponent<HapbeatCollisionTrigger>();
+            trig.EditorSetupEntry(map, entry.id, idx);
+            var so = new SerializedObject(trig);
+            so.FindProperty("_triggerEvent").enumValueIndex = (int)HapbeatCollisionTrigger.TriggerEvent.CollisionEnter;
+            so.FindProperty("_gainMode").enumValueIndex = (int)HapbeatCollisionTrigger.GainMode.VelocityScaled;
+            so.FindProperty("_velocityThreshold").floatValue = 0.5f;
+            so.FindProperty("_maxVelocity").floatValue = 5f;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(trig);
+        }
+
+        private static void AttachAnimatorTrigger(GameObject host, HapbeatEventMap map, string entryName,
+            HapbeatAnimatorTrigger.Condition condition)
+        {
+            var (entry, idx) = FindEntry(map, entryName);
+            if (entry == null) return;
+            var trig = host.AddComponent<HapbeatAnimatorTrigger>();
+            trig.EditorSetupEntry(map, entry.id, idx);
+            var so = new SerializedObject(trig);
+            so.FindProperty("_parameterName").stringValue = "IsOpen";
+            so.FindProperty("_condition").enumValueIndex = (int)condition;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(trig);
+        }
+
+        private static HapbeatSequenceTrigger AttachSequenceTrigger(GameObject host, HapbeatEventMap map,
+            string loopEntryName, string onStartEntryName, string onStopEntryName)
+        {
+            var (loopEntry,  loopIdx)  = FindEntry(map, loopEntryName);
+            var (startEntry, startIdx) = FindEntry(map, onStartEntryName);
+            var (stopEntry,  stopIdx)  = FindEntry(map, onStopEntryName);
+            if (loopEntry == null) return null;
+
+            var trig = host.AddComponent<HapbeatSequenceTrigger>();
+            trig.EditorSetupEntry(map, loopEntry.id, loopIdx);
+
+            var so = new SerializedObject(trig);
+            if (startEntry != null)
+            {
+                so.FindProperty("_onStartEntryId").stringValue = startEntry.id;
+                so.FindProperty("_onStartEntryIndex").intValue = startIdx;
+            }
+            if (stopEntry != null)
+            {
+                so.FindProperty("_onStopEntryId").stringValue = stopEntry.id;
+                so.FindProperty("_onStopEntryIndex").intValue = stopIdx;
+            }
+            so.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(trig);
+            return trig;
+        }
+
+        private static void AttachLoopBinding(GameObject host, HapbeatEventMap map, string entryName)
+        {
+            var (entry, _) = FindEntry(map, entryName);
+            if (entry == null || entry.bindings == null || entry.bindings.Count == 0) return;
+
+            var preset = entry.bindings[0]; // grab_loop ships exactly one preset.
+            var binding = host.AddComponent<HapbeatParameterBinding>();
+            var so = new SerializedObject(binding);
+            // Link mode (live read-through from the preset).
+            so.FindProperty("_linkedEventMap").objectReferenceValue = map;
+            so.FindProperty("_linkedBindingId").stringValue = preset.id;
+            // Mirror the preset values to the local fields too so the
+            // standalone-mode fallback still behaves sensibly if the link
+            // is ever broken.
+            so.FindProperty("_sourceProperty").enumValueIndex = (int)preset.sourceProperty;
+            so.FindProperty("_inputMin").floatValue = preset.inputMin;
+            so.FindProperty("_inputMax").floatValue = preset.inputMax;
+            so.FindProperty("_curveType").enumValueIndex = (int)preset.curveType;
+            so.FindProperty("_outputParameter").enumValueIndex = (int)preset.outputParameter;
+            so.FindProperty("_outputMin").floatValue = preset.outputMin;
+            so.FindProperty("_outputMax").floatValue = preset.outputMax;
+            // _sourceTransform stays null → falls back to host transform,
+            // which is the PickupBox itself (PositionDeltaMagnitude reads
+            // host world-position delta).
+            so.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(binding);
+        }
+
+        private static void AttachSliderTickEmitter(Slider slider, HapbeatEventMap map, string entryName)
+        {
+            var (entry, idx) = FindEntry(map, entryName);
+            if (entry == null) return;
+            var trig = slider.gameObject.AddComponent<HapbeatTickEmitter>();
+            trig.EditorSetupEntry(map, entry.id, idx);
+            var so = new SerializedObject(trig);
+            so.FindProperty("_tickThreshold").floatValue = 0.05f;
+            so.ApplyModifiedPropertiesWithoutUndo();
+            EditorUtility.SetDirty(trig);
+            // Slider.onValueChanged(float) → HapbeatTickEmitter.Fire(float)
+            UnityAction<float> call = trig.Fire;
+            UnityEventTools.AddPersistentListener(slider.onValueChanged, call);
+            EditorUtility.SetDirty(slider);
+        }
+
+        private static HapbeatUnityEventTrigger AttachUnityEventTrigger(GameObject host, HapbeatEventMap map, string entryName)
+        {
+            var (entry, idx) = FindEntry(map, entryName);
+            if (entry == null) return null;
+            var trig = host.AddComponent<HapbeatUnityEventTrigger>();
+            trig.EditorSetupEntry(map, entry.id, idx);
+            EditorUtility.SetDirty(trig);
+            return trig;
+        }
+
+        // -- Scene-walk helpers --------------------------------------------
+
+        private static IEnumerable<GameObject> FindGameObjectsWithNamePrefix(string prefix)
+        {
+            var all = Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            foreach (var t in all)
+            {
+                if (t != null && t.name.StartsWith(prefix))
+                    yield return t.gameObject;
+            }
+        }
+
+        private static GameObject FindGameObjectByName(string name)
+        {
+            var all = Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            foreach (var t in all)
+            {
+                if (t != null && t.name == name) return t.gameObject;
+            }
+            return null;
+        }
+
+        private static T FindComponentByGameObjectName<T>(string name) where T : Component
+        {
+            var go = FindGameObjectByName(name);
+            return go != null ? go.GetComponent<T>() : null;
         }
 
         // ----------------------------------------------------------------
@@ -391,11 +883,8 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
         /// StreamClip mode using the WAV files shipped in <c>Audio/</c>, so the
         /// sample works without a Hapbeat Studio Kit on the device.
         /// </summary>
-        private static HapbeatEventMap BuildOrLoadEventMap(string root)
+        private static HapbeatEventMap BuildOrLoadEventMap(string mapPath, string sampleRoot)
         {
-            string mapPath = $"{root}/EventMap/TutorialEventMap.asset";
-            Directory.CreateDirectory(Path.GetDirectoryName(mapPath));
-
             var map = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(mapPath);
             if (map == null)
             {
@@ -406,15 +895,19 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             // Reset entries to a deterministic baseline. Users can edit afterwards.
             map.entries.Clear();
 
-            string audioDir = $"{root}/Audio";
+            // Audio WAVs ship inside the same sample folder.
+            string audioDir = $"{sampleRoot}/Audio";
 
-            map.entries.Add(MakeStreamEntry("pin_hit", "physics", "pin_hit", $"{audioDir}/drum_hit_1.wav", "*/pos_r_arm", loop: false));
-            map.entries.Add(MakeStreamEntry("door_open", "door", "open", $"{audioDir}/ui_click.wav", "*/pos_neck", loop: false));
-            map.entries.Add(MakeStreamEntry("door_close", "door", "close", $"{audioDir}/ui_click.wav", "*/pos_neck", loop: false));
-            map.entries.Add(MakeStreamEntry("grab_start", "grab", "start", $"{audioDir}/grab.wav", "*/pos_r_arm", loop: false));
+            // All entries use category = KIT_NAME ("tutorial-kit") so the
+            // composed eventId becomes "tutorial-kit.<displayName>", matching
+            // the manifest.json shipped in Samples~/Tutorial/Kit/.
+            map.entries.Add(MakeStreamEntry("pin_hit", KIT_NAME, "pin_hit", $"{audioDir}/drum_hit_1.wav", "*/pos_r_arm", loop: false));
+            map.entries.Add(MakeStreamEntry("door_open", KIT_NAME, "door_open", $"{audioDir}/ui_click.wav", "*/pos_neck", loop: false));
+            map.entries.Add(MakeStreamEntry("door_close", KIT_NAME, "door_close", $"{audioDir}/ui_click.wav", "*/pos_neck", loop: false));
+            map.entries.Add(MakeStreamEntry("grab_start", KIT_NAME, "grab_start", $"{audioDir}/grab.wav", "*/pos_r_arm", loop: false));
 
             // grab_loop has a parameter binding for runtime gain modulation by box motion.
-            var grabLoop = MakeStreamEntry("grab_loop", "grab", "loop", $"{audioDir}/rain_loop.mp3", "*/pos_r_arm", loop: true);
+            var grabLoop = MakeStreamEntry("grab_loop", KIT_NAME, "grab_loop", $"{audioDir}/rain_loop.mp3", "*/pos_r_arm", loop: true);
             grabLoop.bindings.Add(new HapbeatBindingPreset
             {
                 ownerObjectName = "PickupBox",
@@ -429,17 +922,40 @@ namespace Hapbeat.Samples.Tutorial.EditorTools
             });
             map.entries.Add(grabLoop);
 
-            map.entries.Add(MakeStreamEntry("grab_release", "grab", "release", $"{audioDir}/release.wav", "*/pos_r_arm", loop: false));
-            map.entries.Add(MakeStreamEntry("stream_demo", "stream", "audio", $"{audioDir}/rain_loop.mp3", target: "", loop: true));
-            map.entries.Add(MakeStreamEntry("slider_tick", "ui", "slider_tick", $"{audioDir}/ui_click.wav", target: "", loop: false));
-            map.entries.Add(MakeStreamEntry("charge_release", "combat", "shot", $"{audioDir}/explosion.wav", target: "", loop: false));
-            map.entries.Add(MakeStreamEntry("target_hit", "combat", "target_hit", $"{audioDir}/target_hit.mp3", target: "", loop: false));
-            map.entries.Add(MakeStreamEntry("manual_fire", "misc", "beep", $"{audioDir}/punch_impact.wav", target: "", loop: false));
-            map.entries.Add(MakeStreamEntry("burst", "combat", "burst", $"{audioDir}/gunshot.wav", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("grab_release", KIT_NAME, "grab_release", $"{audioDir}/release.wav", "*/pos_r_arm", loop: false));
+            map.entries.Add(MakeStreamEntry("stream_demo", KIT_NAME, "stream_demo", $"{audioDir}/rain_loop.mp3", target: "", loop: true));
+            map.entries.Add(MakeStreamEntry("slider_tick", KIT_NAME, "slider_tick", $"{audioDir}/ui_click.wav", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("charge_release", KIT_NAME, "charge_release", $"{audioDir}/explosion.wav", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("target_hit", KIT_NAME, "target_hit", $"{audioDir}/target_hit.mp3", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("manual_fire", KIT_NAME, "manual_fire", $"{audioDir}/punch_impact.wav", target: "", loop: false));
+            map.entries.Add(MakeStreamEntry("burst", KIT_NAME, "burst", $"{audioDir}/gunshot.wav", target: "", loop: false));
+
+            // Materialize stable ids before AttachTriggersToScene reads them.
+            foreach (var e in map.entries) { var _ = e.id; }
+            foreach (var e in map.entries)
+            {
+                if (e.bindings == null) continue;
+                foreach (var b in e.bindings) { if (b != null) { var __ = b.id; } }
+            }
+
+            // Manifest intensity cache populate. Tutorial ships no Kit, so
+            // TryGetIntensity typically fails — fall back to 1.0 so the
+            // runtime "no cached manifest intensity" warning doesn't fire
+            // and gain semantics stay equivalent to plain entry.gain.
+            HapbeatManifestIntensity.Invalidate();
+            foreach (var e in map.entries)
+            {
+                if (HapbeatManifestIntensity.TryGetIntensity(e, out float intensity))
+                    e.SetCachedManifestIntensity(intensity);
+                else
+                    e.SetCachedManifestIntensity(1.0f);
+            }
 
             EditorUtility.SetDirty(map);
             AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
+            // Do NOT call AssetDatabase.Refresh() here — it can invalidate
+            // in-memory references to the just-created map (see BasicExample
+            // fix history c16cb8f / 1df0820).
             return map;
         }
 

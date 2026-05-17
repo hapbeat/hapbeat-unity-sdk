@@ -21,6 +21,17 @@ namespace Hapbeat
         /// <summary>The event map this bridge uses.</summary>
         public HapbeatEventMap EventMap => _eventMap;
 
+#if UNITY_EDITOR
+        /// <summary>
+        /// Direct field assignment for use by scene-builder Editor scripts.
+        /// Bypasses SerializedObject to avoid Unity 6 inheritance-traversal
+        /// issues with protected fields on the parent class (same fix as
+        /// <see cref="HapbeatTriggerBase.EditorSetupEntry"/>).
+        /// Caller must call EditorUtility.SetDirty(this) afterwards.
+        /// </summary>
+        public void EditorSetupEventMap(HapbeatEventMap map) => _eventMap = map;
+#endif
+
         /// <summary>
         /// Apply the cached manifest intensity to a raw gain value.
         /// Wire gain = rawGain × manifest.intensity; falls back to rawGain when the

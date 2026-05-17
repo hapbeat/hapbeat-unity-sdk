@@ -1548,7 +1548,7 @@ namespace Hapbeat.Editor
 
             EditorGUILayout.LabelField("Entry Detail", EditorStyles.boldLabel);
 
-            DrawTestPlayBar(_selectedMap.entries[_selectedEntryIndex]);
+            DrawTestPlayBar(_selectedMap.entries[_selectedEntryIndex], _selectedMap);
             EditorGUILayout.Space(2);
 
             var so = new SerializedObject(_selectedMap);
@@ -1594,8 +1594,28 @@ namespace Hapbeat.Editor
                         so);
                     break;
                 case HapticMode.StreamClip:
-                    EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("streamClip"),
-                        new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16.\nDrag from your HapbeatKits/<kit>/stream-clips/ folder."));
+                    var clipProp = entryProp.FindPropertyRelative("streamClip");
+                    EditorGUI.BeginChangeCheck();
+                    EditorGUILayout.PropertyField(clipProp,
+                        new GUIContent("Clip", "AudioClip to stream over UDP. Streamed as PCM16.\n" +
+                            "Drag from your HapbeatSDK/Kits/<kit>/stream-clips/ folder.\n" +
+                            "On change, the clip's owning Kit manifest is auto-attached to the Manifest slot."));
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        // Commit the streamClip change first so AssetDatabase
+                        // reads see the new value, then auto-attach the
+                        // manifest from the clip's owning Kit folder.
+                        so.ApplyModifiedProperties();
+                        if (_selectedMap != null &&
+                            _selectedEntryIndex >= 0 &&
+                            _selectedEntryIndex < _selectedMap.entries.Count)
+                        {
+                            AutoAttachManifestForEntry(
+                                _selectedMap.entries[_selectedEntryIndex], _selectedMap);
+                        }
+                        // Refresh so subsequent GUI reads the updated entry.
+                        so.Update();
+                    }
                     DrawKitFolderHint("stream-clips");
                     // Loop is meaningful for StreamClip — used by HapbeatSequenceTrigger's
                     // hold phase so a short clip repeats until Stop() is called, and by
@@ -2000,7 +2020,7 @@ namespace Hapbeat.Editor
         /// the clip with the entry's effective gain; runtime modulation from
         /// bindings only takes effect in Play mode via the in-scene trigger.
         /// </summary>
-        private static void DrawTestPlayBar(HapbeatEventEntry entry)
+        private static void DrawTestPlayBar(HapbeatEventEntry entry, HapbeatEventMap owningMap)
         {
             bool inPlay = Application.isPlaying;
             bool playPath = inPlay
@@ -2063,9 +2083,87 @@ namespace Hapbeat.Editor
             DrawPressButton(btnRect, new GUIContent(label, tooltip), canFire, bg,
                 () => { if (showStop) TestStopEntry(entry); else TestPlayEntry(entry); });
 
-            // Preserve Stop's horizontal footprint so the hint label lines up
-            // regardless of whether the toggle is showing Play or Stop.
-            var stopRect = btnRect;
+            // Manifest UI — right-aligned to boxRect's right edge:
+            //   [Test Play btn]  [hint stretches]  [Manifest][field][⟳]
+            // Components:
+            //   - "Manifest" label on the left
+            //   - Custom picker field (.json-only, "manifest" search preset)
+            //   - Refresh button — re-runs auto-attach from clip's path
+            const float manifestLabelW       = 58f;
+            const float manifestFieldMin     = 80f;
+            const float manifestFieldPreferred = 160f;
+            const float refreshBtnW          = 22f;
+            const float gap                  = 4f;
+            const float rightPad             = 2f;
+
+            float idealManifestRowW = manifestLabelW + gap + manifestFieldPreferred + gap + refreshBtnW;
+            float minManifestRowW   = manifestLabelW + gap + manifestFieldMin       + gap + refreshBtnW;
+            float availForManifest  = boxRect.xMax - btnRect.xMax - rightPad - gap;
+
+            float manifestRowW;
+            if (availForManifest >= idealManifestRowW) manifestRowW = idealManifestRowW;
+            else if (availForManifest >= minManifestRowW) manifestRowW = availForManifest;
+            else manifestRowW = 0f; // too narrow — manifest UI hidden
+
+            float manifestRowX = boxRect.xMax - manifestRowW - rightPad;
+
+            if (manifestRowW > 0f)
+            {
+                float labelX   = manifestRowX;
+                float fieldX   = labelX + manifestLabelW + gap;
+                float refreshX = manifestRowX + manifestRowW - refreshBtnW;
+                float fieldW   = refreshX - fieldX - gap;
+
+                var labelRect    = new Rect(labelX,   btnY, manifestLabelW, btnH);
+                var manifestRect = new Rect(fieldX,   btnY, fieldW,         btnH);
+                var refreshRect  = new Rect(refreshX, btnY, refreshBtnW,    btnH);
+
+                string resolvedSource = HapbeatManifestIntensity.DescribeResolvedSource(entry);
+                string manifestTooltip = entry.manifestOverride != null
+                    ? $"Manifest override: {AssetDatabase.GetAssetPath(entry.manifestOverride)}\n" +
+                      "Clear to auto-resolve. Use ⟳ to re-detect from the clip's folder."
+                    : !string.IsNullOrEmpty(resolvedSource)
+                        ? $"Auto-resolved from: {resolvedSource}\n" +
+                          "Drop a *-manifest.json here to override, or click ⟳ to attach from clip's folder."
+                        : "No manifest matched. Drop a *-manifest.json or click ⟳ to attach from the clip's folder.";
+
+                GUI.Label(labelRect,
+                    new GUIContent("Manifest", manifestTooltip),
+                    EditorStyles.miniLabel);
+
+                var newOverride = DrawManifestPickerField(
+                    manifestRect, entry.manifestOverride, manifestTooltip,
+                    out bool changed);
+                if (changed && newOverride != entry.manifestOverride)
+                {
+                    if (owningMap != null)
+                        Undo.RegisterCompleteObjectUndo(owningMap, "Set Manifest Override");
+                    entry.manifestOverride = newOverride;
+                    if (HapbeatManifestIntensity.TryGetIntensity(entry, out float resolved))
+                        entry.SetCachedManifestIntensity(resolved);
+                    else
+                        entry.SetCachedManifestIntensity(-1f);
+                    if (owningMap != null) EditorUtility.SetDirty(owningMap);
+                }
+
+                // Refresh button — re-run auto-attach from the clip's path.
+                var refreshIcon = EditorGUIUtility.IconContent("Refresh");
+                var refreshContent = new GUIContent(refreshIcon.image,
+                    "Re-attach the manifest.\n" +
+                    "• StreamClip entry: walks up from the clip's folder.\n" +
+                    "• Command entry: resolves HapbeatSDK/Kits/<category>/<category>-manifest.json.\n" +
+                    "Useful after moving a clip / Kit, or renaming a manifest.");
+                if (GUI.Button(refreshRect, refreshContent))
+                {
+                    AutoAttachManifestForEntry(entry, owningMap);
+                }
+            }
+
+            // The hint label fills the space between Test Play and the
+            // manifest UI (or to the right edge if manifest UI is hidden).
+            float hintRightEdge = manifestRowW > 0f ? manifestRowX - gap : boxRect.xMax;
+            float hintAreaX = btnRect.xMax + 6f;
+            float hintAreaW = Mathf.Max(0f, hintRightEdge - hintAreaX);
 
             // Inline hint / status text — rendered on the SAME row as the buttons
             // (right of them) so the bar never takes a second line's worth of height.
@@ -2095,21 +2193,16 @@ namespace Hapbeat.Editor
                 hintColor = new Color(0.4f, 0.85f, 0.5f);
             }
 
-            if (inlineHint != null)
+            if (inlineHint != null && hintAreaW > 8f)
             {
-                float hintX = stopRect.xMax + 6f;
-                float hintW = Mathf.Max(0f, boxRect.xMax - hintX - 2f);
-                if (hintW > 8f)
+                var hintRect = new Rect(hintAreaX, boxRect.y, hintAreaW, boxRect.height);
+                var hintStyle = new GUIStyle(EditorStyles.miniLabel)
                 {
-                    var hintRect = new Rect(hintX, boxRect.y, hintW, boxRect.height);
-                    var hintStyle = new GUIStyle(EditorStyles.miniLabel)
-                    {
-                        clipping = TextClipping.Clip,
-                        alignment = TextAnchor.MiddleLeft,
-                        normal = { textColor = hintColor },
-                    };
-                    GUI.Label(hintRect, new GUIContent(inlineHint, fullHintTooltip), hintStyle);
-                }
+                    clipping = TextClipping.Clip,
+                    alignment = TextAnchor.MiddleLeft,
+                    normal = { textColor = hintColor },
+                };
+                GUI.Label(hintRect, new GUIContent(inlineHint, fullHintTooltip), hintStyle);
             }
         }
 
@@ -2121,6 +2214,169 @@ namespace Hapbeat.Editor
         ///
         /// Handy for test-play style feedback where perceived latency matters.
         /// </summary>
+        /// <summary>
+        /// Detect and attach the Kit manifest that owns this entry.
+        /// Resolution order:
+        /// <list type="number">
+        ///   <item><b>streamClip path</b> (StreamClip / hybrid mode): walk up
+        ///         from the clip's asset path until a <c>*manifest*.json</c>
+        ///         is found in some ancestor folder.</item>
+        ///   <item><b>category (= kit name)</b> (Command mode, or when
+        ///         streamClip is null): look up
+        ///         <c>HapbeatSDK/Kits/&lt;category&gt;/&lt;category&gt;-manifest.json</c>
+        ///         via <see cref="HapbeatManifestIntensity.GetKitDirectory"/>.</item>
+        /// </list>
+        /// Updates <see cref="HapbeatEventEntry.manifestOverride"/> and
+        /// refreshes the cached intensity. Called automatically when the
+        /// user assigns / changes the entry's streamClip OR category, and
+        /// manually via the Refresh button next to the Manifest field.
+        /// </summary>
+        private static void AutoAttachManifestForEntry(HapbeatEventEntry entry, HapbeatEventMap owningMap)
+        {
+            if (entry == null) return;
+
+            // Try clip-based discovery first (more specific — works for any
+            // entry that has a clip, regardless of mode).
+            var found = HapbeatManifestIntensity.FindManifestForClip(entry.streamClip);
+
+            // Fallback: category-based discovery for Command-mode entries
+            // (or anywhere streamClip is empty). Maps category → kit folder
+            // → <kit>-manifest.json.
+            if (found == null && !string.IsNullOrEmpty(entry.category))
+            {
+                string kitDir = HapbeatManifestIntensity.GetKitDirectory(entry.category);
+                if (!string.IsNullOrEmpty(kitDir))
+                {
+                    string manifestAssetPath = HapbeatManifestIntensity.FindKitManifest(kitDir);
+                    if (!string.IsNullOrEmpty(manifestAssetPath))
+                        found = AssetDatabase.LoadAssetAtPath<TextAsset>(manifestAssetPath);
+                }
+            }
+
+            // No-op when nothing is found AND no current override (avoid
+            // accidentally clearing a designer-pinned override).
+            if (found == null && entry.manifestOverride == null) return;
+            if (found == entry.manifestOverride)
+            {
+                // Same target — still refresh the cached intensity in case
+                // the manifest's intensity value was edited externally.
+                if (HapbeatManifestIntensity.TryGetIntensity(entry, out float same))
+                    entry.SetCachedManifestIntensity(same);
+                if (owningMap != null) EditorUtility.SetDirty(owningMap);
+                return;
+            }
+            if (owningMap != null)
+                Undo.RegisterCompleteObjectUndo(owningMap, "Auto-attach Manifest");
+            entry.manifestOverride = found;
+            if (HapbeatManifestIntensity.TryGetIntensity(entry, out float resolved))
+                entry.SetCachedManifestIntensity(resolved);
+            else
+                entry.SetCachedManifestIntensity(-1f);
+            if (owningMap != null) EditorUtility.SetDirty(owningMap);
+        }
+
+        /// <summary>
+        /// Custom replacement for <c>EditorGUI.ObjectField</c> tailored to
+        /// the manifest selector:
+        /// <list type="bullet">
+        ///   <item>Click anywhere on the field opens
+        ///         <see cref="EditorGUIUtility.ShowObjectPicker{T}"/> pre-filtered
+        ///         with the search string "manifest" so files like
+        ///         <c>tutorial-kit-manifest.json</c> surface at the top.</item>
+        ///   <item>Drag-drop validates that the dropped asset is a TextAsset
+        ///         whose path ends with ".json"; non-JSON drops are rejected
+        ///         with a warning instead of silently overwriting the field.</item>
+        ///   <item><c>changed</c> is set to true only when the underlying
+        ///         override reference actually changes (matches the existing
+        ///         <c>EditorGUI.EndChangeCheck</c> contract).</item>
+        /// </list>
+        /// </summary>
+        private static TextAsset DrawManifestPickerField(
+            Rect rect, TextAsset current, string tooltip, out bool changed)
+        {
+            changed = false;
+            var e = Event.current;
+
+            // 1. Drag-drop: accept TextAsset whose path ends with .json.
+            if (rect.Contains(e.mousePosition))
+            {
+                if (e.type == EventType.DragUpdated || e.type == EventType.DragPerform)
+                {
+                    TextAsset valid = null;
+                    foreach (var obj in DragAndDrop.objectReferences)
+                    {
+                        if (!(obj is TextAsset ta)) continue;
+                        string p = AssetDatabase.GetAssetPath(ta);
+                        if (!string.IsNullOrEmpty(p) &&
+                            p.EndsWith(".json", System.StringComparison.OrdinalIgnoreCase))
+                        {
+                            valid = ta;
+                            break;
+                        }
+                    }
+                    DragAndDrop.visualMode = valid != null
+                        ? DragAndDropVisualMode.Copy
+                        : DragAndDropVisualMode.Rejected;
+                    if (e.type == EventType.DragPerform)
+                    {
+                        if (valid != null)
+                        {
+                            DragAndDrop.AcceptDrag();
+                            current = valid;
+                            changed = true;
+                        }
+                        else if (DragAndDrop.objectReferences.Length > 0)
+                        {
+                            Debug.LogWarning(
+                                "[Hapbeat] Manifest override must be a .json file " +
+                                "(typically <kitname>-manifest.json).");
+                        }
+                        e.Use();
+                    }
+                }
+            }
+
+            // 2. Render the field as a clickable "object field" style box.
+            //    We tag a control ID so we can correlate the picker close
+            //    event with this specific field.
+            int pickerCtrlId = GUIUtility.GetControlID(FocusType.Passive);
+            string display = current != null ? current.name : "None (Manifest)";
+            var content = new GUIContent(display, tooltip);
+            // Custom render: standard objectField style + a small picker dot
+            // on the right. Click anywhere → open filtered picker.
+            if (GUI.Button(rect, content, EditorStyles.objectField))
+            {
+                EditorGUIUtility.ShowObjectPicker<TextAsset>(
+                    current, false, "manifest", pickerCtrlId);
+            }
+
+            // 3. Listen for the picker close event matching our control ID.
+            if (e.commandName == "ObjectSelectorUpdated"
+                && EditorGUIUtility.GetObjectPickerControlID() == pickerCtrlId)
+            {
+                var picked = EditorGUIUtility.GetObjectPickerObject() as TextAsset;
+                // Validate .json extension; reject other text assets.
+                if (picked != null)
+                {
+                    string p = AssetDatabase.GetAssetPath(picked);
+                    if (!p.EndsWith(".json", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        Debug.LogWarning(
+                            $"[Hapbeat] Manifest override must be a .json file. Got: {p}");
+                        picked = current; // revert
+                    }
+                }
+                if (picked != current)
+                {
+                    current = picked;
+                    changed = true;
+                }
+                e.Use();
+            }
+
+            return current;
+        }
+
         private static void DrawPressButton(Rect rect, GUIContent content, bool enabled,
             Color? bgColor, Action onPress)
         {
@@ -3290,158 +3546,23 @@ namespace Hapbeat.Editor
             return dropped.name;
         }
 
-        // ── Kit manifest scanner ─────────────────────────────────────────────
-
-        /// <summary>
-        /// Cached event metadata parsed from all kits' manifest.json files under
-        /// Assets/HapbeatKits/. Invalidated on a short TTL and whenever a user
-        /// clicks "Refresh" in the Event ID dropdown.
-        /// </summary>
-        private struct KitManifestEvent
-        {
-            public string kitId;       // folder name under HapbeatKits/, e.g. "hand-demo-kit"
-            public string eventId;     // full ID, e.g. "impact.hit-soft"
-            public string mode;        // "command" (default) / "stream_clip" / "stream_source"
-            public string description; // optional description from manifest
-        }
-
-        private static List<KitManifestEvent> _cachedKitEvents;
-        private static double _cachedKitEventsTime = -1;
-        private const double KitEventCacheTtl = 3.0;
-
-        private static List<KitManifestEvent> LoadKitManifestEvents()
-        {
-            double now = EditorApplication.timeSinceStartup;
-            if (_cachedKitEvents != null && now - _cachedKitEventsTime < KitEventCacheTtl)
-                return _cachedKitEvents;
-
-            var result = new List<KitManifestEvent>();
-            // Resolve via marker asset so the user can move/rename the folder freely.
-            string kitsRoot = HapbeatKitsReadme.FindKitsRootPath();
-            if (!string.IsNullOrEmpty(kitsRoot) && AssetDatabase.IsValidFolder(kitsRoot))
-            {
-                foreach (string kitDir in AssetDatabase.GetSubFolders(kitsRoot))
-                {
-                    string manifestAssetPath = $"{kitDir}/manifest.json";
-                    // AssetPath → absolute path ("Assets/..." is relative to project)
-                    string absPath = Path.Combine(
-                        Application.dataPath,
-                        manifestAssetPath.Substring("Assets/".Length));
-                    if (!File.Exists(absPath)) continue;
-                    try
-                    {
-                        string json = File.ReadAllText(absPath);
-                        string kitId = Path.GetFileName(kitDir);
-                        ParseManifestEventsInto(json, kitId, result);
-                    }
-                    catch (System.Exception e)
-                    {
-                        UnityEngine.Debug.LogWarning(
-                            $"[Hapbeat] Failed to parse {manifestAssetPath}: {e.Message}");
-                    }
-                }
-            }
-
-            _cachedKitEvents = result;
-            _cachedKitEventsTime = now;
-            return result;
-        }
-
-        private static void InvalidateKitManifestCache()
-        {
-            _cachedKitEvents = null;
-            _cachedKitEventsTime = -1;
-        }
-
-        /// <summary>
-        /// Extract the top-level "events" object from a manifest.json and push each
-        /// entry's id/mode/description into <paramref name="output"/>. Uses brace-depth
-        /// tracking rather than a JSON library so the SDK stays dependency-free.
-        /// </summary>
-        private static void ParseManifestEventsInto(string json, string kitId, List<KitManifestEvent> output)
-        {
-            // Locate the "events" : { ... } block at the top level.
-            var eventsMatch = Regex.Match(json, "\"events\"\\s*:\\s*\\{");
-            if (!eventsMatch.Success) return;
-
-            int blockStart = eventsMatch.Index + eventsMatch.Length;
-            int blockEnd = FindMatchingBrace(json, blockStart);
-            if (blockEnd < 0) return;
-
-            string block = json.Substring(blockStart, blockEnd - blockStart);
-
-            // Walk top-level keys inside the events block.
-            int pos = 0;
-            while (pos < block.Length)
-            {
-                var keyMatch = Regex.Match(
-                    block.Substring(pos), "\"([^\"]+)\"\\s*:\\s*\\{");
-                if (!keyMatch.Success) break;
-
-                string eventId = keyMatch.Groups[1].Value;
-                int entryStart = pos + keyMatch.Index + keyMatch.Length;
-                int entryEnd = FindMatchingBrace(block, entryStart);
-                if (entryEnd < 0) break;
-
-                string entryBody = block.Substring(entryStart, entryEnd - entryStart);
-
-                string mode = "command"; // default per kit-format spec (absent mode = command)
-                var modeMatch = Regex.Match(entryBody, "\"mode\"\\s*:\\s*\"([^\"]+)\"");
-                if (modeMatch.Success) mode = modeMatch.Groups[1].Value;
-
-                string description = "";
-                var descMatch = Regex.Match(entryBody, "\"description\"\\s*:\\s*\"([^\"]*)\"");
-                if (descMatch.Success) description = descMatch.Groups[1].Value;
-
-                output.Add(new KitManifestEvent
-                {
-                    kitId = kitId,
-                    eventId = eventId,
-                    mode = mode,
-                    description = description,
-                });
-
-                pos = entryEnd + 1;
-            }
-        }
-
-        /// <summary>
-        /// Given the index of the character AFTER an opening "{", return the index
-        /// of its matching "}" (brace-balanced). Returns -1 if unbalanced.
-        /// Naively ignores string-literal escaping; acceptable for well-formed Studio output.
-        /// </summary>
-        private static int FindMatchingBrace(string s, int openAfterIdx)
-        {
-            int depth = 1;
-            int i = openAfterIdx;
-            bool inString = false;
-            while (i < s.Length && depth > 0)
-            {
-                char c = s[i];
-                if (c == '"' && (i == 0 || s[i - 1] != '\\')) inString = !inString;
-                else if (!inString)
-                {
-                    if (c == '{') depth++;
-                    else if (c == '}') depth--;
-                }
-                if (depth > 0) i++;
-            }
-            return depth == 0 ? i : -1;
-        }
-
         // ── Event ID dropdown (Command mode) ─────────────────────────────────
+        // Kit manifest scanning was consolidated into HapbeatManifestIntensity;
+        // this window now consumes HapbeatManifestIntensity.LoadAllEvents()
+        // and HapbeatManifestIntensity.GetKitDirectoryNames() instead of
+        // owning a duplicate scanner / parser.
 
         /// <summary>
         /// Adds a "From Kit ▾" dropdown below the Event ID row that lists every
-        /// command-mode event found in Assets/HapbeatKits/*/manifest.json. Picking
-        /// an entry splits it into category + name and writes both fields.
+        /// command-mode event found in <c>HapbeatSDK/Kits/&lt;kit&gt;/&lt;kit&gt;-manifest.json</c>.
+        /// Picking an entry splits it into category + name and writes both fields.
         /// </summary>
         private static void DrawKitEventIdDropdown(
             SerializedProperty categoryProp,
             SerializedProperty eventNameProp,
             SerializedObject so)
         {
-            var events = LoadKitManifestEvents()
+            var events = HapbeatManifestIntensity.LoadAllEvents()
                 .Where(e => e.mode == "command")
                 .ToList();
 
@@ -3453,30 +3574,31 @@ namespace Hapbeat.Editor
             GUILayout.Label(
                 events.Count == 0
                     ? "No Kit events found. Deploy a Kit from Studio."
-                    : $"{events.Count} event(s) from {events.Select(e => e.kitId).Distinct().Count()} kit(s)",
+                    : $"{events.Count} event(s) from {events.Select(e => e.kitName).Distinct().Count()} kit(s)",
                 EditorStyles.miniLabel);
             GUILayout.FlexibleSpace();
 
-            if (GUILayout.Button("From Kit \u25be", EditorStyles.miniButton, GUILayout.Width(80)))
+            // Use EditorStyles.popup so the chevron shape matches Unity's
+            // standard dropdown (same as the Mode field). The chevron is
+            // rendered by the style \u2014 don't include "\u25be" in the label.
+            if (GUILayout.Button("From Kit", EditorStyles.popup, GUILayout.Width(80)))
             {
                 var menu = new GenericMenu();
                 if (events.Count == 0)
                 {
                     menu.AddDisabledItem(new GUIContent("No Kit manifests found"));
                     menu.AddSeparator("");
-                    menu.AddItem(new GUIContent("Open HapbeatKits folder"), false, () =>
+                    menu.AddItem(new GUIContent("Open HapbeatSDK/Kits folder"), false, () =>
                         RevealKitSubfolder(""));
                 }
                 else
                 {
-                    // Group by kit id, kits alphabetical, events alphabetical within kit
-                    foreach (var group in events.GroupBy(e => e.kitId).OrderBy(g => g.Key))
+                    foreach (var group in events.GroupBy(e => e.kitName).OrderBy(g => g.Key))
                     {
                         foreach (var ev in group.OrderBy(e => e.eventId))
                         {
                             string menuPath = $"{group.Key}/{ev.eventId}";
                             bool isCurrent = ev.eventId == curId;
-                            // capture-by-value for the closure
                             string capturedId = ev.eventId;
                             menu.AddItem(new GUIContent(menuPath), isCurrent, () =>
                             {
@@ -3488,7 +3610,8 @@ namespace Hapbeat.Editor
                         }
                     }
                     menu.AddSeparator("");
-                    menu.AddItem(new GUIContent("Refresh"), false, InvalidateKitManifestCache);
+                    menu.AddItem(new GUIContent("Refresh"), false,
+                        HapbeatManifestIntensity.Invalidate);
                 }
                 menu.ShowAsContext();
             }
@@ -3654,31 +3777,66 @@ namespace Hapbeat.Editor
             // Manual Rect layout for consistent alignment
             var lineRect = EditorGUILayout.GetControlRect();
             float labelW = EditorGUIUtility.labelWidth;
-            float dropW = 16;
+            // dropW: width of the kit-name dropdown button to the right of
+            // the category text field. The chevron icon is manually centred
+            // (see DrawCenteredChevronButton) so this width affects only
+            // the button's hit area, not the chevron position.
+            float dropW = 22;
             float fieldStart = lineRect.x + labelW + 2;
             float totalFieldW = lineRect.width - labelW - 2;
             float catW = totalFieldW * 0.4f - dropW;
             float nameW = totalFieldW * 0.6f;
+            // (dropW set below in the Category dropdown section once we know
+            // we're rendering with popup style.)
 
             // Label
             EditorGUI.LabelField(new Rect(lineRect.x, lineRect.y, labelW, lineRect.height),
                 new GUIContent("Event ID", "Composed as category.name. Sent to devices."));
 
-            // Category text field
+            // Category text field — category = kit name by convention.
+            // Auto-attach the matching manifest when the user changes it.
+            string prevCategory = categoryProp.stringValue;
             categoryProp.stringValue = DrawPlaceholderRect(
                 new Rect(fieldStart, lineRect.y, catW, lineRect.height),
-                categoryProp.stringValue, "clip");
+                categoryProp.stringValue, "kit-name");
+            bool categoryChanged = prevCategory != categoryProp.stringValue;
 
-            // Category dropdown button
+            // Category dropdown — populated from HapbeatSDK/Kits/ direct
+            // subfolders so the user picks an actual installed Kit name
+            // (not a legacy hardcoded list). EditorStyles.popup right-anchors
+            // its chevron (looks off-center on a narrow icon button), so we
+            // draw a miniButton background + a separately-centered chevron
+            // icon (same image as Unity's standard popup chevron).
             var dropRect = new Rect(fieldStart + catW, lineRect.y, dropW, lineRect.height);
-            if (EditorGUI.DropdownButton(dropRect, GUIContent.none, FocusType.Passive))
+            if (DrawCenteredChevronButton(dropRect))
             {
                 var menu = new GenericMenu();
-                foreach (var cat in HapbeatEventEntry.StandardCategories)
+                var kitNames = HapbeatManifestIntensity.GetKitDirectoryNames();
+                if (kitNames.Count == 0)
                 {
-                    string c = cat;
-                    menu.AddItem(new GUIContent(c), categoryProp.stringValue == c,
-                        () => { categoryProp.stringValue = c; so.ApplyModifiedProperties(); });
+                    menu.AddDisabledItem(new GUIContent(
+                        "No Kits found under Assets/HapbeatSDK/Kits/"));
+                }
+                else
+                {
+                    foreach (var name in kitNames)
+                    {
+                        string c = name;
+                        menu.AddItem(new GUIContent(c), categoryProp.stringValue == c,
+                            () =>
+                            {
+                                categoryProp.stringValue = c;
+                                so.ApplyModifiedProperties();
+                                // Re-attach manifest now that the kit changed.
+                                if (_selectedMap != null &&
+                                    _selectedEntryIndex >= 0 &&
+                                    _selectedEntryIndex < _selectedMap.entries.Count)
+                                {
+                                    AutoAttachManifestForEntry(
+                                        _selectedMap.entries[_selectedEntryIndex], _selectedMap);
+                                }
+                            });
+                    }
                 }
                 menu.ShowAsContext();
             }
@@ -3686,11 +3844,11 @@ namespace Hapbeat.Editor
             // Event name text field
             eventNameProp.stringValue = DrawPlaceholderRect(
                 new Rect(fieldStart + catW + dropW + 2, lineRect.y, nameW - 2, lineRect.height),
-                eventNameProp.stringValue, "hit");
+                eventNameProp.stringValue, "event-name");
 
             // Preview
             var entry = _selectedMap.entries[_selectedEntryIndex];
-            string previewId = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "clip.hit";
+            string previewId = !string.IsNullOrEmpty(entry.eventId) ? entry.eventId : "kit-name.event-name";
             EditorGUI.BeginDisabledGroup(true);
             EditorGUILayout.TextField(new GUIContent(" \u2192 eventId"), previewId);
             EditorGUI.EndDisabledGroup();
@@ -3699,6 +3857,17 @@ namespace Hapbeat.Editor
                 EditorGUILayout.HelpBox("category: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
             if (!string.IsNullOrEmpty(eventNameProp.stringValue) && !HapbeatEventEntry.IsValidSegment(eventNameProp.stringValue))
                 EditorGUILayout.HelpBox("name: lowercase a-z, 0-9, -, _ only", MessageType.Warning);
+
+            // If the user just edited the category (text field or dropdown),
+            // auto-attach the matching Kit manifest. This complements the
+            // streamClip change-handler so Command-mode entries also get
+            // their intensity resolved without manual Refresh clicks.
+            if (categoryChanged)
+            {
+                so.ApplyModifiedProperties();
+                AutoAttachManifestForEntry(entry, _selectedMap);
+                so.Update();
+            }
         }
 
         /// <summary>Draw a text field with placeholder at a specific Rect.</summary>
@@ -3916,6 +4085,84 @@ namespace Hapbeat.Editor
         // --- Placeholder text field helpers ---
         // Draw real TextField always, overlay placeholder only when unfocused + empty.
         // This ensures correct focus ring behavior.
+
+        // Cached chevron icon for the kit-category dropdown button. Unity's
+        // standard popup chevron lives in a few internal icon names — pick
+        // the dark variant first (Editor default theme), fall back to the
+        // light name, then to null (in which case the helper draws a text
+        // glyph as a final fallback).
+        private static Texture _kitDropdownChevron;
+        private static bool _kitDropdownChevronCached;
+        private static Texture KitDropdownChevron
+        {
+            get
+            {
+                if (_kitDropdownChevronCached) return _kitDropdownChevron;
+                _kitDropdownChevronCached = true;
+                _kitDropdownChevron =
+                    (EditorGUIUtility.IconContent("d_icon dropdown")?.image) ??
+                    (EditorGUIUtility.IconContent("icon dropdown")?.image) ??
+                    (EditorGUIUtility.IconContent("d_PopupCurveSwatch")?.image) ??
+                    null;
+                return _kitDropdownChevron;
+            }
+        }
+
+        /// <summary>
+        /// Draws a miniButton-sized rectangle with Unity's standard popup
+        /// chevron centred both horizontally and vertically. Returns true
+        /// when the user clicks. Used by the Event-ID category dropdown
+        /// where the popup style's default right-anchored chevron looks
+        /// off-centre on a narrow icon button.
+        /// </summary>
+        private static bool DrawCenteredChevronButton(Rect rect)
+        {
+            var e = Event.current;
+            bool clicked = false;
+
+            // Hit-testing: dispatch on MouseDown so the menu opens on press
+            // (matches the timing users expect from popups).
+            if (e.type == EventType.MouseDown
+                && e.button == 0
+                && rect.Contains(e.mousePosition))
+            {
+                clicked = true;
+                GUI.changed = true;
+                e.Use();
+            }
+
+            if (e.type == EventType.Repaint)
+            {
+                // Background — flat miniButton box (no built-in chevron).
+                EditorStyles.miniButton.Draw(rect, false, false, false, false);
+
+                // Chevron — manually centred.
+                var chevron = KitDropdownChevron;
+                if (chevron != null)
+                {
+                    float iw = Mathf.Min(chevron.width, rect.width - 4f);
+                    float ih = Mathf.Min(chevron.height, rect.height - 4f);
+                    var iconRect = new Rect(
+                        rect.x + (rect.width - iw) * 0.5f,
+                        rect.y + (rect.height - ih) * 0.5f,
+                        iw, ih);
+                    GUI.DrawTexture(iconRect, chevron, ScaleMode.ScaleToFit, true);
+                }
+                else
+                {
+                    // Fallback when no chevron icon is shipped in this Unity
+                    // build — draw a Unicode triangle, centred.
+                    var glyphStyle = new GUIStyle(EditorStyles.miniLabel)
+                    {
+                        alignment = TextAnchor.MiddleCenter,
+                        fontSize = 11,
+                    };
+                    glyphStyle.Draw(rect, new GUIContent("▾"), 0);
+                }
+            }
+
+            return clicked;
+        }
 
         private static GUIStyle _phStyle;
         private static GUIStyle PhStyle => _phStyle ??= new GUIStyle(EditorStyles.label)

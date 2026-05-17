@@ -1,0 +1,61 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf9c34b08ac7b8c4f954b03abe0affb3, type: 3}
+  m_Name: BasicExampleEventMap
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatEventMap
+  entries:
+  - _id: 2f4bdfd4ec4742798b750687bfeca05d
+    mode: 1
+    displayName: demo_stream_sine_100hz
+    category: basic-exam-kit
+    eventName: sine_100hz_1s
+    streamClip: {fileID: 8300000, guid: 1ee021f82fc06d24a82a6a8c9b20cf9e, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
+    _cachedManifestIntensity: 0.5
+    _eventId: basic-exam-kit.sine_100hz_1s
+  - _id: b880742391a44ad697b41357a3029666
+    mode: 1
+    displayName: demo_stream_loop_100hz
+    category: basic-exam-kit
+    eventName: sine_100hz_1s_loop
+    streamClip: {fileID: 8300000, guid: 1ee021f82fc06d24a82a6a8c9b20cf9e, type: 3}
+    loop: 1
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
+    _cachedManifestIntensity: 0.5
+    _eventId: basic-exam-kit.sine_100hz_1s_loop
+  - _id: 20647f3889ec411da0e96184805866ec
+    mode: 0
+    displayName: demo_command_sine_200hz
+    category: basic-exam-kit
+    eventName: sine_200hz_1s
+    streamClip: {fileID: 0}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
+    _cachedManifestIntensity: 0.5
+    _eventId: basic-exam-kit.sine_200hz_1s
+  revertPlayModeChanges: 0

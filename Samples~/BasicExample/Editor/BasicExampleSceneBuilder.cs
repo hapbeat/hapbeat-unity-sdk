@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEditor.Events;
@@ -24,9 +25,9 @@ namespace Hapbeat.Samples.Editor
     ///   - HapbeatStatusOverlay            (Status と Log の表示専用)
     ///
     /// 生成物の配置 (ユーザー領域):
-    ///   Assets/HapbeatSDK/Kits/basic-exam-kit/{install-clips, stream-clips}/
-    ///   Assets/HapbeatSDK/EventMaps/BasicExampleEventMap.asset
-    ///   Assets/HapbeatSDK/Scenes/BasicExample.unity
+    ///   Assets/HapbeatSDK/Kits/basic-exam-kit/{install-clips, stream-clips}/   (Studio 共通の kit root)
+    ///   Assets/HapbeatSDK/SDK_Samples/BasicExample/EventMaps/BasicExampleEventMap.asset
+    ///   Assets/HapbeatSDK/SDK_Samples/BasicExample/Scenes/BasicExample.unity
     /// </summary>
     public static class BasicExampleSceneBuilder
     {
@@ -38,22 +39,24 @@ namespace Hapbeat.Samples.Editor
         private const string kEntryStreamLoop    = "demo_stream_loop_100hz";
         private const string kEntryCommand       = "demo_command_sine_200hz";
 
-        private static string kScenesDir => HapbeatSDKFolderCreator.kScenesDir;
-        private static string kEventMapsDir => HapbeatSDKFolderCreator.kEventMapsDir;
+        // Subfolder names — symmetric on both Samples~ and Assets/HapbeatSDK
+        // sides so Maintainer Sync can mirror 1:1.
+        private const string kSceneSubdir    = "Scenes";
+        private const string kEventMapSubdir = "EventMaps";
+
+        // Per-sample user-area root for Scenes/EventMaps:
+        // Assets/HapbeatSDK/SDK_Samples/BasicExample/{Scenes,EventMaps}/.
+        // The SDK_Samples/ umbrella keeps SDK-shipped assets visually
+        // separated from Studio-managed user content (HapbeatSDK/Kits,
+        // HapbeatSDK/Scenes, HapbeatSDK/EventMaps).
+        // Kits ALWAYS live at the shared Assets/HapbeatSDK/Kits/ root
+        // (Studio convention) so HapbeatManifestIntensity finds them via
+        // HapbeatKitsReadme.FindKitsRootPath().
+        private const string kHapbeatSdkSampleRoot = "Assets/HapbeatSDK/SDK_Samples/BasicExample";
 
         [MenuItem("Hapbeat/Build Samples/1. Basic Example", false, 60)]
         public static void Build()
         {
-            if (!EditorUtility.DisplayDialog(
-                "BasicExample 生成",
-                "BasicExample 用 Kit / EventMap / Scene を生成します。\n" +
-                $"  - Assets/HapbeatSDK/Kits/{kKitName}/ (manifest + wav)\n" +
-                $"  - {kEventMapsDir}/{kEventMapName}.asset\n" +
-                $"  - {kScenesDir}/{kSceneName}.unity\n\n" +
-                "現在のシーンの未保存の変更は失われます。",
-                "生成する", "キャンセル"))
-                return;
-
             string sampleRoot = FindSampleRoot();
             if (sampleRoot == null)
             {
@@ -63,18 +66,176 @@ namespace Hapbeat.Samples.Editor
                 return;
             }
 
-            // 1. HapbeatSDK layout (Kits/Scenes/EventMaps).
+            // Dual-mode:
+            //   - Deploy mode: sample ships authored Scene + EventMap (in repo).
+            //     The Build menu copies them, along with the Kit, into the
+            //     user-editable Assets/HapbeatSDK/ area and rebakes references.
+            //   - Scaffold mode: when Scene/EventMap don't yet exist in the
+            //     sample folder (SDK dev bootstrap before initial commit),
+            //     the menu generates everything programmatically into the
+            //     sample folder so it can be committed.
+            string srcScene = $"{sampleRoot}/{kSceneSubdir}/{kSceneName}.unity";
+            bool hasAuthoredScene = AssetDatabase.LoadAssetAtPath<SceneAsset>(srcScene) != null;
+            if (hasAuthoredScene)
+                DeployFromSampleToHapbeatSDK(sampleRoot);
+            else
+                ScaffoldIntoSample(sampleRoot);
+        }
+
+        // ----------------------------------------------------------------
+        // Deploy mode — Copy authored Kit + Scene + EventMap from imported
+        // sample to Assets/HapbeatSDK/{Kits,Scenes,EventMaps}/.
+        // ----------------------------------------------------------------
+
+        private static void DeployFromSampleToHapbeatSDK(string sampleRoot)
+        {
+            // Kits go to the shared HapbeatSDK/Kits/ root (Studio convention,
+            // discovered by HapbeatManifestIntensity).
             string kitsRoot = HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
+            string kitDir   = $"{kitsRoot}/{kKitName}";
 
-            // 2. Kit copy.
-            string kitDir = $"{kitsRoot}/{kKitName}";
-            CopyKit(sampleRoot + "/Kit", kitDir);
+            // Scenes / EventMaps go under the per-sample subfolder.
+            string dstScenes = $"{kHapbeatSdkSampleRoot}/{kSceneSubdir}";
+            string dstMaps   = $"{kHapbeatSdkSampleRoot}/{kEventMapSubdir}";
+            HapbeatSampleDeployment.EnsureAssetFolder(dstScenes);
+            HapbeatSampleDeployment.EnsureAssetFolder(dstMaps);
 
-            // 3. Scene (must be created before BuildOrLoadEventMap because
+            string srcScene = $"{sampleRoot}/{kSceneSubdir}/{kSceneName}.unity";
+            string srcMap   = $"{sampleRoot}/{kEventMapSubdir}/{kEventMapName}.asset";
+            string dstScene = $"{dstScenes}/{kSceneName}.unity";
+            string dstMap   = $"{dstMaps}/{kEventMapName}.asset";
+
+            if (!EditorUtility.DisplayDialog(
+                "BasicExample を展開",
+                "サンプル同梱の BasicExample 資産を Assets/HapbeatSDK/ 配下にコピーします。\n" +
+                $"  - {kitDir}/ (Kit, manifest + wav)\n" +
+                $"  - {dstMap}\n" +
+                $"  - {dstScene}\n\n" +
+                "既存のコピーは上書きされます。",
+                "展開する", "キャンセル"))
+                return;
+
+            // 1. Kit (raw file copy: WAVs get fresh GUIDs in HapbeatSDK).
+            HapbeatSampleDeployment.CopyKitFolder(sampleRoot + "/Kit", kitDir);
+            AssetDatabase.Refresh();
+
+            // 2. Scene + EventMap via shared helper (CopyAsset + scene-ref rebake).
+            var scenes = new List<HapbeatSampleDeployment.AssetCopy>
+            {
+                new HapbeatSampleDeployment.AssetCopy { sourcePath = srcScene, destPath = dstScene },
+            };
+            var eventMaps = new List<HapbeatSampleDeployment.AssetCopy>
+            {
+                new HapbeatSampleDeployment.AssetCopy { sourcePath = srcMap, destPath = dstMap },
+            };
+            var result = HapbeatSampleDeployment.DeployScene(scenes, eventMaps);
+
+            // 3. EventMap streamClip rebake — the copied EventMap still
+            // references AudioClips inside the sample-side Kit. Relink them
+            // to the freshly copied HapbeatSDK Kit WAVs by filename match.
+            if (result.copiedEventMaps != null &&
+                result.copiedEventMaps.TryGetValue(srcMap, out var copiedMap))
+            {
+                RelinkEventMapStreamClipsToKit(copiedMap, kitDir);
+                EditorUtility.SetDirty(copiedMap);
+                AssetDatabase.SaveAssets();
+            }
+
+            if (!string.IsNullOrEmpty(result.primaryScenePath))
+                EditorSceneManager.OpenScene(result.primaryScenePath, OpenSceneMode.Single);
+
+            EditorUtility.DisplayDialog("完了",
+                "BasicExample を展開しました:\n" +
+                $"  Kit       : {kitDir}/\n" +
+                $"  EventMap  : {dstMap}\n" +
+                $"  Scene     : {dstScene}\n\n" +
+                "Play で Space / R / F / S / C を試してみてください。",
+                "OK");
+        }
+
+        /// <summary>
+        /// Walk every entry in <paramref name="map"/> and swap its
+        /// <c>streamClip</c> reference for an AudioClip with the same file
+        /// name found under <paramref name="kitDir"/> (any depth). The
+        /// sample-side Kit and the HapbeatSDK Kit have identical filenames
+        /// but different asset GUIDs (CopyKit uses raw file IO), so filename
+        /// is the stable lookup key.
+        /// </summary>
+        private static void RelinkEventMapStreamClipsToKit(HapbeatEventMap map, string kitDir)
+        {
+            if (map == null || map.entries == null) return;
+
+            // Build a filename → AudioClip lookup over the destination Kit.
+            var byFileName = new Dictionary<string, AudioClip>();
+            string[] guids = AssetDatabase.FindAssets("t:AudioClip", new[] { kitDir });
+            foreach (var g in guids)
+            {
+                string p = AssetDatabase.GUIDToAssetPath(g);
+                var clip = AssetDatabase.LoadAssetAtPath<AudioClip>(p);
+                if (clip == null) continue;
+                string name = Path.GetFileName(p);
+                byFileName[name] = clip;
+            }
+
+            foreach (var entry in map.entries)
+            {
+                if (entry == null || entry.streamClip == null) continue;
+                string srcPath = AssetDatabase.GetAssetPath(entry.streamClip);
+                string srcName = Path.GetFileName(srcPath);
+                if (byFileName.TryGetValue(srcName, out var newClip) &&
+                    newClip != entry.streamClip)
+                {
+                    entry.streamClip = newClip;
+                }
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Scaffold mode — Generate Kit-aware Scene + EventMap from scratch,
+        // writing into the sample folder so the SDK dev can commit them
+        // as the shipped authored version.
+        // ----------------------------------------------------------------
+
+        private static void ScaffoldIntoSample(string sampleRoot)
+        {
+            // Scaffold and Deploy must produce the same end state so the
+            // EventMap's intensity lookup works either way:
+            //   - Kit goes to HapbeatSDK/Kits/<kit-name>/ (Studio convention,
+            //     discovered by HapbeatManifestIntensity)
+            //   - Scenes / EventMaps go under HapbeatSDK/SDK_Samples/BasicExample/
+            //
+            // SDK developer verifies in Play mode, then runs
+            //   Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (BasicExample)
+            // to publish the .unity / .asset (+.meta) into Samples~ for commit.
+            string kitsRoot    = HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
+            string kitDir      = $"{kitsRoot}/{kKitName}";
+            string scenesDir   = $"{kHapbeatSdkSampleRoot}/{kSceneSubdir}";
+            string eventMapDir = $"{kHapbeatSdkSampleRoot}/{kEventMapSubdir}";
+            string scenePath   = $"{scenesDir}/{kSceneName}.unity";
+            string mapPath     = $"{eventMapDir}/{kEventMapName}.asset";
+
+            HapbeatSampleDeployment.EnsureAssetFolder(scenesDir);
+            HapbeatSampleDeployment.EnsureAssetFolder(eventMapDir);
+
+            if (!EditorUtility.DisplayDialog(
+                "BasicExample を scaffold",
+                "サンプルに同梱されている BasicExample Scene / EventMap が見つからないため、Assets/HapbeatSDK/ 配下に初期生成します。\n" +
+                "(通常は SDK 開発者がコミット前の bootstrap として 1 回だけ実行する操作)\n\n" +
+                $"  - {kitDir}/ (Kit, manifest + wav)\n" +
+                $"  - {scenePath}\n" +
+                $"  - {mapPath}\n\n" +
+                "Play で動作確認した後、Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (BasicExample) を実行してください。",
+                "生成する", "キャンセル"))
+                return;
+
+            // Kit (raw file copy, fresh GUIDs). Must come before EventMap
+            // creation so BuildOrLoadEventMap can reference HapbeatSDK Kit WAVs.
+            HapbeatSampleDeployment.CopyKitFolder(sampleRoot + "/Kit", kitDir);
+
+            // Scene (must be created before BuildOrLoadEventMap because
             // EditorSceneManager.NewScene triggers Resources.UnloadUnusedAssets,
             // which invalidates just-created ScriptableObject asset references
             // that are only held by local C# variables).
-            string mapPath = $"{kEventMapsDir}/{kEventMapName}.asset";
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
             // Make the scene render as a black 2D UI: clear camera to solid black
@@ -148,17 +309,18 @@ namespace Hapbeat.Samples.Editor
 
             EditorUtility.SetDirty(dispatcher);
 
-            // Save scene.
-            string scenePath = $"{kScenesDir}/{kSceneName}.unity";
+            // Save scene into the sample folder so the SDK developer can
+            // commit it as the shipped authored version.
             EditorSceneManager.SaveScene(scene, scenePath);
-            Debug.Log($"[Hapbeat] BasicExample scene saved: {scenePath}");
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[Hapbeat] BasicExample scene scaffolded: {scenePath}");
 
             EditorUtility.DisplayDialog("完了",
-                "BasicExample を生成しました:\n" +
-                $"  Kit       : {kitDir}/\n" +
-                $"  EventMap  : {mapPath}\n" +
-                $"  Scene     : {scenePath}\n\n" +
-                "Play で Space / R / F / S / C を試してみてください。",
+                "BasicExample を Assets/HapbeatSDK/ に scaffold しました:\n" +
+                $"  Kit      : {kitDir}/\n" +
+                $"  EventMap : {mapPath}\n" +
+                $"  Scene    : {scenePath}\n\n" +
+                "Play で動作確認した後、Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (BasicExample) を実行して repo にコミットしてください。",
                 "OK");
         }
 
@@ -234,41 +396,6 @@ namespace Hapbeat.Samples.Editor
             if (ui != null)
                 UnityEventTools.AddStringPersistentListener(b.onPressed, ui.Log, "Ping sent");
             dispatcher.Bindings.Add(b);
-        }
-
-        // ----------------------------------------------------------------
-        // Kit copy
-        // ----------------------------------------------------------------
-
-        private static void CopyKit(string srcAssetPath, string dstAssetPath)
-        {
-            string srcAbs = ToAbsolute(srcAssetPath);
-            string dstAbs = ToAbsolute(dstAssetPath);
-            if (!Directory.Exists(srcAbs))
-            {
-                Debug.LogWarning($"[Hapbeat] Kit source not found: {srcAssetPath}");
-                return;
-            }
-            CopyDirectoryRecursive(srcAbs, dstAbs);
-            AssetDatabase.Refresh();
-        }
-
-        private static void CopyDirectoryRecursive(string srcAbs, string dstAbs)
-        {
-            Directory.CreateDirectory(dstAbs);
-            foreach (var file in Directory.GetFiles(srcAbs))
-            {
-                string name = Path.GetFileName(file);
-                if (name.EndsWith(".meta")) continue;
-                string dst = Path.Combine(dstAbs, name);
-                if (!File.Exists(dst))
-                    File.Copy(file, dst);
-            }
-            foreach (var dir in Directory.GetDirectories(srcAbs))
-            {
-                string name = Path.GetFileName(dir);
-                CopyDirectoryRecursive(dir, Path.Combine(dstAbs, name));
-            }
         }
 
         // ----------------------------------------------------------------
@@ -462,13 +589,6 @@ namespace Hapbeat.Samples.Editor
             return null;
         }
 
-        private static string ToAbsolute(string assetPath)
-        {
-            if (assetPath.StartsWith("Assets/"))
-                return Path.Combine(Application.dataPath, assetPath.Substring("Assets/".Length))
-                    .Replace('\\', '/');
-            return Path.GetFullPath(assetPath);
-        }
     }
 }
 #endif

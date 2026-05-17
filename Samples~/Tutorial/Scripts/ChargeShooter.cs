@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace Hapbeat.Samples.Tutorial
@@ -27,7 +28,10 @@ namespace Hapbeat.Samples.Tutorial
 
         private void Update()
         {
-            if (Input.GetMouseButtonDown(0))
+            var mouse = Mouse.current;
+            if (mouse == null) return;
+
+            if (mouse.leftButton.wasPressedThisFrame)
                 BeginCharge();
 
             if (_charging)
@@ -35,7 +39,7 @@ namespace Hapbeat.Samples.Tutorial
                 float t = Mathf.Clamp01((Time.time - _chargeStartTime) / _maxChargeSeconds);
                 if (_chargeBar != null) _chargeBar.value = t;
 
-                if (Input.GetMouseButtonUp(0))
+                if (mouse.leftButton.wasReleasedThisFrame)
                     Release(t);
             }
         }

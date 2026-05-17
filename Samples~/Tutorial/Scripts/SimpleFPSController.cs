@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Hapbeat.Samples.Tutorial
 {
@@ -6,10 +7,8 @@ namespace Hapbeat.Samples.Tutorial
     /// Minimal keyboard / mouse FPS controller for the Tutorial sample.
     /// WASD or arrow keys to move, mouse look (right-click to toggle look mode
     /// so left-click stays available for interactions like ball launch / pickup),
-    /// Space to jump (optional).
-    ///
-    /// Falls back gracefully whether the project uses the new Input System
-    /// or the legacy Input Manager.
+    /// Space to jump (optional). Uses Unity Input System (Keyboard.current /
+    /// Mouse.current); requires the com.unity.inputsystem package.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
     public class SimpleFPSController : MonoBehaviour
@@ -23,6 +22,10 @@ namespace Hapbeat.Samples.Tutorial
         [Tooltip("If true, mouse look is always active. If false, hold right mouse button to look.")]
         [SerializeField] private bool _alwaysLook = true;
         [SerializeField] private Transform _cameraPivot;
+
+        // Mouse.current.delta はピクセル/フレーム。旧 Input.GetAxisRaw("Mouse X")
+        // の既定 sensitivity 0.1 にざっくり揃えるため内部で掛ける。
+        private const float PixelsToLegacy = 0.1f;
 
         private CharacterController _controller;
         private float _pitch;
@@ -52,11 +55,14 @@ namespace Hapbeat.Samples.Tutorial
 
         private void HandleLook()
         {
-            bool active = _alwaysLook || Input.GetMouseButton(1);
+            var mouse = Mouse.current;
+            if (mouse == null) return;
+            bool active = _alwaysLook || mouse.rightButton.isPressed;
             if (!active) return;
 
-            float mx = Input.GetAxisRaw("Mouse X") * _lookSensitivity;
-            float my = Input.GetAxisRaw("Mouse Y") * _lookSensitivity;
+            Vector2 delta = mouse.delta.ReadValue();
+            float mx = delta.x * _lookSensitivity * PixelsToLegacy;
+            float my = delta.y * _lookSensitivity * PixelsToLegacy;
 
             transform.Rotate(0f, mx, 0f);
             _pitch = Mathf.Clamp(_pitch - my, -85f, 85f);
@@ -66,8 +72,15 @@ namespace Hapbeat.Samples.Tutorial
 
         private void HandleMove()
         {
-            float h = Input.GetAxisRaw("Horizontal");
-            float v = Input.GetAxisRaw("Vertical");
+            var kb = Keyboard.current;
+            float h = 0f, v = 0f;
+            if (kb != null)
+            {
+                if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) h += 1f;
+                if (kb.aKey.isPressed || kb.leftArrowKey.isPressed)  h -= 1f;
+                if (kb.wKey.isPressed || kb.upArrowKey.isPressed)    v += 1f;
+                if (kb.sKey.isPressed || kb.downArrowKey.isPressed)  v -= 1f;
+            }
             Vector3 dir = (transform.right * h + transform.forward * v).normalized;
 
             if (_controller.isGrounded && _velocity.y < 0f) _velocity.y = -1f;

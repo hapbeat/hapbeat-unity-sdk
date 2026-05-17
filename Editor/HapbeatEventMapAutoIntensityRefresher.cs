@@ -98,7 +98,10 @@ namespace Hapbeat.Editor
 
                 foreach (var p in importedAssets)
                 {
-                    if (p.EndsWith("/manifest.json", StringComparison.Ordinal))
+                    // Manifest filename convention: <kitname>-manifest.json
+                    // (formerly bare manifest.json). Match any file whose
+                    // name contains "manifest" and ends with ".json".
+                    if (IsManifestPath(p))
                         manifestChanged = true;
                     else if (p.EndsWith(".asset", StringComparison.Ordinal))
                     {
@@ -114,6 +117,20 @@ namespace Hapbeat.Editor
                 // Defer to avoid re-entering the import pipeline.
                 bool needFullInvalidate = manifestChanged;
                 EditorApplication.delayCall += () => RefreshAll(invalidateParserCache: needFullInvalidate);
+            }
+
+            /// <summary>
+            /// True if <paramref name="assetPath"/> is a Kit manifest file
+            /// — matches "*manifest*.json" (case-insensitive). The canonical
+            /// name is &lt;kitname&gt;-manifest.json, but any *manifest*.json
+            /// at the path counts as a manifest change.
+            /// </summary>
+            private static bool IsManifestPath(string assetPath)
+            {
+                if (string.IsNullOrEmpty(assetPath)) return false;
+                if (!assetPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) return false;
+                string fileName = System.IO.Path.GetFileName(assetPath);
+                return fileName.IndexOf("manifest", StringComparison.OrdinalIgnoreCase) >= 0;
             }
         }
     }

@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Hapbeat.Samples.Tutorial
 {
@@ -11,7 +12,7 @@ namespace Hapbeat.Samples.Tutorial
     public class DoorController : MonoBehaviour
     {
         [SerializeField] private string _openParameter = "IsOpen";
-        [SerializeField] private KeyCode _toggleKey = KeyCode.F;
+        [SerializeField] private Key _toggleKey = Key.F;
 
         private Animator _animator;
         private bool _open;
@@ -23,7 +24,9 @@ namespace Hapbeat.Samples.Tutorial
 
         private void Update()
         {
-            if (Input.GetKeyDown(_toggleKey))
+            var kb = Keyboard.current;
+            if (kb == null || _toggleKey == Key.None) return;
+            if (kb[_toggleKey].wasPressedThisFrame)
             {
                 _open = !_open;
                 _animator.SetBool(_openParameter, _open);

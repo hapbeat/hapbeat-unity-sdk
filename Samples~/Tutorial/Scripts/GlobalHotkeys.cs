@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace Hapbeat.Samples.Tutorial
@@ -20,6 +21,11 @@ namespace Hapbeat.Samples.Tutorial
         [SerializeField] private string _manualFireEvent = "manual_fire";
         [SerializeField] private string _burstEvent = "burst";
 
+        private static readonly Key[] s_digitKeys =
+        {
+            Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4, Key.Digit5,
+        };
+
         private void OnEnable()
         {
             if (HapbeatManager.Instance != null)
@@ -35,20 +41,22 @@ namespace Hapbeat.Samples.Tutorial
         private void Update()
         {
             if (_bridge == null) return;
+            var kb = Keyboard.current;
+            if (kb == null) return;
 
-            if (Input.GetKeyDown(KeyCode.Q))
+            if (kb.qKey.wasPressedThisFrame)
                 _bridge.PlayWithPickerTarget(_manualFireEvent);
 
-            for (int i = 1; i <= 5; i++)
+            for (int i = 0; i < s_digitKeys.Length; i++)
             {
-                if (Input.GetKeyDown(KeyCode.Alpha0 + i))
+                if (kb[s_digitKeys[i]].wasPressedThisFrame)
                 {
-                    float gain = i / 5f;
+                    float gain = (i + 1) / 5f;
                     _bridge.PlayScaledWithPickerTarget(_burstEvent, gain * 5f, 0f, 5f);
                 }
             }
 
-            if (Input.GetKeyDown(KeyCode.P))
+            if (kb.pKey.wasPressedThisFrame)
                 _bridge.SendPing();
         }
 

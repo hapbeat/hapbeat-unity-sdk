@@ -121,7 +121,16 @@ namespace Hapbeat
         /// <summary>Force assignment of a fresh id (used when duplicating entries).</summary>
         public void RegenerateId() => _id = Guid.NewGuid().ToString("N");
 
-        /// <summary>Standard categories defined by hapbeat-contracts.</summary>
+        /// <summary>
+        /// Legacy hardcoded category list. Kept only for backward compatibility
+        /// with any external tooling that may still reference it. The current
+        /// convention is <c>category = kit name</c> (the folder under
+        /// <c>HapbeatSDK/Kits/</c>) — the EventMap Window's category dropdown
+        /// now uses <c>HapbeatManifestIntensity.GetKitDirectoryNames()</c>
+        /// instead of this list.
+        /// </summary>
+        [System.Obsolete("category is now the kit folder name. " +
+            "Use HapbeatManifestIntensity.GetKitDirectoryNames() to list available kits.")]
         public static readonly string[] StandardCategories =
             { "clip", "impact", "vibration", "texture", "ambient", "ui", "custom" };
 
@@ -201,6 +210,19 @@ namespace Hapbeat
         [Tooltip("Designer notes (not sent to devices).")]
         [TextArea(1, 3)]
         public string notes = "";
+
+        // ---- Optional manifest override (per-entry) ----
+        //
+        // When auto-resolution (clip-path / eventId match against discovered
+        // manifests) fails or picks the wrong Kit, the designer can drop a
+        // specific <kitname>-manifest.json TextAsset here. The intensity
+        // lookup will then read intensity from THIS manifest only, ignoring
+        // the global scan. Stored as a TextAsset (Unity imports .json as
+        // TextAsset). Editor-only feature; runtime ignores this field
+        // (intensity is baked into _cachedManifestIntensity at edit time).
+        [Tooltip("特定の <kit-name>-manifest.json を強制参照したいときにセット。\n" +
+                 "未設定なら HapbeatSDK/Kits/ 全 manifest を自動 scan して clip 一致 → eventId 一致の順に解決します。")]
+        public UnityEngine.TextAsset manifestOverride;
 
         // ---- Manifest intensity cache ----
         //

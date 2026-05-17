@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace Hapbeat.Samples.Tutorial
@@ -21,7 +22,7 @@ namespace Hapbeat.Samples.Tutorial
         [SerializeField] private Slider _panSlider;
         [SerializeField] private Dropdown _clipDropdown;
         [SerializeField] private Text _statusText;
-        [SerializeField] private KeyCode _toggleKey = KeyCode.Space;
+        [SerializeField] private Key _toggleKey = Key.Space;
 
         private HapbeatStreamPlayback _playback;
 
@@ -39,7 +40,8 @@ namespace Hapbeat.Samples.Tutorial
 
         private void Update()
         {
-            if (Input.GetKeyDown(_toggleKey))
+            var kb = Keyboard.current;
+            if (kb != null && _toggleKey != Key.None && kb[_toggleKey].wasPressedThisFrame)
                 Toggle();
 
             if (_playback != null && !_playback.IsStopped)

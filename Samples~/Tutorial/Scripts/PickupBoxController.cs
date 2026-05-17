@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 namespace Hapbeat.Samples.Tutorial
 {
@@ -15,7 +16,7 @@ namespace Hapbeat.Samples.Tutorial
         [SerializeField] private Transform _holdAnchor;     // typically a child of the camera
         [SerializeField] private Transform _restPose;       // where to return when dropped
         [SerializeField] private float _followLerp = 12f;
-        [SerializeField] private KeyCode _toggleKey = KeyCode.None; // mouse 0 by default
+        [SerializeField] private Key _toggleKey = Key.None; // mouse 0 by default
 
         private bool _held;
 
@@ -26,7 +27,10 @@ namespace Hapbeat.Samples.Tutorial
 
         private void Update()
         {
-            bool pressed = Input.GetMouseButtonDown(0) || (_toggleKey != KeyCode.None && Input.GetKeyDown(_toggleKey));
+            var mouse = Mouse.current;
+            var kb = Keyboard.current;
+            bool pressed = (mouse != null && mouse.leftButton.wasPressedThisFrame)
+                        || (_toggleKey != Key.None && kb != null && kb[_toggleKey].wasPressedThisFrame);
             if (pressed) Toggle();
         }
 

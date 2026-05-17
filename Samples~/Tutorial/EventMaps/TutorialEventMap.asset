@@ -1,0 +1,233 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf9c34b08ac7b8c4f954b03abe0affb3, type: 3}
+  m_Name: TutorialEventMap
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatEventMap
+  entries:
+  - _id: 1260162361b5486bb433bb2c1779cb59
+    mode: 1
+    displayName: pin_hit
+    category: tutorial-kit
+    eventName: pin_hit
+    streamClip: {fileID: 8300000, guid: 7e40e96c2a168654491d46a92002932c, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: '*/pos_r_arm'
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 1
+    _eventId: tutorial-kit.pin_hit
+  - _id: 097c5c77c643422290a4cc15e5da789e
+    mode: 1
+    displayName: door_open
+    category: tutorial-kit
+    eventName: door_open
+    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: '*/pos_neck'
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 0.7
+    _eventId: tutorial-kit.door_open
+  - _id: 3ec09f14e87b40b0a2120de59f283c7d
+    mode: 1
+    displayName: door_close
+    category: tutorial-kit
+    eventName: door_close
+    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: '*/pos_neck'
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 0.7
+    _eventId: tutorial-kit.door_close
+  - _id: a81f3af1b37e40bba0a9e7f2a421e259
+    mode: 1
+    displayName: grab_start
+    category: tutorial-kit
+    eventName: grab_start
+    streamClip: {fileID: 8300000, guid: c920a6b2c3ab9604c93c025fcb8e0445, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: '*/pos_r_arm'
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 0.8
+    _eventId: tutorial-kit.grab_start
+  - _id: a7a19cd41ce042f7977118c65f0ff078
+    mode: 1
+    displayName: grab_loop
+    category: tutorial-kit
+    eventName: grab_loop
+    streamClip: {fileID: 8300000, guid: b0d9c835c9f6019458298aca50f4abc3, type: 3}
+    loop: 1
+    bindings:
+    - _id: 16ebe603c6b74028a7ea8767a89ada5c
+      ownerObjectName: PickupBox
+      sourceTransformPath: 
+      sourceProperty: 8
+      inputMin: 0
+      inputMax: 0.5
+      curveType: 2
+      customCurve:
+        serializedVersion: 2
+        m_Curve:
+        - serializedVersion: 3
+          time: 0
+          value: 0
+          inSlope: 0
+          outSlope: 1
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        - serializedVersion: 3
+          time: 1
+          value: 1
+          inSlope: 1
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        m_PreInfinity: 2
+        m_PostInfinity: 2
+        m_RotationOrder: 4
+      outputParameter: 0
+      outputMin: 0.2
+      outputMax: 1.5
+      debugLog: 0
+      debugLogInterval: 0.1
+      debugLogChangeThreshold: 0.02
+    gain: 1
+    target: '*/pos_r_arm'
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 0.9
+    _eventId: tutorial-kit.grab_loop
+  - _id: 9c20ef5e159e44028435aef426257938
+    mode: 1
+    displayName: grab_release
+    category: tutorial-kit
+    eventName: grab_release
+    streamClip: {fileID: 8300000, guid: 97187563ca7689a448a34a3611bb4614, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: '*/pos_r_arm'
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 0.6
+    _eventId: tutorial-kit.grab_release
+  - _id: 9a75447994fe4046a1f4ce20a03069e3
+    mode: 1
+    displayName: stream_demo
+    category: tutorial-kit
+    eventName: stream_demo
+    streamClip: {fileID: 8300000, guid: b0d9c835c9f6019458298aca50f4abc3, type: 3}
+    loop: 1
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 1
+    _eventId: tutorial-kit.stream_demo
+  - _id: 699d0b5d6fa84f3c9ec316feb65be7d3
+    mode: 1
+    displayName: slider_tick
+    category: tutorial-kit
+    eventName: slider_tick
+    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 0.5
+    _eventId: tutorial-kit.slider_tick
+  - _id: 17df415ff7784c9baf207ee84ba64b13
+    mode: 1
+    displayName: charge_release
+    category: tutorial-kit
+    eventName: charge_release
+    streamClip: {fileID: 8300000, guid: 31e02ee7b4756384b9c78070acd570f9, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 1
+    _eventId: tutorial-kit.charge_release
+  - _id: c840e0dda57242409e8783ef15fc7eda
+    mode: 1
+    displayName: target_hit
+    category: tutorial-kit
+    eventName: target_hit
+    streamClip: {fileID: 8300000, guid: f8a32897e240ad346a685a6870e31ed6, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 0.9
+    _eventId: tutorial-kit.target_hit
+  - _id: f27817a737e94f55ad54b52040d0d188
+    mode: 1
+    displayName: manual_fire
+    category: tutorial-kit
+    eventName: manual_fire
+    streamClip: {fileID: 8300000, guid: fcd23a07395e8554da7292d3548b2dcc, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 0.8
+    _eventId: tutorial-kit.manual_fire
+  - _id: 586a3042bef64ddbafb4a7a5a668a172
+    mode: 1
+    displayName: burst
+    category: tutorial-kit
+    eventName: burst
+    streamClip: {fileID: 8300000, guid: 4a6030a95e5564445ba149d20b6ee747, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    group: -1
+    notes: 
+    manifestOverride: {fileID: 0}
+    _cachedManifestIntensity: 1
+    _eventId: tutorial-kit.burst
+  revertPlayModeChanges: 0
