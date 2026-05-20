@@ -35,6 +35,10 @@ namespace Hapbeat.Editor
         private enum ViewMode { List, Table }
         private ViewMode _viewMode = ViewMode.List;
         private const string kViewModeKey = "HapbeatEventMap_ViewMode";
+        // Persist last-selected EventMap so the window re-opens with the same
+        // asset (rather than picking guids[0] which often = HandDemoEventMap
+        // alphabetically). Stored as the asset's GUID string.
+        private const string kSelectedMapKey = "HapbeatEventMap_SelectedGUID";
 
         // Drag-to-reorder state (used by both List and Table views).
         // _dragStartIndex >= 0 while the user is potentially dragging a row.
@@ -115,13 +119,70 @@ namespace Hapbeat.Editor
 
         private void OnEnable()
         {
-            FindEventMap();
+            // 前回選択していた EventMap を GUID から復元。無ければ
+            // FindEventMap で「scene に最初にヒットした 1 個」にフォールバック。
+            RestoreSelectedMapFromPrefs();
+            if (_selectedMap == null) FindEventMap();
             _splitRatio = EditorPrefs.GetFloat(kSplitRatioKey, 0.42f);
             _splitRatio = Mathf.Clamp(_splitRatio, 0.2f, 0.8f);
             _viewMode = (ViewMode)EditorPrefs.GetInt(kViewModeKey, (int)ViewMode.List);
             RefreshIntensityCache();
             EnsureEntryIdsAssigned();
         }
+
+        // Window が背景に回る / 閉じる際にディスク確定。これがないと
+        // SetDirty 済みでも domain reload や Unity 終了で edit が失われる。
+        private void OnDisable()
+        {
+            if (_selectedMap != null)
+                AssetDatabase.SaveAssetIfDirty(_selectedMap);
+        }
+
+        private void OnLostFocus()
+        {
+            if (_selectedMap != null)
+                AssetDatabase.SaveAssetIfDirty(_selectedMap);
+        }
+
+        private void RestoreSelectedMapFromPrefs()
+        {
+            string guid = EditorPrefs.GetString(kSelectedMapKey, "");
+            if (string.IsNullOrEmpty(guid)) return;
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            if (string.IsNullOrEmpty(path)) return;
+            _selectedMap = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(path);
+        }
+
+        private void RememberSelectedMap()
+        {
+            if (_selectedMap == null) { EditorPrefs.DeleteKey(kSelectedMapKey); return; }
+            string path = AssetDatabase.GetAssetPath(_selectedMap);
+            string guid = AssetDatabase.AssetPathToGUID(path);
+            if (!string.IsNullOrEmpty(guid))
+                EditorPrefs.SetString(kSelectedMapKey, guid);
+        }
+
+        // Tab タイトル: 未保存なら "Hapbeat Event Map *"
+        private void UpdateWindowTitle()
+        {
+            const string baseTitle = "Hapbeat Event Map";
+            bool dirty = _selectedMap != null && EditorUtility.IsDirty(_selectedMap);
+            string desired = dirty ? baseTitle + " *" : baseTitle;
+            if (titleContent.text != desired)
+                titleContent = new GUIContent(desired);
+
+            // Project window indicator 用に dirty な EventMap の GUID を共有
+            DirtyEventMapGUID = dirty
+                ? AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(_selectedMap))
+                : null;
+        }
+
+        /// <summary>
+        /// 現在 dirty な EventMap の GUID (= 未保存 / .asset 単位)。
+        /// Project window indicator (file 末尾の [InitializeOnLoad] class) が読む。
+        /// 同時に開ける window は 1 つ前提なので単一 string で OK。
+        /// </summary>
+        internal static string DirtyEventMapGUID;
 
         /// <summary>
         /// Proactively lazy-assign stable ids to every entry in the currently-selected
@@ -163,6 +224,10 @@ namespace Hapbeat.Editor
 
         private void OnGUI()
         {
+            // Window タブの title に dirty 状態を反映 (* マーカ)
+            // — 他 window にフォーカスがあっても tab を見れば状態が分かる。
+            UpdateWindowTitle();
+
             DrawToolbar();
             EditorGUILayout.Space(3);
 
@@ -612,8 +677,36 @@ namespace Hapbeat.Editor
             if (newMap != _selectedMap)
             {
                 _selectedMap = newMap;
+                RememberSelectedMap();
                 ScanScene();
                 RefreshIntensityCache();
+            }
+
+            // Dirty インジケータ + Save ボタン (asset 単位)。
+            // Unity は ScriptableObject の dirty 状態を Project window に
+            // 表示しないので、ここで明示する。
+            if (_selectedMap != null)
+            {
+                bool dirty = EditorUtility.IsDirty(_selectedMap);
+                // 視覚的に分かりやすいよう dirty 時のみ色付き Save ボタンを表示。
+                if (dirty)
+                {
+                    var prev = GUI.backgroundColor;
+                    GUI.backgroundColor = new Color(1f, 0.55f, 0.3f); // オレンジ = 未保存
+                    if (GUILayout.Button(new GUIContent("● Save", "未保存の変更があります。クリック or Ctrl+S で disk に保存。"),
+                        EditorStyles.toolbarButton, GUILayout.Width(70)))
+                    {
+                        AssetDatabase.SaveAssetIfDirty(_selectedMap);
+                        // toolbar の表示が ● Save → ✓ Saved に切り替わるので
+                        // 追加の notification は不要。
+                    }
+                    GUI.backgroundColor = prev;
+                }
+                else
+                {
+                    GUILayout.Label(new GUIContent("✓ Saved", "未保存変更はありません。"),
+                        EditorStyles.toolbarButton, GUILayout.Width(70));
+                }
             }
 
             GUILayout.FlexibleSpace();
@@ -4017,7 +4110,6 @@ namespace Hapbeat.Editor
         private string GetTriggerTypeName(HapbeatTriggerBase trigger)
         {
             if (trigger is HapbeatCollisionTrigger) return "Collision";
-            if (trigger is HapbeatAnimatorTrigger) return "Animator";
             if (trigger is HapbeatUnityEventTrigger) return "Event";
             return trigger.GetType().Name;
         }
@@ -4263,6 +4355,29 @@ namespace Hapbeat.Editor
                 parts.Add($"group_{group}");
 
             return string.Join("/", parts);
+        }
+    }
+
+    // ----- Project window で dirty な EventMap に ● を描画 -----
+    [InitializeOnLoad]
+    internal static class HapbeatEventMapProjectIndicator
+    {
+        static HapbeatEventMapProjectIndicator()
+        {
+            EditorApplication.projectWindowItemOnGUI += OnProjectGUI;
+        }
+
+        private static void OnProjectGUI(string guid, Rect rect)
+        {
+            if (string.IsNullOrEmpty(HapbeatEventMapWindow.DirtyEventMapGUID)) return;
+            if (HapbeatEventMapWindow.DirtyEventMapGUID != guid) return;
+
+            // asset 行の右端付近に ● を描画
+            var dotRect = new Rect(rect.xMax - 14f, rect.y + 1f, 12f, 14f);
+            var prev = GUI.color;
+            GUI.color = new Color(1f, 0.55f, 0.3f); // オレンジ
+            GUI.Label(dotRect, new GUIContent("●", "未保存の変更あり"));
+            GUI.color = prev;
         }
     }
 }
