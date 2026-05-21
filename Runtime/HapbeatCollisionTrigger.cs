@@ -131,7 +131,7 @@ namespace Hapbeat
             if (_eventMap == null) return;
 
             var entry = ResolveEntry();
-            if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
+            if (entry == null) return;
 
             // Cooldown check
             if (_cooldown > 0f && Time.unscaledTime - _lastFireTimeInternal < _cooldown)
@@ -147,13 +147,42 @@ namespace Hapbeat
             float curveValue = _velocityCurve.Evaluate(normalizedVel);
             float intensity = entry.CachedManifestIntensity;
             float intensityFactor = intensity < 0f ? 1f : intensity;
-            float gain = curveValue * entry.gain * intensityFactor * _gainMultiplier;
+            float scaledGain = curveValue * entry.gain * intensityFactor * _gainMultiplier;
 
-            if (HapbeatManager.Instance != null)
+            var mgr = HapbeatManager.Instance;
+            if (mgr == null) return;
+
+            string baseName = string.IsNullOrEmpty(entry.displayName) ? entry.GetSummary() : entry.displayName;
+            string label = $"{gameObject.name}: {baseName}";
+            string target = entry.HasTarget ? entry.target : null;
+
+            // entry.mode に応じて Command / StreamClip を呼び分け。
+            // 旧実装は常に Manager.Play (Command) を叩いていたため、
+            // StreamClip mode の entry (Tutorial の pin_hit 等) では
+            // device 側で event_id 未登録 → silently 無音となるバグ有り。
+            switch (entry.mode)
             {
-                string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
-                string target = entry.HasTarget ? entry.target : null;
-                HapbeatManager.Instance.Play(entry.eventId, gain, label, target);
+                case HapticMode.Command:
+                    if (string.IsNullOrEmpty(entry.eventId))
+                    {
+                        if (_verboseLog)
+                            Debug.LogWarning($"[Hapbeat] VelocityScaled Command but eventId empty on '{label}'", this);
+                        return;
+                    }
+                    mgr.Play(entry.eventId, scaledGain, label, target);
+                    break;
+
+                case HapticMode.StreamClip:
+                    if (entry.streamClip == null)
+                    {
+                        if (_verboseLog)
+                            Debug.LogWarning($"[Hapbeat] VelocityScaled StreamClip but streamClip null on '{label}'", this);
+                        return;
+                    }
+                    mgr.StreamAudioClip(entry.streamClip, scaledGain, target, loop: false);
+                    if (_verboseLog)
+                        Debug.Log($"[Hapbeat] ♪ {label} velocity-scaled stream (gain={scaledGain:F2})", this);
+                    break;
             }
         }
 

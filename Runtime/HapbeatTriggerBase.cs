@@ -232,7 +232,9 @@ namespace Hapbeat
                 return;
             }
 
-            string label = string.IsNullOrEmpty(entry.displayName) ? entry.GetSummary() : entry.displayName;
+            string baseName = string.IsNullOrEmpty(entry.displayName) ? entry.GetSummary() : entry.displayName;
+            // GameObject 名を prefix してログでどの trigger 由来か分かるようにする
+            string label = $"{gameObject.name}: {baseName}";
             string target = entry.HasTarget ? entry.target : null;
 
             switch (entry.mode)
@@ -357,8 +359,11 @@ namespace Hapbeat
                     break;
 
                 case HapticMode.StreamClip:
+                    // Per-source stop only。 Manager.StopStream() は全 source を
+                    // 巻き込むので呼ばない (multi-source mixing 対応, 2026-05-18)。
+                    // Mixer は次 chunk で IsStopped を検知して当該 source を
+                    // 自動除去 + 最後の source が消えたら session 終了する。
                     _activePlayback?.Stop();
-                    HapbeatManager.Instance.StopStream();
                     _activePlayback = null;
                     break;
             }

@@ -3143,7 +3143,14 @@ namespace Hapbeat.Editor
 
             // Deferred deletion after the loop to avoid GUI layout mismatch
             if (pendingDelete >= 0 && pendingDelete < bindingsProp.arraySize)
+            {
+                // 削除前に linked scene component を destroy しておく (EventMap = single
+                // source of truth 方針: preset 消したら scene 側も巻き込む)。
+                // standalone として残したい場合は事前に component 側で Unlink 必要。
+                // Undo (Ctrl+Z) で preset + component 同時復活可能。
+                DestroyLinkedComponentsForPreset(bindingsProp.GetArrayElementAtIndex(pendingDelete));
                 bindingsProp.DeleteArrayElementAtIndex(pendingDelete);
+            }
 
             EditorGUIUtility.labelWidth = prevLabel;
 
@@ -3160,14 +3167,16 @@ namespace Hapbeat.Editor
                 var idProp = bp.FindPropertyRelative("_id");
                 var pathProp = bp.FindPropertyRelative("sourceTransformPath");
                 var ownerPropChk = bp.FindPropertyRelative("ownerObjectName");
+                var srcPropChk = bp.FindPropertyRelative("sourceProperty");
                 if (idProp == null || pathProp == null) continue;
                 string id = idProp.stringValue;
                 string path = pathProp.stringValue ?? "";
                 string owner = ownerPropChk != null ? (ownerPropChk.stringValue ?? "") : "";
-                // Combined key tracks both path and owner so a user toggling
-                // the Owner popup also triggers a re-sync (which will unlink
-                // bindings that no longer match the new scope).
-                string key = $"{owner}|{path}";
+                // SourceProperty も key に含める。SliderValue / External 等への
+                // 切替で target 解決ロジック (_sourceSlider auto-wire 等) が
+                // 変わるため、Property 変更でも sync を走らせる必要がある。
+                int srcEnum = srcPropChk != null ? srcPropChk.enumValueIndex : -1;
+                string key = $"{owner}|{path}|{srcEnum}";
                 if (string.IsNullOrEmpty(id)) continue;
                 if (!_lastSyncedPathByPresetId.TryGetValue(id, out var prev) || prev != key)
                 {
@@ -3189,6 +3198,35 @@ namespace Hapbeat.Editor
         /// Refresh the per-preset path cache after a sync run so subsequent
         /// draws don't mistake an unchanged path for "needs sync" again.
         /// </summary>
+        /// <summary>
+        /// 指定 preset (SerializedProperty) の id に link されている scene 上の
+        /// HapbeatParameterBinding を全て探索して Undo.DestroyObjectImmediate する。
+        /// preset 削除と同期して scene 側も clean に保つ用 (EventMap → scene の一方向同期)。
+        /// </summary>
+        private void DestroyLinkedComponentsForPreset(SerializedProperty presetProp)
+        {
+            if (presetProp == null) return;
+            var idProp = presetProp.FindPropertyRelative("_id");
+            if (idProp == null) return;
+            string presetId = idProp.stringValue;
+            if (string.IsNullOrEmpty(presetId)) return;
+
+            int destroyed = 0;
+            // scene 全体の HapbeatParameterBinding を walk (inactive 含む)
+            var allBindings = UnityEngine.Object.FindObjectsByType<HapbeatParameterBinding>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+            foreach (var b in allBindings)
+            {
+                if (b == null) continue;
+                if (!ReferenceEquals(b.LinkedEventMap, _selectedMap)) continue;
+                if (b.LinkedBindingId != presetId) continue;
+                Undo.DestroyObjectImmediate(b);
+                destroyed++;
+            }
+            if (destroyed > 0)
+                Debug.Log($"[Hapbeat] Preset 削除に伴い scene 上の linked binding component {destroyed} 個を destroy しました (Ctrl+Z で復活可)。");
+        }
+
         private void UpdateSyncedPathCache(int entryIdx)
         {
             if (_selectedMap == null) return;
@@ -3198,11 +3236,12 @@ namespace Hapbeat.Editor
             foreach (var p in entry.bindings)
             {
                 if (p == null || string.IsNullOrEmpty(p.id)) continue;
-                // Match the change-detector key format (owner|path) so the
-                // cache hit reasoning in DrawBindingsList stays in sync.
+                // Match the change-detector key format (owner|path|sourceProperty)
+                // so the cache hit reasoning in DrawBindingsList stays in sync.
                 string owner = p.ownerObjectName ?? "";
                 string path = p.sourceTransformPath ?? "";
-                _lastSyncedPathByPresetId[p.id] = $"{owner}|{path}";
+                int srcEnum = (int)p.sourceProperty;
+                _lastSyncedPathByPresetId[p.id] = $"{owner}|{path}|{srcEnum}";
             }
         }
 
@@ -3461,31 +3500,36 @@ namespace Hapbeat.Editor
             {
                 if (preset == null || string.IsNullOrEmpty(preset.id)) continue;
 
-                // First pass: unlink any binding currently linked to this
-                // preset that lives on a wired GameObject which no longer
-                // matches the preset's owner scope. Keeps the scene
-                // consistent when the user changes Owner from "Shared" → X
-                // or X → Y. The component is preserved (not destroyed) and
-                // becomes standalone — the user can delete it manually if
-                // they want, or the next Sync may re-link it if the scope
-                // changes again.
+                // この preset が「居るべき」target GO の集合を先に決める
+                // (= ownerObjectName scope を通過し、sourceTransformPath が解決できた先)
+                var validTargets = new System.Collections.Generic.HashSet<Transform>();
                 foreach (var info in triggers)
                 {
                     if (info.trigger == null) continue;
-                    bool nowInScope = string.IsNullOrEmpty(preset.ownerObjectName) ||
-                                      info.trigger.gameObject.name == preset.ownerObjectName;
-                    if (nowInScope) continue;
+                    if (!string.IsNullOrEmpty(preset.ownerObjectName) &&
+                        info.trigger.gameObject.name != preset.ownerObjectName) continue;
+                    var t = ResolvePresetPath(info.trigger.transform, preset.sourceTransformPath);
+                    if (t != null) validTargets.Add(t);
+                }
+
+                // First pass: validTargets 以外に居る同じ preset id への link を片付ける。
+                // ownerObjectName scope 外 + sourceTransformPath 変更で「居場所が
+                // 変わった」場合の両方を 1 ループでカバー。
+                // linker が auto-attach した orphan を残すと Tutorial で重複表示
+                // されて混乱の元なので、destroy する (Undo で復活可)。
+                foreach (var info in triggers)
+                {
+                    if (info.trigger == null) continue;
                     foreach (var b in info.trigger.GetComponentsInChildren<HapbeatParameterBinding>(true))
                     {
                         if (b == null) continue;
                         if (!ReferenceEquals(b.LinkedEventMap, _selectedMap)) continue;
                         if (b.LinkedBindingId != preset.id) continue;
-                        Undo.RecordObject(b, "Unlink Hapbeat Binding (out of scope)");
-                        var so = new SerializedObject(b);
-                        so.FindProperty("_linkedEventMap").objectReferenceValue = null;
-                        so.FindProperty("_linkedBindingId").stringValue = string.Empty;
-                        so.ApplyModifiedProperties();
-                        EditorUtility.SetDirty(b);
+                        if (validTargets.Contains(b.transform)) continue; // ok、現在の正しい位置
+
+                        // 古い位置の link は剥がして component ごと destroy。
+                        // (Undo.DestroyObjectImmediate で Ctrl+Z で復活可)
+                        Undo.DestroyObjectImmediate(b);
                         unlinked++;
                     }
                 }
@@ -3507,19 +3551,36 @@ namespace Hapbeat.Editor
 
                     var existing = target.GetComponents<HapbeatParameterBinding>();
 
-                    // 1. Already linked? Skip.
-                    bool alreadyLinked = false;
+                    // 1. Already linked? その binding は新規 attach 不要だが、
+                    //    preset.sourceProperty 変更 (e.g. → SliderValue) に追従して
+                    //    _sourceSlider 等のソース参照は refresh しておく。
+                    HapbeatParameterBinding alreadyLinkedBinding = null;
                     foreach (var b in existing)
                     {
                         if (b == null) continue;
                         if (ReferenceEquals(b.LinkedEventMap, _selectedMap) &&
                             b.LinkedBindingId == preset.id)
                         {
-                            alreadyLinked = true;
+                            alreadyLinkedBinding = b;
                             break;
                         }
                     }
-                    if (alreadyLinked) continue;
+                    if (alreadyLinkedBinding != null)
+                    {
+                        // Source 参照を preset 設定に合わせて再 wire (idempotent)
+                        var refreshSo = new SerializedObject(alreadyLinkedBinding);
+                        refreshSo.FindProperty("_sourceTransform").objectReferenceValue = target;
+                        refreshSo.FindProperty("_sourceProperty").enumValueIndex = (int)preset.sourceProperty;
+                        refreshSo.FindProperty("_outputParameter").enumValueIndex = (int)preset.outputParameter;
+                        if (preset.sourceProperty == BindingSourceProperty.SliderValue)
+                        {
+                            var slider = target.GetComponent<UnityEngine.UI.Slider>();
+                            refreshSo.FindProperty("_sourceSlider").objectReferenceValue = slider;
+                        }
+                        refreshSo.ApplyModifiedProperties();
+                        EditorUtility.SetDirty(alreadyLinkedBinding);
+                        continue;
+                    }
 
                     // 2. Find an unlinked binding to upgrade (matching property/output).
                     HapbeatParameterBinding upgradeCandidate = null;
@@ -3564,6 +3625,14 @@ namespace Hapbeat.Editor
                     // consistent and protects against transient unlink states).
                     so.FindProperty("_sourceProperty").enumValueIndex = (int)preset.sourceProperty;
                     so.FindProperty("_outputParameter").enumValueIndex = (int)preset.outputParameter;
+                    // SliderValue source の場合、target GO の Slider component を
+                    // _sourceSlider に auto-wire (preset.sourceTransformPath が
+                    // Slider component を持つ GO を指している前提)。
+                    if (preset.sourceProperty == BindingSourceProperty.SliderValue)
+                    {
+                        var slider = target.GetComponent<UnityEngine.UI.Slider>();
+                        so.FindProperty("_sourceSlider").objectReferenceValue = slider;
+                    }
                     so.ApplyModifiedProperties();
                     EditorUtility.SetDirty(binding);
                 }

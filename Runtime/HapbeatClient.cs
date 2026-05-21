@@ -17,6 +17,13 @@ namespace Hapbeat
         /// <summary>Invoked on main thread when a PONG response is received.</summary>
         public event Action<long, long> OnPong; // (rttUs, serverTimeUs)
 
+        /// <summary>
+        /// Invoked on main thread for each PONG, with the source endpoint.
+        /// Use this to track per-device liveness (broadcast may yield multiple
+        /// PONGs per PING — one per responsive device).
+        /// </summary>
+        public event Action<IPEndPoint, long> OnPongFrom; // (sender, rttUs)
+
         /// <summary>Invoked on main thread when an ERROR response is received.</summary>
         public event Action<ushort, string> OnError; // (errorCode, message)
 
@@ -323,7 +330,7 @@ namespace Hapbeat
 
                         if (data != null && data.Length >= HapbeatProtocol.HEADER_SIZE)
                         {
-                            ProcessReceivedPacket(data);
+                            ProcessReceivedPacket(data, remoteEp);
                         }
                     }
                 }
@@ -349,7 +356,7 @@ namespace Hapbeat
             }
         }
 
-        private void ProcessReceivedPacket(byte[] data)
+        private void ProcessReceivedPacket(byte[] data, IPEndPoint sender)
         {
             try
             {
@@ -358,7 +365,7 @@ namespace Hapbeat
                 switch (commandType)
                 {
                     case HapbeatProtocol.CMD_PONG:
-                        HandlePong(seq, payload);
+                        HandlePong(seq, payload, sender);
                         break;
 
                     case HapbeatProtocol.CMD_ERROR:
@@ -377,7 +384,7 @@ namespace Hapbeat
             }
         }
 
-        private void HandlePong(ushort seq, byte[] payload)
+        private void HandlePong(ushort seq, byte[] payload, IPEndPoint sender)
         {
             var (timestamp, serverTime) = HapbeatProtocol.ParsePong(payload);
             long nowUs = GetLocalTimestampUs();
@@ -394,7 +401,16 @@ namespace Hapbeat
                 rttUs = nowUs - timestamp;
             }
 
-            EnqueueMainThread(() => OnPong?.Invoke(rttUs, serverTime));
+            // broadcast 経路だと device 毎に複数 PONG が届く。送信元 endpoint を
+            // 別 event で通知して per-device liveness 集計可能にする。
+            // (sender は IPEndPoint で main thread で参照されるが mutable なので
+            //  ここで複製して closure に閉じ込める)
+            var capturedSender = new IPEndPoint(sender.Address, sender.Port);
+            EnqueueMainThread(() =>
+            {
+                OnPong?.Invoke(rttUs, serverTime);
+                OnPongFrom?.Invoke(capturedSender, rttUs);
+            });
         }
 
         private void HandleError(byte[] payload)

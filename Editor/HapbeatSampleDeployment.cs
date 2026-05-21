@@ -230,6 +230,62 @@ namespace Hapbeat.Editor
         }
 
         // ----------------------------------------------------------------
+        // Move (GUID-preserving) — used by sample build flows that
+        // RELOCATE imported sample assets into the user-editable area
+        // instead of copying them. Because GUIDs are preserved, all scene
+        // references (MonoScript / AudioClip / EventMap / AnimatorController)
+        // stay valid without any rebake.
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Move an asset or folder via <see cref="AssetDatabase.MoveAsset"/>.
+        /// Preserves the source GUID. If the destination already exists it
+        /// is deleted first so re-runs do not abort.
+        /// </summary>
+        public static bool MoveAssetForce(string srcAssetPath, string dstAssetPath)
+        {
+            bool srcExists = AssetDatabase.IsValidFolder(srcAssetPath)
+                          || AssetDatabase.LoadAssetAtPath<Object>(srcAssetPath) != null;
+            if (!srcExists)
+            {
+                Debug.LogWarning($"[Hapbeat] MoveAsset: source not found: {srcAssetPath}");
+                return false;
+            }
+
+            string dstParent = System.IO.Path.GetDirectoryName(dstAssetPath).Replace('\\', '/');
+            if (!string.IsNullOrEmpty(dstParent))
+                EnsureAssetFolder(dstParent);
+
+            if (AssetDatabase.IsValidFolder(dstAssetPath)
+                || AssetDatabase.LoadAssetAtPath<Object>(dstAssetPath) != null)
+            {
+                AssetDatabase.DeleteAsset(dstAssetPath);
+            }
+
+            string err = AssetDatabase.MoveAsset(srcAssetPath, dstAssetPath);
+            if (!string.IsNullOrEmpty(err))
+            {
+                Debug.LogError($"[Hapbeat] MoveAsset failed: {srcAssetPath} → {dstAssetPath}: {err}");
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Delete <paramref name="folderAssetPath"/> if it is an empty folder.
+        /// Used to tidy up the imported sample folder after a Move-based
+        /// deploy leaves it empty.
+        /// </summary>
+        public static void DeleteFolderIfEmpty(string folderAssetPath)
+        {
+            if (!AssetDatabase.IsValidFolder(folderAssetPath)) return;
+            string abs = ToAbsolute(folderAssetPath);
+            if (System.IO.Directory.GetFiles(abs).Length > 0) return;
+            if (System.IO.Directory.GetDirectories(abs).Length > 0) return;
+            AssetDatabase.DeleteAsset(folderAssetPath);
+        }
+
+        // ----------------------------------------------------------------
         // Folder helpers
         // ----------------------------------------------------------------
 

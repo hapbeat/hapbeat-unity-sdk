@@ -18,14 +18,14 @@ MonoBehaviour:
     displayName: pin_hit
     category: tutorial-kit
     eventName: pin_hit
-    streamClip: {fileID: 8300000, guid: 7e40e96c2a168654491d46a92002932c, type: 3}
+    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
     loop: 0
     bindings: []
-    gain: 1
-    target: '*/pos_r_arm'
+    gain: 1.407
+    target: 
     group: -1
     notes: 
-    manifestOverride: {fileID: 0}
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
     _cachedManifestIntensity: 1
     _eventId: tutorial-kit.pin_hit
   - _id: 097c5c77c643422290a4cc15e5da789e
@@ -37,7 +37,7 @@ MonoBehaviour:
     loop: 0
     bindings: []
     gain: 1
-    target: '*/pos_neck'
+    target: 
     group: -1
     notes: 
     manifestOverride: {fileID: 0}
@@ -52,7 +52,7 @@ MonoBehaviour:
     loop: 0
     bindings: []
     gain: 1
-    target: '*/pos_neck'
+    target: 
     group: -1
     notes: 
     manifestOverride: {fileID: 0}
@@ -63,14 +63,14 @@ MonoBehaviour:
     displayName: grab_start
     category: tutorial-kit
     eventName: grab_start
-    streamClip: {fileID: 8300000, guid: c920a6b2c3ab9604c93c025fcb8e0445, type: 3}
+    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
     loop: 0
     bindings: []
     gain: 1
-    target: '*/pos_r_arm'
+    target: 
     group: -1
     notes: 
-    manifestOverride: {fileID: 0}
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
     _cachedManifestIntensity: 0.8
     _eventId: tutorial-kit.grab_start
   - _id: a7a19cd41ce042f7977118c65f0ff078
@@ -78,7 +78,7 @@ MonoBehaviour:
     displayName: grab_loop
     category: tutorial-kit
     eventName: grab_loop
-    streamClip: {fileID: 8300000, guid: b0d9c835c9f6019458298aca50f4abc3, type: 3}
+    streamClip: {fileID: 8300000, guid: 1ee021f82fc06d24a82a6a8c9b20cf9e, type: 3}
     loop: 1
     bindings:
     - _id: 16ebe603c6b74028a7ea8767a89ada5c
@@ -118,12 +118,12 @@ MonoBehaviour:
       debugLog: 0
       debugLogInterval: 0.1
       debugLogChangeThreshold: 0.02
-    gain: 1
-    target: '*/pos_r_arm'
+    gain: 1.19
+    target: 
     group: -1
     notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 0.9
+    manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
+    _cachedManifestIntensity: 0.5
     _eventId: tutorial-kit.grab_loop
   - _id: 9c20ef5e159e44028435aef426257938
     mode: 1
@@ -134,7 +134,7 @@ MonoBehaviour:
     loop: 0
     bindings: []
     gain: 1
-    target: '*/pos_r_arm'
+    target: 
     group: -1
     notes: 
     manifestOverride: {fileID: 0}
@@ -145,14 +145,14 @@ MonoBehaviour:
     displayName: stream_demo
     category: tutorial-kit
     eventName: stream_demo
-    streamClip: {fileID: 8300000, guid: b0d9c835c9f6019458298aca50f4abc3, type: 3}
-    loop: 1
+    streamClip: {fileID: 8300000, guid: 9cc70d462ff4f154597e2d618f94a52f, type: 3}
+    loop: 0
     bindings: []
-    gain: 1
+    gain: 0.21
     target: 
     group: -1
     notes: 
-    manifestOverride: {fileID: 0}
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
     _cachedManifestIntensity: 1
     _eventId: tutorial-kit.stream_demo
   - _id: 699d0b5d6fa84f3c9ec316feb65be7d3
@@ -177,7 +177,26 @@ MonoBehaviour:
     eventName: charge_release
     streamClip: {fileID: 8300000, guid: 31e02ee7b4756384b9c78070acd570f9, type: 3}
     loop: 0
-    bindings: []
+    bindings:
+    - _id: 03873c7e37cc47789d83b6d93e6f8613
+      ownerObjectName: 
+      sourceTransformPath: 
+      sourceProperty: 1
+      inputMin: 0
+      inputMax: 1
+      curveType: 0
+      customCurve:
+        serializedVersion: 2
+        m_Curve: []
+        m_PreInfinity: 0
+        m_PostInfinity: 0
+        m_RotationOrder: 0
+      outputParameter: 0
+      outputMin: 0
+      outputMax: 1
+      debugLog: 0
+      debugLogInterval: 0.1
+      debugLogChangeThreshold: 0.02
     gain: 1
     target: 
     group: -1
@@ -193,7 +212,7 @@ MonoBehaviour:
     streamClip: {fileID: 8300000, guid: f8a32897e240ad346a685a6870e31ed6, type: 3}
     loop: 0
     bindings: []
-    gain: 1
+    gain: 0.41
     target: 
     group: -1
     notes: 
@@ -208,7 +227,7 @@ MonoBehaviour:
     streamClip: {fileID: 8300000, guid: fcd23a07395e8554da7292d3548b2dcc, type: 3}
     loop: 0
     bindings: []
-    gain: 1
+    gain: 0.63
     target: 
     group: -1
     notes: 
@@ -223,7 +242,7 @@ MonoBehaviour:
     streamClip: {fileID: 8300000, guid: 4a6030a95e5564445ba149d20b6ee747, type: 3}
     loop: 0
     bindings: []
-    gain: 1
+    gain: 0.612
     target: 
     group: -1
     notes: 

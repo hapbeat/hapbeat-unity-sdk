@@ -33,7 +33,41 @@ namespace Hapbeat
         private HapbeatConfig _config;
 
         /// <summary>Whether the client is currently ready to send.</summary>
+        /// <summary>UDP socket 接続状態 (= 送信可能か)。device が落ちていても UDP は無接続性のため true のまま。</summary>
         public bool IsConnected => _client != null && _client.IsConnected;
+
+        /// <summary>
+        /// 直近 pingInterval × 3 秒以内に PONG を返した device の台数。
+        /// 0 ならどの device からも反応なし (電源 OFF / 通信不通)。
+        /// HUD には「Hapbeat: N connected」のように出すのが推奨。
+        /// </summary>
+        public int AliveDeviceCount
+        {
+            get
+            {
+                if (_client == null || !_client.IsConnected) return 0;
+                float timeout = AliveTimeoutSeconds;
+                float now = Time.realtimeSinceStartup;
+                int count = 0;
+                foreach (var kv in _devicePongTimes)
+                {
+                    if (now - kv.Value <= timeout) count++;
+                }
+                return count;
+            }
+        }
+
+        /// <summary>少なくとも 1 台の device が responsive か。</summary>
+        public bool IsAlive => AliveDeviceCount > 0;
+
+        private float AliveTimeoutSeconds =>
+            Mathf.Max(5f, (_config != null ? _config.pingInterval : 5f) * 3f);
+
+        // device 単位の直近 pong time (key = IPAddress)。複数 device broadcast 想定。
+        private readonly System.Collections.Generic.Dictionary<System.Net.IPAddress, float>
+            _devicePongTimes = new System.Collections.Generic.Dictionary<System.Net.IPAddress, float>();
+        // alive count の前回値 (state 変化検出用)
+        private int _prevAliveCount = -1;
 
         /// <summary>Whether the client is in broadcast mode.</summary>
         public bool IsBroadcast => _client != null && _client.IsBroadcast;
@@ -102,6 +136,15 @@ namespace Hapbeat
                     _client.SendConnectStatus(true, DefaultGroup, AppName, SystemInfo.deviceName);
                     _lastPingTime = Time.realtimeSinceStartup;
                 }
+            }
+
+            // Alive 台数の変化検出 → OnConnected / OnDisconnected 発火
+            int cur = AliveDeviceCount;
+            if (cur != _prevAliveCount)
+            {
+                if (_prevAliveCount <= 0 && cur > 0) OnConnected?.Invoke();
+                else if (_prevAliveCount > 0 && cur == 0) OnDisconnected?.Invoke();
+                _prevAliveCount = cur;
             }
         }
 
@@ -318,33 +361,35 @@ namespace Hapbeat
         /// </para>
         ///
         /// <para>
-        /// At most one stream is active at a time. Calling this while another
-        /// stream is in flight stops the previous one first.
+        /// <b>Multi-source mixing (2026-05-18 \u4ee5\u964d):</b> \u8907\u6570\u306e StreamAudioClip
+        /// \u547c\u51fa\u306f SDK \u5185\u3067 float \u5408\u6210\u3055\u308c\u3001\u5358\u4e00\u306e wire stream \u3068\u3057\u3066\u9001\u51fa\u3055\u308c\u308b\u3002
+        /// \u65e2\u5b58\u306e wire protocol (STREAM_BEGIN/DATA/END) \u3068 device firmware \u306f
+        /// \u5909\u66f4\u4e0d\u8981\u3002\u8fd4\u5374\u3055\u308c\u305f <see cref="HapbeatStreamPlayback"/> \u306f source
+        /// \u3054\u3068\u306b\u72ec\u7acb\u3067\u3001<c>.Stop()</c> \u3067\u305d\u306e source \u3060\u3051\u505c\u6b62\u3059\u308b\u3002
+        /// </para>
+        /// <para>
+        /// \u5236\u7d04: \u65b0\u898f source \u306e <c>clip.frequency</c> / <c>clip.channels</c> /
+        /// <c>target</c> \u306f active session \u3068\u4e00\u81f4\u3059\u308b\u5fc5\u8981\u304c\u3042\u308b (mismatch \u306f
+        /// warning + null \u8fd4\u5374)\u3002\u6700\u521d\u306e source \u306e\u5024\u304c session \u3092\u6c7a\u5b9a\u3059\u308b\u3002
         /// </para>
         /// </summary>
         /// <param name="clip">AudioClip to stream (will be read as PCM16).</param>
         /// <param name="gain">Initial gain multiplier (0.0 - 2.0). Binding can
         /// override this per frame via the returned handle.</param>
         /// <param name="target">Optional target filter (e.g. "player_1/pos_neck"). Null = broadcast.</param>
-        /// <param name="loop">If true, keep restarting the stream (with a fresh STREAM_BEGIN each
-        /// iteration) until <see cref="HapbeatStreamPlayback.Stop"/> or
-        /// <see cref="StopStream"/> is called. Useful for the hold phase of
-        /// grab/hold/release sequences and for continuously-modulated effects
-        /// like drag / scrape.</param>
-        /// <returns>Handle for runtime control, or <c>null</c> if the stream
-        /// couldn't start (not connected, null clip).</returns>
+        /// <param name="loop">If true, the source loops until
+        /// <see cref="HapbeatStreamPlayback.Stop"/> is called.</param>
+        /// <returns>Per-source handle for runtime control, or <c>null</c> if
+        /// the source couldn't start (not connected, null clip, session
+        /// rate/channel/target mismatch).</returns>
         public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float gain = 1.0f, string target = null, bool loop = false)
         {
             return StreamAudioClip(clip, gain, gain, target, loop);
         }
 
         /// <summary>
-        /// Same as the 4-arg overload, but lets the caller specify an initial
-        /// <c>Gain</c> value that differs from the baseline. Used by
-        /// <see cref="HapbeatTriggerBase"/> to pre-seed the stream with a
-        /// binding-modulated gain so the first audio chunks aren't at full
-        /// baseline for ~100 ms before the binding's first <c>Update</c>
-        /// writes the modulated value (audible burst otherwise).
+        /// Same as the 4-arg overload, but with separate baseline / initial gain
+        /// (used by <see cref="HapbeatTriggerBase"/> to pre-seed binding-modulated gain).
         /// </summary>
         public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop)
         {
@@ -354,177 +399,235 @@ namespace Hapbeat
                 Debug.LogWarning("[Hapbeat] StreamAudioClip: clip is null.");
                 return null;
             }
-            if (_streamCoroutine != null)
-                StopStream();
 
-            string targetInfo = string.IsNullOrEmpty(target) ? "broadcast" : $"target={target}";
-            string loopInfo = loop ? " (loop)" : "";
-            string gainInfo = Mathf.Approximately(baselineGain, initialGain)
-                ? $"gain={baselineGain}"
-                : $"baseline={baselineGain}, initial={initialGain}";
-            Log($"\u266a StreamClip: {clip.name}, freq={clip.frequency}, ch={clip.channels}, {gainInfo}, {targetInfo}{loopInfo}");
+            // Session compatibility check (sample rate / channels / target must match active session)
+            if (_sessionActive)
+            {
+                if (clip.frequency != _sessionSampleRate || clip.channels != _sessionChannels)
+                {
+                    Debug.LogWarning($"[Hapbeat] StreamAudioClip: rate/channel mismatch with active session " +
+                        $"(session={_sessionSampleRate}Hz/{_sessionChannels}ch, new={clip.frequency}Hz/{clip.channels}ch). Rejecting new source.");
+                    return null;
+                }
+                bool sameTarget = string.IsNullOrEmpty(target)
+                    ? string.IsNullOrEmpty(_sessionTarget)
+                    : (target == _sessionTarget);
+                if (!sameTarget)
+                {
+                    Debug.LogWarning($"[Hapbeat] StreamAudioClip: target mismatch with active session " +
+                        $"(session='{_sessionTarget}', new='{target}'). Rejecting new source.");
+                    return null;
+                }
+            }
 
-            _activePlayback = new HapbeatStreamPlayback(baselineGain, initialGain);
-            _streamCoroutine = StartCoroutine(StreamAudioClipCoroutine(clip, _activePlayback, target, loop));
-            return _activePlayback;
+            var playback = new HapbeatStreamPlayback(baselineGain, initialGain);
+            var source = new StreamSource(clip, playback, loop);
+
+            if (!_sessionActive)
+            {
+                _sessionSampleRate = (ushort)clip.frequency;
+                _sessionChannels = (byte)clip.channels;
+                _sessionTarget = target;
+                _sessionActive = true;
+
+                // gain=1.0 \u3092\u9001\u3063\u3066 device \u306f passthrough \u306b\u3057\u3001\u5404 source \u306e
+                // gain \u306f SDK \u5074\u3067 sample \u00d7 gain \u3068\u3057\u3066 pre-multiply \u3059\u308b
+                // (device \u306e\u4e8c\u91cd\u9069\u7528\u3092\u907f\u3051\u308b)\u3002totalSamples=0 \u306f "unknown" \u901a\u77e5\u3002
+                _client.SendStreamBegin(_sessionSampleRate, _sessionChannels,
+                    HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1.0f, target);
+                Log($"\u266a Stream session begin: {_sessionSampleRate}Hz, {_sessionChannels}ch, " +
+                    $"target={(string.IsNullOrEmpty(target) ? "broadcast" : target)}");
+
+                _sources.Add(source);
+                _mixerCoroutine = StartCoroutine(MixerCoroutine());
+            }
+            else
+            {
+                _sources.Add(source);
+                Log($"\u266a Stream source added: {clip.name} (active sources={_sources.Count}, loop={loop})");
+            }
+
+            return playback;
         }
 
         /// <summary>
-        /// Stop the current audio stream (if any).
+        /// Stop ALL active stream sources and end the session.
+        /// Use <see cref="HapbeatStreamPlayback.Stop"/> on a specific handle
+        /// to stop just one source while others continue.
         /// </summary>
         public void StopStream()
         {
-            if (_streamCoroutine != null)
+            if (_mixerCoroutine != null)
             {
-                StopCoroutine(_streamCoroutine);
-                _streamCoroutine = null;
+                StopCoroutine(_mixerCoroutine);
+                _mixerCoroutine = null;
             }
-            if (_activePlayback != null)
-            {
-                _activePlayback.MarkStopped();
-                _activePlayback = null;
-            }
-            if (_client != null && _client.IsConnected)
+            for (int i = 0; i < _sources.Count; i++)
+                _sources[i].Playback?.MarkStopped();
+            _sources.Clear();
+            if (_sessionActive && _client != null && _client.IsConnected)
             {
                 _client.SendStreamEnd();
-                Log("Stream stopped.");
+                Log("Stream session stopped (all sources).");
             }
+            _sessionActive = false;
         }
 
-        /// <summary>Whether audio streaming is currently in progress.</summary>
-        public bool IsStreaming => _streamCoroutine != null;
+        /// <summary>True while any stream source is active.</summary>
+        public bool IsStreaming => _sessionActive;
 
-        /// <summary>Handle to the current stream, or null if nothing is streaming.</summary>
-        public HapbeatStreamPlayback ActivePlayback => _activePlayback;
+        /// <summary>
+        /// Handle to the FIRST active stream source, or null if nothing is
+        /// streaming. \u5358\u4e00 stream \u6642\u4ee3\u306e API \u4e92\u63db\u306e\u305f\u3081\u6b8b\u7f6e\u3002\u30de\u30eb\u30c1\u30bd\u30fc\u30b9\u6642\u306f
+        /// \u5404 source \u306e handle \u3092 <see cref="StreamAudioClip"/> \u623b\u308a\u5024\u304b\u3089\u4fdd\u6301\u3059\u308b\u3002
+        /// </summary>
+        public HapbeatStreamPlayback ActivePlayback =>
+            (_sources.Count > 0 && !_sources[0].Playback.IsStopped) ? _sources[0].Playback : null;
 
-        private Coroutine _streamCoroutine;
-        private HapbeatStreamPlayback _activePlayback;
+        // ----- Multi-source mixing internals -----
 
-        private IEnumerator StreamAudioClipCoroutine(AudioClip clip, HapbeatStreamPlayback playback, string target, bool loop)
+        private sealed class StreamSource
         {
-            // Extract PCM data once (float samples, interleaved). We convert to
-            // PCM16 per chunk so each chunk can pick up the latest gain / pan
-            // values from the playback handle — this is what lets
-            // HapbeatParameterBinding modulate the stream in real time.
-            float[] samples = new float[clip.samples * clip.channels];
-            clip.GetData(samples, 0);
+            public readonly float[] Samples;
+            public readonly byte Channels;
+            public readonly ushort SampleRate;
+            public readonly bool Loop;
+            public readonly HapbeatStreamPlayback Playback;
+            public readonly string Name;
+            public int Cursor; // \u6b21\u306b\u8aad\u3080 sample index (channel \u6df7\u5728\u306e\u30d5\u30e9\u30c3\u30c8\u30a4\u30f3\u30c7\u30c3\u30af\u30b9)
 
-            byte channels = (byte)clip.channels;
-            ushort sampleRate = (ushort)clip.frequency;
+            public StreamSource(AudioClip clip, HapbeatStreamPlayback pb, bool loop)
+            {
+                Samples = new float[clip.samples * clip.channels];
+                clip.GetData(Samples, 0);
+                Channels = (byte)clip.channels;
+                SampleRate = (ushort)clip.frequency;
+                Loop = loop;
+                Playback = pb;
+                Name = clip.name;
+                Cursor = 0;
+            }
+
+            public bool IsDone => Playback == null || Playback.IsStopped;
+        }
+
+        private readonly System.Collections.Generic.List<StreamSource> _sources
+            = new System.Collections.Generic.List<StreamSource>(4);
+        private Coroutine _mixerCoroutine;
+        private ushort _sessionSampleRate;
+        private byte _sessionChannels;
+        private string _sessionTarget;
+        private bool _sessionActive;
+
+        /// <summary>
+        /// Multi-source mixer. 全 active source から chunk 分のサンプルを
+        /// float で合成し、PCM16 化して 1 本の wire stream として送出する。
+        /// 全 source が終了したら STREAM_END を送って session を終える。
+        /// </summary>
+        private IEnumerator MixerCoroutine()
+        {
+            byte channels = _sessionChannels;
+            ushort sampleRate = _sessionSampleRate;
             int maxChunkBytes = HapbeatProtocol.STREAM_DATA_MAX_PAYLOAD;
             // Chunk size in SAMPLES (not bytes). Must be a whole number of
             // sample frames so stereo L/R stays aligned at chunk boundaries.
             int bytesPerFrame = channels * 2;
-            int samplesPerChunk = (maxChunkBytes / bytesPerFrame) * channels;
-            if (samplesPerChunk <= 0) samplesPerChunk = channels; // degenerate fallback
+            int framesPerChunk = maxChunkBytes / bytesPerFrame;
+            if (framesPerChunk <= 0) framesPerChunk = 1;
+            int samplesPerChunk = framesPerChunk * channels;
             byte[] pcmChunk = new byte[samplesPerChunk * 2];
+            float[] mixBuffer = new float[samplesPerChunk];
 
             float bytesPerSecond = sampleRate * channels * 2f;
-            // Smaller send-ahead buffer makes StopStream() audibly stop faster but
-            // raises underrun risk on slow links. Configurable via HapbeatConfig.
-            // A floor of 10ms protects against legacy assets that don't have the
-            // field serialised yet (Unity defaults to 0 when migrating, which would
-            // cause constant underrun).
             float sendAheadSeconds = _config != null ? _config.streamSendAheadSeconds : 0.05f;
             if (sendAheadSeconds < 0.01f) sendAheadSeconds = 0.05f;
 
-            // Seamless loop: emit a SINGLE STREAM_BEGIN up front (totalSamples=0
-            // for "unknown length"), then keep feeding STREAM_DATA with a
-            // monotonically-increasing global byte offset across iterations so
-            // the device sees one continuous stream with no reset seam.
-            uint reportedTotalSamples = loop ? 0u : (uint)clip.samples;
-            // Send gain=1.0 in STREAM_BEGIN because we pre-multiply the samples
-            // below. The device applies STREAM_BEGIN.gain exactly once on its
-            // side; if we also sent playback.Gain here, the device would
-            // double-attenuate (samples × gain on the SDK side + × gain on the
-            // device side = gain² → e.g. 0.3 looks like 0.09). Passing 1.0
-            // makes the device a passthrough and keeps the SDK as the single
-            // source of truth for the gain value — required for dynamic
-            // modulation via HapbeatStreamPlayback.Gain / HapbeatParameterBinding.
-            _client.SendStreamBegin(sampleRate, channels, HapbeatProtocol.AUDIO_FORMAT_PCM16,
-                reportedTotalSamples, 1.0f, target);
-            Log(loop
-                ? $"Stream begin (loop): {sampleRate}Hz, {channels}ch, initialGain={playback.Gain:F2} (sent as samples×gain; STREAM_BEGIN=1.0)"
-                : $"Stream begin: {sampleRate}Hz, {channels}ch, {clip.samples} samples, initialGain={playback.Gain:F2} (sent as samples×gain; STREAM_BEGIN=1.0)");
-
             uint globalByteOffset = 0;
             float startTime = Time.realtimeSinceStartup;
-            int iteration = 0;
-            bool stoppedByUser = false;
 
-            do
+            while (_sources.Count > 0 && _client != null && _client.IsConnected)
             {
-                iteration++;
-                int sampleCursor = 0;
+                // 1. Clear mix buffer
+                System.Array.Clear(mixBuffer, 0, mixBuffer.Length);
 
-                while (sampleCursor < samples.Length && _client != null && _client.IsConnected)
+                // 2. Mix each source into mixBuffer (also remove stopped/finished sources)
+                for (int s = _sources.Count - 1; s >= 0; s--)
                 {
-                    if (playback.IsStopped) { stoppedByUser = true; break; }
+                    var src = _sources[s];
+                    if (src.IsDone)
+                    {
+                        _sources.RemoveAt(s);
+                        continue;
+                    }
 
-                    int frameCount = Mathf.Min((samples.Length - sampleCursor) / channels, samplesPerChunk / channels);
-                    int samplesThisChunk = frameCount * channels;
-
-                    // Read latest modulation values for this chunk.
-                    float g = playback.Gain;
+                    float g = src.Playback.Gain;
                     float gainL, gainR;
-                    playback.GetStereoChannelGains(out gainL, out gainR);
+                    src.Playback.GetStereoChannelGains(out gainL, out gainR);
 
-                    // Interleaved float -> PCM16 with gain (+ per-channel pan for stereo).
-                    if (channels == 2)
+                    int framesRemaining = framesPerChunk;
+                    int outIdx = 0;
+                    while (framesRemaining > 0)
                     {
-                        for (int i = 0; i < samplesThisChunk; i += 2)
+                        int srcSamplesLeft = src.Samples.Length - src.Cursor;
+                        int srcFramesAvail = srcSamplesLeft / channels;
+                        if (srcFramesAvail <= 0)
                         {
-                            float l = samples[sampleCursor + i]     * g * gainL;
-                            float r = samples[sampleCursor + i + 1] * g * gainR;
-                            short pcmL = (short)Mathf.Clamp(l * 32767f, -32768f, 32767f);
-                            short pcmR = (short)Mathf.Clamp(r * 32767f, -32768f, 32767f);
-                            int bi = i * 2;
-                            pcmChunk[bi    ] = (byte)(pcmL & 0xFF);
-                            pcmChunk[bi + 1] = (byte)((pcmL >> 8) & 0xFF);
-                            pcmChunk[bi + 2] = (byte)(pcmR & 0xFF);
-                            pcmChunk[bi + 3] = (byte)((pcmR >> 8) & 0xFF);
+                            if (src.Loop)
+                            {
+                                src.Cursor = 0;
+                                continue;
+                            }
+                            else
+                            {
+                                src.Playback.MarkStopped();
+                                _sources.RemoveAt(s);
+                                break;
+                            }
                         }
-                    }
-                    else // mono (pan ignored)
-                    {
-                        for (int i = 0; i < samplesThisChunk; i++)
+                        int framesToCopy = Mathf.Min(framesRemaining, srcFramesAvail);
+                        if (channels == 2)
                         {
-                            float v = samples[sampleCursor + i] * g;
-                            short pcm = (short)Mathf.Clamp(v * 32767f, -32768f, 32767f);
-                            pcmChunk[i * 2    ] = (byte)(pcm & 0xFF);
-                            pcmChunk[i * 2 + 1] = (byte)((pcm >> 8) & 0xFF);
+                            for (int f = 0; f < framesToCopy; f++)
+                            {
+                                mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g * gainL;
+                                mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g * gainR;
+                            }
                         }
+                        else
+                        {
+                            for (int f = 0; f < framesToCopy; f++)
+                                mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g;
+                        }
+                        framesRemaining -= framesToCopy;
                     }
-
-                    int chunkBytes = samplesThisChunk * 2;
-                    _client.SendStreamData(globalByteOffset, pcmChunk, 0, chunkBytes);
-                    globalByteOffset += (uint)chunkBytes;
-                    sampleCursor += samplesThisChunk;
-
-                    // Pace: wait if we're sending too far ahead of real-time.
-                    float elapsedTime = Time.realtimeSinceStartup - startTime;
-                    float sentDuration = globalByteOffset / bytesPerSecond;
-                    if (sentDuration > elapsedTime + sendAheadSeconds)
-                        yield return null;
                 }
 
-                if (stoppedByUser) break;
-                if (!loop) break;
-                if (_streamCoroutine == null) break; // StopStream() called
-            }
-            while (loop);
+                // 3. Convert mixed float → PCM16 (clamp to int16 range)
+                for (int i = 0; i < samplesPerChunk; i++)
+                {
+                    short pcm = (short)Mathf.Clamp(mixBuffer[i] * 32767f, -32768f, 32767f);
+                    pcmChunk[i * 2    ] = (byte)(pcm & 0xFF);
+                    pcmChunk[i * 2 + 1] = (byte)((pcm >> 8) & 0xFF);
+                }
 
-            // Single STREAM_END at the very end.
+                // 4. Send chunk
+                int chunkBytes = samplesPerChunk * 2;
+                _client.SendStreamData(globalByteOffset, pcmChunk, 0, chunkBytes);
+                globalByteOffset += (uint)chunkBytes;
+
+                // 5. Pace
+                float elapsedTime = Time.realtimeSinceStartup - startTime;
+                float sentDuration = globalByteOffset / bytesPerSecond;
+                if (sentDuration > elapsedTime + sendAheadSeconds)
+                    yield return null;
+            }
+
+            // All sources done → end session
             if (_client != null && _client.IsConnected)
                 _client.SendStreamEnd();
-
-            Log(iteration > 1
-                ? $"Stream loop stopped after {iteration} iterations ({globalByteOffset} bytes sent)."
-                : $"Stream complete ({globalByteOffset} bytes sent).");
-
-            playback.MarkStopped();
-            if (_activePlayback == playback) _activePlayback = null;
-            _streamCoroutine = null;
+            _sessionActive = false;
+            _mixerCoroutine = null;
+            Log($"Stream session ended ({globalByteOffset} bytes sent).");
         }
 
         #endregion
@@ -587,6 +690,12 @@ namespace Hapbeat
 
                 LogVerbose($"PONG received: RTT={rttUs}us, offset={TimeOffsetUs}us");
                 OnPong?.Invoke(rttUs);
+            };
+
+            // Per-device liveness 集計 (broadcast 経路で複数 device 想定)
+            client.OnPongFrom += (sender, rttUs) =>
+            {
+                _devicePongTimes[sender.Address] = Time.realtimeSinceStartup;
             };
 
             client.OnError += (errorCode, message) =>
