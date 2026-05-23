@@ -591,6 +591,21 @@ namespace Hapbeat
             }
         }
 
+        /// <summary>
+        /// Whether this binding's effective output parameter is
+        /// <see cref="BindingOutputParameter.StreamPan"/> — relevant to the
+        /// pre-stream-start initial-pan pre-seed path (gain と対称)。
+        /// </summary>
+        public bool IsStreamPanOutput
+        {
+            get
+            {
+                if (!_initialized) Initialize();
+                return EffectiveOutputParameter(ResolveLinkedPreset())
+                    == BindingOutputParameter.StreamPan;
+            }
+        }
+
         private float ReadSourceValue(BindingSourceProperty srcProp)
         {
             switch (srcProp)

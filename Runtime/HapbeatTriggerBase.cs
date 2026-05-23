@@ -113,8 +113,38 @@ namespace Hapbeat
         public float GainMultiplier
         {
             get => _gainMultiplier;
-            set => _gainMultiplier = Mathf.Clamp(value, 0f, 2f);
+            set
+            {
+                _gainMultiplier = Mathf.Clamp(value, 0f, 2f);
+                // 再生中の stream playback がある場合、setter で即時 Playback.Gain に
+                // BaselineGain × _gainMultiplier を push する。これにより script から
+                // 毎フレーム GainMultiplier を書込むだけで gain modulation できる
+                // (HapbeatParameterBinding が毎 Update で同等の書込みをする declarative
+                // 経路と等価。post-Fire 伝播の欠落を解消)。
+                //
+                // BaselineGain は FireHaptic で entry.gain × intensity (modulator 抜き)
+                // で設定されているので二重適用にならない。
+                if (_activePlayback != null && !_activePlayback.IsStopped)
+                    _activePlayback.Gain = _activePlayback.BaselineGain * _gainMultiplier;
+            }
         }
+
+        /// <summary>
+        /// Per-trigger stereo pan, [-1 (full left), +1 (full right)]. Mono clip では無視される。
+        /// 再生中なら setter で即時 Playback.Pan に push (script-driven pan modulation 用)。
+        /// HapbeatParameterBinding (Output=StreamPan) と対称の役割を持つ imperative API。
+        /// </summary>
+        public float Pan
+        {
+            get => _pan;
+            set
+            {
+                _pan = Mathf.Clamp(value, -1f, 1f);
+                if (_activePlayback != null && !_activePlayback.IsStopped)
+                    _activePlayback.Pan = _pan;
+            }
+        }
+        private float _pan = 0f;
 
         /// <summary>
         /// Active StreamClip playback handle, or null if nothing is streaming.
@@ -279,9 +309,11 @@ namespace Hapbeat
                         return;
                     }
                     {
-                        // Same multiplier policy as Command above — applied on top
-                        // of entry.gain × manifest.intensity (GetEffectiveGain).
-                        float streamGain = entry.GetEffectiveGain() * _gainMultiplier;
+                        // baselineGain = author intent (entry.gain × manifest.intensity)。
+                        // _gainMultiplier / binding output は live modulator として後乗せするので
+                        // baselineGain には焼き込まない (これにより script から GainMultiplier を
+                        // 毎フレーム変えても playback.Gain = baseline × multiplier で対称に効く)。
+                        float baselineGain = entry.GetEffectiveGain();
                         // Warn once per trigger if the manifest intensity cache is
                         // unresolved — the fire is still going through but at plain
                         // entry.gain, which is a common source of "the runtime
@@ -295,36 +327,52 @@ namespace Hapbeat
                                 "and confirm the clip is in a deployed Kit.", this);
                             _warnedMissingIntensity = true;
                         }
-                        // Pre-seed initial gain from any sibling binding that
-                        // writes StreamGain for this entry. Without this the
-                        // stream plays at full baseline for ~100 ms (while the
-                        // first ~6 STREAM_DATA chunks go out before the first
-                        // binding.Update() runs) and users hear a burst at
-                        // stream start — especially noticeable on hover-Fire
-                        // poke buttons where the binding should start at 0.
-                        float initialGain = streamGain;
+                        // 初期 modulator: 同じ GO 上の binding (Output=StreamGain) があれば
+                        // binding.EvaluateNow() を、無ければ script からの _gainMultiplier を使う。
+                        // これで stream 開始直後の数 chunk が "baseline 100%" で鳴って burst するのを
+                        // 防ぐ (race-free silent start)。script からも GainMultiplier を Fire 前に
+                        // 0 にしておけば同等の挙動になる。
+                        float initialMod = _gainMultiplier;
                         foreach (var b in GetComponents<HapbeatParameterBinding>())
                         {
                             if (b == null) continue;
                             if (b.LinkedOwnerEntryId != entry.id) continue;
                             if (!b.IsStreamGainOutput) continue;
-                            initialGain = streamGain * b.EvaluateNow();
+                            initialMod = b.EvaluateNow();
                             break;
                         }
+                        float initialGain = baselineGain * initialMod;
 
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire StreamClip: clip='{entry.streamClip.name}' " +
                                       $"target='{target ?? "(broadcast)"}' gain={entry.gain:F2} " +
                                       $"intensity={(entry.CachedManifestIntensity > 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
-                                      $"effective={streamGain:F2} initial={initialGain:F2} loop={entry.loop}", this);
+                                      $"baseline={baselineGain:F2} initialMod={initialMod:F2} initial={initialGain:F2} loop={entry.loop}", this);
                         _activePlayback = HapbeatManager.Instance.StreamAudioClip(
-                            entry.streamClip, streamGain, initialGain, target, entry.loop);
+                            entry.streamClip, baselineGain, initialGain, target, entry.loop);
+
+                        // 同 GO 上の pan binding (Output=StreamPan) があれば initial pan を pre-seed
+                        // (gain と同様の race 対策)。無ければ script の _pan を初期値とする。
+                        if (_activePlayback != null)
+                        {
+                            float initialPan = _pan;
+                            foreach (var b in GetComponents<HapbeatParameterBinding>())
+                            {
+                                if (b == null) continue;
+                                if (b.LinkedOwnerEntryId != entry.id) continue;
+                                if (!b.IsStreamPanOutput) continue;
+                                initialPan = b.EvaluateNow();
+                                break;
+                            }
+                            _activePlayback.Pan = initialPan;
+                        }
+
                         if (_verboseLog)
                         {
                             var bindings = GetComponents<HapbeatParameterBinding>();
                             Debug.Log(
                                 $"[Hapbeat] \u266a StreamClip start: \"{label}\" " +
-                                $"(effective gain={streamGain:F2}, loop={entry.loop}, " +
+                                $"(baseline={baselineGain:F2}, initialMod={initialMod:F2}, loop={entry.loop}, " +
                                 $"{bindings.Length} binding(s))",
                                 this);
                         }
