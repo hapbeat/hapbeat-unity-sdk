@@ -116,16 +116,12 @@ namespace Hapbeat
             set
             {
                 _gainMultiplier = Mathf.Clamp(value, 0f, 2f);
-                // 再生中の stream playback がある場合、setter で即時 Playback.Gain に
-                // BaselineGain × _gainMultiplier を push する。これにより script から
-                // 毎フレーム GainMultiplier を書込むだけで gain modulation できる
-                // (HapbeatParameterBinding が毎 Update で同等の書込みをする declarative
-                // 経路と等価。post-Fire 伝播の欠落を解消)。
-                //
-                // BaselineGain は FireHaptic で entry.gain × intensity (modulator 抜き)
-                // で設定されているので二重適用にならない。
+                // 再生中の stream playback がある場合、playback の単一経路
+                // ApplyGainModulation を通じて Gain を更新する
+                // (HapbeatParameterBinding と同じ entry point を共有することで
+                // 計算式の二重定義を避ける。Interface だけ違って内部処理は集約)。
                 if (_activePlayback != null && !_activePlayback.IsStopped)
-                    _activePlayback.Gain = _activePlayback.BaselineGain * _gainMultiplier;
+                    _activePlayback.ApplyGainModulation(_gainMultiplier);
             }
         }
 

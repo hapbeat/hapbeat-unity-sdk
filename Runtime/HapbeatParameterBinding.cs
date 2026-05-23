@@ -437,8 +437,11 @@ namespace Hapbeat
                         //   final = entry.gain × intensity × bindingOutput
                         // Output range typically [0,1] where 1 = authored
                         // strength, 0 = silent. Can exceed 1 to boost past
-                        // authored; Gain setter clamps to [0, 2].
-                        playback.Gain = playback.BaselineGain * output;
+                        // authored; ApplyGainModulation clamps Gain to [0, 2].
+                        //
+                        // imperative path (HapbeatTriggerBase.GainMultiplier setter)
+                        // と同じ entry point を呼び出すことで計算式を集約。
+                        playback.ApplyGainModulation(output);
                         break;
                     case BindingOutputParameter.StreamPan:
                         // Pan is a position (-1..+1), not a multiplier — assign directly.
