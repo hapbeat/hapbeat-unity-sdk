@@ -576,7 +576,14 @@ namespace Hapbeat
                 ? Mathf.Clamp01((raw - inMin) / range)
                 : 0f;
             float curved = ApplyCurve(normalized, curveType, customCurve);
-            return Mathf.Lerp(outMin, outMax, curved);
+            float output = Mathf.Lerp(outMin, outMax, curved);
+            // Edit-mode の Inspector live preview や FireHaptic の initial-seed で
+            // 値を表示できるよう、副作用で Current* も更新する。
+            // Play 中は次フレームの Update() で同じ値を再計算するので冗長だが無害。
+            CurrentInput = raw;
+            CurrentNormalized = normalized;
+            CurrentOutput = output;
+            return output;
         }
 
         /// <summary>

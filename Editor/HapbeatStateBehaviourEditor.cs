@@ -35,6 +35,15 @@ namespace Hapbeat.Editor
 
         private void OnEnable()
         {
+            // target が null (script reload 直後 / missing reference 等) の瞬間に
+            // serializedObject にアクセスすると SerializedObjectNotCreatableException が出る。
+            // null チェックで早期 return し、OnInspectorGUI 側で再 init する。
+            if (target == null) return;
+            CacheProperties();
+        }
+
+        private void CacheProperties()
+        {
             _eventMapProp = serializedObject.FindProperty("_eventMap");
             _entryIdOnEnterProp = serializedObject.FindProperty("_entryIdOnEnter");
             _entryIndexOnEnterProp = serializedObject.FindProperty("_entryIndexOnEnter");
@@ -47,6 +56,15 @@ namespace Hapbeat.Editor
 
         public override void OnInspectorGUI()
         {
+            // OnEnable が target null で早期 return していた場合 / SerializedProperty が
+            // domain reload で失効した場合に備えて、ここで遅延 init する。
+            if (target == null)
+            {
+                EditorGUILayout.HelpBox("Target is null (script reload や missing reference)。", MessageType.Warning);
+                return;
+            }
+            if (_eventMapProp == null) CacheProperties();
+
             serializedObject.Update();
 
             EditorGUILayout.PropertyField(_eventMapProp,

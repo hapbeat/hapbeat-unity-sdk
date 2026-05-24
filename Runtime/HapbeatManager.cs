@@ -473,6 +473,32 @@ namespace Hapbeat
             _sessionActive = false;
         }
 
+        /// <summary>
+        /// Stop all active stream sources AND force device-side ring buffer flush.
+        /// 通常の <see cref="StopStream"/> は STREAM_END を送るが device 側は
+        /// "let residual frames drain naturally" の方針で ~50-250ms の tail を再生する。
+        /// これだと "release した瞬間に静音にしたい" 用途で遅延を感じる。
+        ///
+        /// この API は <see cref="StopStream"/> 後に **STREAM_BEGIN + STREAM_END pair を送り**、
+        /// firmware の <c>BEGIN_FLUSH_THRESHOLD</c> (32ms 残量超で <c>ringReset()</c>) を発動させて
+        /// ring buffer を即時 flush する。device は数 ms 以内に静音になる。
+        /// firmware 改修なしで実現できる pragmatic な解決策。
+        ///
+        /// 注意: target を指定しないと broadcast で全 device の ring buffer を flush するので、
+        /// 他 session (例: 別 trigger の stream) の残音も巻き込まれる。
+        /// per-target stop が必要な場合は target を指定すること。
+        /// </summary>
+        public void StopStreamWithFlush(string target = null)
+        {
+            StopStream();
+            if (_client == null || !_client.IsConnected) return;
+            // 任意 format で OK。residual が >32ms なら ringReset() が走る。
+            // sample_rate=16000, channels=1, PCM16, total_samples=0, gain=1.0
+            _client.SendStreamBegin(16000, 1, HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1.0f, target);
+            _client.SendStreamEnd();
+            Log("Stream flushed (BEGIN+END pair sent to trigger device ring buffer reset).");
+        }
+
         /// <summary>True while any stream source is active.</summary>
         public bool IsStreaming => _sessionActive;
 

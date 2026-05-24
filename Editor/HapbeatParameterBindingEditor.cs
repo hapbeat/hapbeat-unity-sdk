@@ -189,11 +189,19 @@ namespace Hapbeat.Editor
                 }
             }
 
-            // ---- Live preview in play mode ----
-            if (Application.isPlaying)
+            // ---- Live preview (Play mode + Edit mode 両対応) ----
+            // Edit mode では Update() が走らないので EvaluateNow() を呼んで Current* を refresh する。
+            // (EvaluateNow は副作用で CurrentInput/Normalized/Output を更新する)
+            // これにより scene を編集しながら slider / transform 値の binding 出力が live で確認できる。
             {
+                if (!Application.isPlaying)
+                {
+                    try { binding.EvaluateNow(); } catch { /* uninitialized state は無視 */ }
+                }
+
                 EditorGUILayout.Space(4);
-                EditorGUILayout.LabelField("Live", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField(Application.isPlaying ? "Live" : "Live (edit-mode preview)",
+                    EditorStyles.boldLabel);
 
                 EditorGUI.BeginDisabledGroup(true);
                 EditorGUILayout.FloatField("Input (raw)", binding.CurrentInput);
