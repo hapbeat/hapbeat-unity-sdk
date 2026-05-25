@@ -18,10 +18,11 @@ namespace Hapbeat.Editor
     /// </summary>
     internal static class HapbeatEventLoggerMenu
     {
-        private const string kAttachMenu = "Hapbeat/Debug/Attach Event Logger to Selected";
-        private const string kRemoveMenu = "Hapbeat/Debug/Remove Event Logger Wiring from Selected";
+        // Top-level (flat). 旧 "Hapbeat/Debug/" submenu は 2026-05-26 に廃止。
+        private const string kAttachMenu = "Hapbeat/Attach Event Logger to Selected";
+        private const string kRemoveMenu = "Hapbeat/Remove Event Logger Wiring from Selected";
 
-        [MenuItem(kAttachMenu, false, 200)]
+        [MenuItem(kAttachMenu, false, 120)]
         private static void AttachAndWire()
         {
             var go = Selection.activeGameObject;
@@ -83,7 +84,7 @@ namespace Hapbeat.Editor
                 $"Enter Play mode to see the firing order in the Console.", "OK");
         }
 
-        [MenuItem(kRemoveMenu, false, 201)]
+        [MenuItem(kRemoveMenu, false, 121)]
         private static void RemoveWiring()
         {
             var go = Selection.activeGameObject;

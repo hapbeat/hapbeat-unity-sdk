@@ -93,14 +93,105 @@ namespace Hapbeat.Editor
             public List<string> wiredEvents; // e.g. "XRGrabInteractable.selectEntered"
         }
 
-        [MenuItem("Hapbeat/Event Map", false, 2)]
+        [MenuItem("Hapbeat/Event Map", false, 10)]
         public static void ShowWindow()
         {
             var window = GetWindow<HapbeatEventMapWindow>("Hapbeat Event Map");
             window.minSize = new Vector2(500, 300);
         }
 
-        [MenuItem("Hapbeat/Create Event Router", false, 20)]
+        /// <summary>
+        /// One-shot scene scaffolding for new users:
+        /// (1) ensure <c>Assets/HapbeatSDK/</c> layout exists,
+        /// (2) add the Event Router GameObject (if missing),
+        /// (3) create an EventMap asset under <c>HapbeatSDK/EventMaps/</c>
+        ///     named after the current scene (if no matching asset already exists),
+        /// (4) open the Event Map Window with the new asset selected.
+        /// <para>
+        /// Designed so the user can immediately start authoring events without
+        /// hunting through individual menu items. Each step is also exposed as
+        /// its own menu (Create Event Router / Create Event Map / Create
+        /// HapbeatSDK Folder) for advanced workflows where only one piece is needed.
+        /// </para>
+        /// </summary>
+        [MenuItem("Hapbeat/Initial Scene Setup", false, 30)]
+        public static void InitialSceneSetup()
+        {
+            HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
+
+            // 1. Event Router (idempotent: existing one is reused)
+            bool routerExisted = FindObjectsByType<HapbeatManager>(FindObjectsSortMode.None).Length > 0;
+            GameObject router;
+            if (!routerExisted)
+            {
+                router = new GameObject("[Hapbeat Event Router]");
+                Undo.RegisterCreatedObjectUndo(router, "Create Hapbeat Event Router");
+                router.AddComponent<HapbeatManager>();
+            }
+            else
+            {
+                router = FindFirstObjectByType<HapbeatManager>().gameObject;
+            }
+
+            // 2. EventMap asset (named after the active scene for uniqueness across scenes;
+            //    existing same-name asset is reused so re-running is a no-op).
+            var map = EnsureSceneEventMapAsset();
+
+            // 3. Ping + select + open window
+            Selection.activeObject = map;
+            EditorGUIUtility.PingObject(map);
+            ShowWindow();
+
+            string mapPath = AssetDatabase.GetAssetPath(map);
+            Debug.Log(
+                $"[Hapbeat] Initial Scene Setup 完了:\n" +
+                $"  - Event Router: {(routerExisted ? "(既存を再利用)" : "新規追加")} {router.name}\n" +
+                $"  - EventMap   : {mapPath}\n" +
+                $"  - Hapbeat → Event Map ウィンドウを開きました。+ Entry でイベント追加から始められます。");
+        }
+
+        /// <summary>
+        /// Asset-only creation of an EventMap. Mirrors the Project window's
+        /// <c>Create → Hapbeat → Event Map</c> convenience but uses the standard
+        /// HapbeatSDK/EventMaps/ location so first-time users don't have to hunt
+        /// for the right folder.
+        /// </summary>
+        [MenuItem("Hapbeat/Create Event Map", false, 32)]
+        public static void CreateEventMapAsset()
+        {
+            HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
+            var map = EnsureSceneEventMapAsset();
+            Selection.activeObject = map;
+            EditorGUIUtility.PingObject(map);
+            Debug.Log($"[Hapbeat] EventMap を作成しました: {AssetDatabase.GetAssetPath(map)}");
+        }
+
+        /// <summary>
+        /// Resolve (or create) the EventMap asset associated with the active
+        /// scene. Naming: <c>HapbeatSDK/EventMaps/&lt;scene&gt;-EventMap.asset</c>
+        /// when a scene is loaded, else <c>HapbeatEventMap.asset</c>. Reusing the
+        /// same path keeps re-runs idempotent.
+        /// </summary>
+        private static HapbeatEventMap EnsureSceneEventMapAsset()
+        {
+            string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+            string baseName = string.IsNullOrEmpty(sceneName) ? "HapbeatEventMap" : $"{sceneName}-EventMap";
+            string assetPath = $"{HapbeatSDKFolderCreator.kEventMapsDir}/{baseName}.asset";
+
+            var existing = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(assetPath);
+            if (existing != null) return existing;
+
+            // GenerateUniqueAssetPath handles the "user previously deleted the .meta but the
+            // path is stale" edge case by walking forward (foo-EventMap 1.asset, etc.).
+            string finalPath = AssetDatabase.GenerateUniqueAssetPath(assetPath);
+            var map = ScriptableObject.CreateInstance<HapbeatEventMap>();
+            AssetDatabase.CreateAsset(map, finalPath);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            return AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(finalPath);
+        }
+
+        [MenuItem("Hapbeat/Create Event Router", false, 31)]
         [MenuItem("GameObject/Hapbeat/Event Router", false, 10)]
         public static void CreateEventRouter()
         {

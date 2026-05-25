@@ -21,13 +21,14 @@ namespace Hapbeat.Editor
     /// </summary>
     public static class HapbeatSDKFolderCreator
     {
-        private const string kMenu = "Hapbeat/Setup/Create HapbeatSDK Folder";
+        // Top-level (flat) menu — moved out of legacy "Hapbeat/Setup/" submenu in 2026-05-26.
+        private const string kMenu = "Hapbeat/Create HapbeatSDK Folder";
         public const string kSdkRoot = "Assets/HapbeatSDK";
         public const string kKitsDir = kSdkRoot + "/Kits";
         public const string kScenesDir = kSdkRoot + "/Scenes";
         public const string kEventMapsDir = kSdkRoot + "/EventMaps";
 
-        [MenuItem(kMenu, false, 40)]
+        [MenuItem(kMenu, false, 50)]
         private static void CreateMenu()
         {
             EnsureLayout(verbose: true);
@@ -63,8 +64,8 @@ namespace Hapbeat.Editor
                     $"  Kits      : {kitsRoot}/\n" +
                     $"  Scenes    : {kScenesDir}/\n" +
                     $"  EventMaps : {kEventMapsDir}/\n\n" +
-                    "次に Hapbeat / Build Samples / 1. Basic Example などを実行すると、\n" +
-                    "このフォルダに Kit / EventMap / Scene が生成されます。",
+                    "次に `Hapbeat → Initial Scene Setup` で Event Router + EventMap を一括作成するか、\n" +
+                    "Hapbeat Studio で Kit を Deploy すればこのフォルダに展開されます。",
                     "OK");
             }
 

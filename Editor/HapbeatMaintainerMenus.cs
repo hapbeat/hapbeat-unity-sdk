@@ -33,7 +33,7 @@ namespace Hapbeat.Editor
         // Showcase
         // ----------------------------------------------------------------
 
-        [MenuItem("Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (Showcase)", false, 201)]
+        [MenuItem("Hapbeat/Developer/Sync HapbeatSDK → Samples~ (Showcase)", false, 1010)]
         public static void SyncShowcaseToSamples()
         {
             if (!TryResolveSamplesRoot("Showcase", out string samplesRoot)) return;
@@ -57,7 +57,7 @@ namespace Hapbeat.Editor
         // BasicExample
         // ----------------------------------------------------------------
 
-        [MenuItem("Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (BasicExample)", false, 200)]
+        [MenuItem("Hapbeat/Developer/Sync HapbeatSDK → Samples~ (BasicExample)", false, 1011)]
         public static void SyncBasicExampleToSamples()
         {
             if (!TryResolveSamplesRoot("BasicExample", out string samplesRoot)) return;
@@ -131,7 +131,7 @@ namespace Hapbeat.Editor
                 EditorUtility.DisplayDialog("Maintainer Sync",
                     $"{sampleName} の sync 元ファイルが見つかりません:\n\n  " +
                     string.Join("\n  ", missing) + "\n\n" +
-                    "`Hapbeat → Build Samples` で先に scaffold を実行してください。",
+                    "`Hapbeat → Developer → Build Basic Example` で先に scaffold を実行してください。",
                     "OK");
                 return;
             }

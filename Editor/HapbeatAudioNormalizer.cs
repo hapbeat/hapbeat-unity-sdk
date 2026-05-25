@@ -29,7 +29,7 @@ namespace Hapbeat.Editor
         private const int TargetRate = 16000;
         private const int TargetChannels = 2;
 
-        [MenuItem("Hapbeat/Normalize Audio Folder (16kHz · 2ch · PCM16)")]
+        [MenuItem("Hapbeat/Normalize Audio Folder (16kHz · 2ch · PCM16)", false, 51)]
         public static void NormalizeFolder()
         {
             string folder = EditorUtility.OpenFolderPanel(

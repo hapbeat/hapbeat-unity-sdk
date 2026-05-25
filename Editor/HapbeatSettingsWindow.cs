@@ -17,7 +17,7 @@ namespace Hapbeat.Editor
         private Vector2 _scrollPosition;
         private bool _bridgeFoldout;
 
-        [MenuItem("Hapbeat/Settings", false, 1)]
+        [MenuItem("Hapbeat/Settings", false, 80)]
         public static void ShowWindow()
         {
             var window = GetWindow<HapbeatSettingsWindow>("Hapbeat Settings");

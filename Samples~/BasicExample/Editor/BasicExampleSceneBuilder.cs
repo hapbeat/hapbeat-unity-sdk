@@ -15,7 +15,7 @@ namespace Hapbeat.Samples.Editor
 {
     /// <summary>
     /// BasicExample シーンを自動生成する Editor スクリプト。
-    /// Menu: Hapbeat > Build Samples > 1. Basic Example
+    /// Menu: Hapbeat > Developer > Build Basic Example  (Local/Embedded install only)
     ///
     /// 構成:
     ///   - HapbeatManager           (singleton)
@@ -54,7 +54,7 @@ namespace Hapbeat.Samples.Editor
         // HapbeatKitsReadme.FindKitsRootPath().
         private const string kHapbeatSdkSampleRoot = "Assets/HapbeatSDK/SDK_Samples/BasicExample";
 
-        [MenuItem("Hapbeat/Build Samples/1. Basic Example", false, 60)]
+        [MenuItem("Hapbeat/Developer/Build Basic Example", false, 1000)]
         public static void Build()
         {
             string sampleRoot = FindSampleRoot();

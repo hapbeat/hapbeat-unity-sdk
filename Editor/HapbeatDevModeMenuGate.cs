@@ -47,18 +47,22 @@ namespace Hapbeat.Editor
         /// <summary>
         /// Menu paths that should only be visible to SDK developers
         /// (Local / Embedded installs). End users never see these.
+        /// <para>
+        /// 2026-05-26 menu restructure: All dev-only items are consolidated
+        /// under <c>Hapbeat/Developer/</c>. Old paths (<c>Build Samples/</c>,
+        /// <c>Maintainers/</c>) are dropped — the Hapbeat menu is otherwise
+        /// kept flat per UX feedback.
+        /// </para>
         /// </summary>
         private static readonly string[] kDevOnlyMenuPaths = new[]
         {
-            // Build Samples — scaffolds / deploys SDK-shipped samples into
-            // Assets/HapbeatSDK/SDK_Samples/. End users open imported
-            // sample scenes directly from Assets/Samples/.../ instead.
-            "Hapbeat/Build Samples/1. Basic Example",
-            "Hapbeat/Build Samples/2. Showcase (full scene)",
-            // Maintainer Sync — writes back into the package's Samples~/
-            // folder, requires Local/Embedded source to be useful at all.
-            "Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (Showcase)",
-            "Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (BasicExample)",
+            // Build — scaffolds SDK-shipped samples into Assets/HapbeatSDK/SDK_Samples/.
+            // End users open imported sample scenes directly from Assets/Samples/.../ instead.
+            "Hapbeat/Developer/Build Basic Example",
+            // Sync — writes back into the package's Samples~/ folder, requires
+            // Local/Embedded source to be useful at all.
+            "Hapbeat/Developer/Sync HapbeatSDK → Samples~ (Showcase)",
+            "Hapbeat/Developer/Sync HapbeatSDK → Samples~ (BasicExample)",
         };
 
         static HapbeatDevModeMenuGate()
