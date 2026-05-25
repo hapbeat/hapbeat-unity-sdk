@@ -16,7 +16,7 @@ namespace Hapbeat.Editor
     /// </summary>
     public static class HapbeatEventMapMarkdownExport
     {
-        [MenuItem("Hapbeat/Export Event Map (Selected)", false, 60)]
+        [MenuItem("Hapbeat/Export Event Map (Selected)", false, 50)]
         public static void ExportSelected()
         {
             var map = Selection.activeObject as HapbeatEventMap;
@@ -30,7 +30,7 @@ namespace Hapbeat.Editor
             ExportToMarkdown(map);
         }
 
-        [MenuItem("Hapbeat/Export Event Map (All in Project)", false, 61)]
+        [MenuItem("Hapbeat/Export Event Map (All in Project)", false, 51)]
         public static void ExportAll()
         {
             string[] guids = AssetDatabase.FindAssets("t:HapbeatEventMap");
