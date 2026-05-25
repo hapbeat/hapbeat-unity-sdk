@@ -361,7 +361,7 @@ namespace Hapbeat.Samples.Editor
 
             // Use the dedicated setup method instead of SerializedObject to avoid
             // inheritance-traversal issues with protected fields across Unity versions.
-            trig.EditorSetupEntry(map, id, idx);
+            trig.EditorSetupEntry(map, id);
             EditorUtility.SetDirty(trig);
             return trig;
         }
