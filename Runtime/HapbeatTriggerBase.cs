@@ -187,6 +187,39 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Find a <see cref="HapbeatParameterBinding"/> linked to <paramref name="entryId"/>
+        /// (and matching the requested output type) by walking the local hierarchy.
+        /// <para>
+        /// Scope mirrors <see cref="HapbeatParameterBinding.OnEnable"/>'s trigger
+        /// lookup: <b>Self → Children → Parent</b>. This keeps the trigger ↔ binding
+        /// pairing symmetric so a binding placed on a child / parent GameObject is
+        /// still picked up by the trigger's pre-seed pass at Fire() time
+        /// (otherwise the first chunk would send <c>baseline × _gainMultiplier (1.0)</c>
+        /// instead of <c>baseline × binding.EvaluateNow()</c>, causing a 1-chunk
+        /// burst before the binding's per-frame Update takes over).
+        /// </para>
+        /// </summary>
+        private HapbeatParameterBinding FindBindingForEntry(string entryId, bool wantStreamGain)
+        {
+            foreach (var b in GetComponentsInChildren<HapbeatParameterBinding>(true))
+            {
+                if (BindingMatches(b, entryId, wantStreamGain)) return b;
+            }
+            foreach (var b in GetComponentsInParent<HapbeatParameterBinding>(true))
+            {
+                if (BindingMatches(b, entryId, wantStreamGain)) return b;
+            }
+            return null;
+        }
+
+        private static bool BindingMatches(HapbeatParameterBinding b, string entryId, bool wantStreamGain)
+        {
+            if (b == null) return false;
+            if (b.LinkedOwnerEntryId != entryId) return false;
+            return wantStreamGain ? b.IsStreamGainOutput : b.IsStreamPanOutput;
+        }
+
+        /// <summary>
         /// Fire the haptic event referenced by this trigger.
         /// Behavior depends on the entry's mode (Command or StreamClip).
         /// <para>
@@ -340,20 +373,16 @@ namespace Hapbeat
                                 "and confirm the clip is in a deployed Kit.", this);
                             _warnedMissingIntensity = true;
                         }
-                        // 初期 modulator: 同じ GO 上の binding (Output=StreamGain) があれば
-                        // binding.EvaluateNow() を、無ければ script からの _gainMultiplier を使う。
-                        // これで stream 開始直後の数 chunk が "baseline 100%" で鳴って burst するのを
-                        // 防ぐ (race-free silent start)。script からも GainMultiplier を Fire 前に
-                        // 0 にしておけば同等の挙動になる。
-                        float initialMod = _gainMultiplier;
-                        foreach (var b in GetComponents<HapbeatParameterBinding>())
-                        {
-                            if (b == null) continue;
-                            if (b.LinkedOwnerEntryId != entry.id) continue;
-                            if (!b.IsStreamGainOutput) continue;
-                            initialMod = b.EvaluateNow();
-                            break;
-                        }
+                        // 初期 modulator: 自己 + 子孫 + 親 を辿って同 entry を modulate する binding
+                        // (Output=StreamGain) を探し、binding.EvaluateNow() を pre-seed 値とする。
+                        // 無ければ script からの _gainMultiplier を使う。これで stream 開始直後の
+                        // 数 chunk が "baseline 100%" で鳴って burst するのを防ぐ (race-free silent start)。
+                        // HapbeatParameterBinding.OnEnable の trigger 探索と対称にスコープを取る
+                        // (Self → Children → Parent)。同 GO だけだと、binding が trigger と別 GO に
+                        // 置かれている (例: SequenceTrigger は root、binding は child 物体) 構成で
+                        // 見つからず初回 chunk が 1.0 で送信される問題を回避。
+                        var gainBind = FindBindingForEntry(entry.id, wantStreamGain: true);
+                        float initialMod = gainBind != null ? gainBind.EvaluateNow() : _gainMultiplier;
                         float initialGain = baselineGain * initialMod;
 
                         if (_verboseLog)
@@ -364,29 +393,22 @@ namespace Hapbeat
                         _activePlayback = HapbeatManager.Instance.StreamAudioClip(
                             entry.streamClip, baselineGain, initialGain, target, entry.loop);
 
-                        // 同 GO 上の pan binding (Output=StreamPan) があれば initial pan を pre-seed
-                        // (gain と同様の race 対策)。無ければ script の _pan を初期値とする。
+                        // pan binding (Output=StreamPan) も同様に Self → Children → Parent で探索し
+                        // initial pan を pre-seed (gain と同様の race 対策)。無ければ script の _pan。
                         if (_activePlayback != null)
                         {
-                            float initialPan = _pan;
-                            foreach (var b in GetComponents<HapbeatParameterBinding>())
-                            {
-                                if (b == null) continue;
-                                if (b.LinkedOwnerEntryId != entry.id) continue;
-                                if (!b.IsStreamPanOutput) continue;
-                                initialPan = b.EvaluateNow();
-                                break;
-                            }
+                            var panBind = FindBindingForEntry(entry.id, wantStreamGain: false);
+                            float initialPan = panBind != null ? panBind.EvaluateNow() : _pan;
                             _activePlayback.Pan = initialPan;
                         }
 
                         if (_verboseLog)
                         {
-                            var bindings = GetComponents<HapbeatParameterBinding>();
+                            int bindingCount = GetComponentsInChildren<HapbeatParameterBinding>(true).Length;
                             Debug.Log(
                                 $"[Hapbeat] \u266a StreamClip start: \"{label}\" " +
                                 $"(baseline={baselineGain:F2}, initialMod={initialMod:F2}, loop={entry.loop}, " +
-                                $"{bindings.Length} binding(s))",
+                                $"{bindingCount} binding(s))",
                                 this);
                         }
                     }
