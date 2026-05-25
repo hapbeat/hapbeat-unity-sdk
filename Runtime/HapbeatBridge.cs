@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Hapbeat
@@ -32,6 +33,47 @@ namespace Hapbeat
         /// </summary>
         public void EditorSetupEventMap(HapbeatEventMap map) => _eventMap = map;
 #endif
+
+        // Pending Play / Stop coroutines waiting on hapticDelaySeconds. Flushed
+        // when the user edits latency mid-Play so stale fires don't deliver
+        // late with the old delay. Mirrors HapbeatTriggerBase's tracker pattern.
+        private readonly List<Coroutine> _pendingDelayCoroutines = new List<Coroutine>(4);
+
+        protected virtual void OnEnable()
+        {
+            HapbeatManager.OnHapticDelayChanged += FlushPendingDelayCoroutines;
+        }
+
+        protected virtual void OnDisable()
+        {
+            HapbeatManager.OnHapticDelayChanged -= FlushPendingDelayCoroutines;
+            FlushPendingDelayCoroutines();
+        }
+
+        /// <summary>Cancel all in-flight latency-deferred Play / Stop coroutines.</summary>
+        public void FlushPendingDelayCoroutines()
+        {
+            for (int i = 0; i < _pendingDelayCoroutines.Count; i++)
+            {
+                var c = _pendingDelayCoroutines[i];
+                if (c != null) StopCoroutine(c);
+            }
+            _pendingDelayCoroutines.Clear();
+        }
+
+        private Coroutine StartHapticDelayCoroutine(IEnumerator routine)
+        {
+            var holder = new Coroutine[1];
+            holder[0] = StartCoroutine(WrapHapticDelayCoroutine(routine, holder));
+            _pendingDelayCoroutines.Add(holder[0]);
+            return holder[0];
+        }
+
+        private IEnumerator WrapHapticDelayCoroutine(IEnumerator inner, Coroutine[] selfHolder)
+        {
+            yield return StartCoroutine(inner);
+            _pendingDelayCoroutines.Remove(selfHolder[0]);
+        }
 
         /// <summary>
         /// Apply the cached manifest intensity to a raw gain value.
@@ -68,7 +110,7 @@ namespace Hapbeat
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
-                StartCoroutine(PlayAfterDelay(entry.eventId, gain, entry.target, delay));
+                StartHapticDelayCoroutine(PlayAfterDelay(entry.eventId, gain, entry.target, delay));
                 return;
             }
             HapbeatManager.Instance.Play(entry.eventId, gain, target: entry.target);
@@ -91,7 +133,7 @@ namespace Hapbeat
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
-                StartCoroutine(StopAfterDelay(entry.eventId, entry.target, delay));
+                StartHapticDelayCoroutine(StopAfterDelay(entry.eventId, entry.target, delay));
                 return;
             }
             HapbeatManager.Instance.Stop(entry.eventId, target: entry.target);

@@ -96,6 +96,76 @@ namespace Hapbeat
         /// </summary>
         public float HapticDelaySeconds => _config != null ? _config.hapticDelaySeconds : 0f;
 
+        /// <summary>
+        /// Raised when <see cref="HapbeatConfig.hapticDelaySeconds"/> changes
+        /// during Play mode. Subscribers (Trigger / Bridge / Event instances)
+        /// should flush their pending delay coroutines so the new latency value
+        /// takes effect immediately on subsequent Fire / Stop calls.
+        /// <para>
+        /// Active StreamClip playbacks, mixer session state, and SequenceTrigger
+        /// internal coroutines (start-shot → loop start delay) are <b>not</b>
+        /// affected. Only the per-call Fire/Stop deferral that captured the
+        /// old <c>hapticDelaySeconds</c> value gets cancelled.
+        /// </para>
+        /// </summary>
+        public static event System.Action OnHapticDelayChanged;
+
+        /// <summary>
+        /// Invoked by <see cref="HapbeatConfig.OnValidate"/> when the user edits
+        /// <c>hapticDelaySeconds</c> in the Inspector during Play. Public so
+        /// custom UIs that drive the field via code (instead of SerializedObject)
+        /// can also fan out the notification.
+        /// </summary>
+        public static void NotifyHapticDelayChanged()
+        {
+            // Flush our own tracked coroutines first (e.g. StateMachineBehaviour
+            // delay routines that can't host their own coroutines), then notify
+            // all event subscribers (Trigger / Bridge instances).
+            if (Instance != null) Instance.FlushTrackedHapticDelays();
+            OnHapticDelayChanged?.Invoke();
+        }
+
+        // Coroutines owned by the HapbeatManager singleton on behalf of callers
+        // that can't host their own (e.g. StateMachineBehaviour subclasses).
+        // Tracked so they can be flushed alongside Trigger / Bridge coroutines
+        // when latency settings change during Play.
+        private readonly List<Coroutine> _trackedHapticDelays = new List<Coroutine>(4);
+
+        /// <summary>
+        /// Start a coroutine on the HapbeatManager and register it as a
+        /// haptic-delay deferred routine. Returns the started Coroutine so the
+        /// caller can keep a reference (e.g. for its own cancellation).
+        /// <para>
+        /// Intended for <see cref="HapbeatStateBehaviour"/> and other callers
+        /// that can't host coroutines themselves. MonoBehaviour-based triggers
+        /// should use their own <c>StartHapticDelayCoroutine</c> helper instead
+        /// so the coroutine is bound to the trigger's lifetime.
+        /// </para>
+        /// </summary>
+        public Coroutine StartTrackedHapticDelay(IEnumerator routine)
+        {
+            var holder = new Coroutine[1];
+            holder[0] = StartCoroutine(WrapTrackedHapticDelay(routine, holder));
+            _trackedHapticDelays.Add(holder[0]);
+            return holder[0];
+        }
+
+        private IEnumerator WrapTrackedHapticDelay(IEnumerator inner, Coroutine[] selfHolder)
+        {
+            yield return StartCoroutine(inner);
+            _trackedHapticDelays.Remove(selfHolder[0]);
+        }
+
+        private void FlushTrackedHapticDelays()
+        {
+            for (int i = 0; i < _trackedHapticDelays.Count; i++)
+            {
+                var c = _trackedHapticDelays[i];
+                if (c != null) StopCoroutine(c);
+            }
+            _trackedHapticDelays.Clear();
+        }
+
         /// <summary>Internal UDP client.</summary>
         internal HapbeatClient Client => _client;
 

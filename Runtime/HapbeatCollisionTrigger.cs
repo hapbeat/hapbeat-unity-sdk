@@ -165,7 +165,7 @@ namespace Hapbeat
             {
                 if (_verboseLog)
                     Debug.Log($"[Hapbeat] VelocityScaled fire deferred by {delay * 1000f:F0}ms on {name}", this);
-                StartCoroutine(FireWithVelocityAfterDelay(entry, scaledGain, label, target, delay));
+                StartHapticDelayCoroutine(FireWithVelocityAfterDelay(entry, scaledGain, label, target, delay));
                 return;
             }
 

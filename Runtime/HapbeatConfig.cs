@@ -74,6 +74,25 @@ namespace Hapbeat
         [Tooltip("Enable verbose logging (PONG, keep-alive, protocol details). Noisy — use for debugging only.")]
         public bool verboseLogging = false;
 
+        // Last observed value of hapticDelaySeconds, captured at OnEnable and
+        // refreshed inside OnValidate. Used to detect Play-mode latency edits
+        // so the SDK can flush pending delay coroutines that captured the old
+        // value (without this, stale Fire/Stop coroutines from before the edit
+        // continue waiting on the previous delay, causing timing chaos / burst
+        // delivery when the user is tuning latency live).
+        [System.NonSerialized]
+        private bool _hapticDelayTracked = false;
+        [System.NonSerialized]
+        private float _previousHapticDelaySeconds = 0f;
+
+        private void OnEnable()
+        {
+            // Capture the initial value so the first OnValidate after a load
+            // doesn't fire a spurious "changed" notification.
+            _previousHapticDelaySeconds = hapticDelaySeconds;
+            _hapticDelayTracked = true;
+        }
+
         // Validate / clamp serialized fields. Inspector edits and asset import both
         // trigger this. We only enforce bounded fields that the inspector cannot
         // already constrain via [Range] / dropdown.
@@ -85,6 +104,18 @@ namespace Hapbeat
                     $"[Hapbeat] appName '{appName}' exceeds the {MaxAppNameLength}-char display limit; " +
                     $"truncated to '{appName.Substring(0, MaxAppNameLength)}'.", this);
                 appName = appName.Substring(0, MaxAppNameLength);
+            }
+
+            // Detect Play-mode hapticDelaySeconds edits and notify the SDK so
+            // it can flush pending delay coroutines. Only fires during Play to
+            // avoid Editor-time noise (asset import / domain reload also call
+            // OnValidate but don't represent a user-initiated edit).
+            if (_hapticDelayTracked
+                && Application.isPlaying
+                && !Mathf.Approximately(_previousHapticDelaySeconds, hapticDelaySeconds))
+            {
+                _previousHapticDelaySeconds = hapticDelaySeconds;
+                HapbeatManager.NotifyHapticDelayChanged();
             }
         }
     }

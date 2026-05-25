@@ -39,7 +39,7 @@ namespace Hapbeat
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
-                StartCoroutine(FireWithGainAfterDelay(entry.eventId, gain, label, target, delay));
+                StartHapticDelayCoroutine(FireWithGainAfterDelay(entry.eventId, gain, label, target, delay));
                 return;
             }
             HapbeatManager.Instance.Play(entry.eventId, gain, label, target);

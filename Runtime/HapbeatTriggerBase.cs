@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Hapbeat
@@ -61,6 +62,75 @@ namespace Hapbeat
         private bool _warnedNoEventMap;
         private bool _warnedStaleId;
         private bool _warnedMissingIntensity;
+
+        // Coroutines spawned via StartHapticDelayCoroutine, representing
+        // Fire / Stop requests waiting on hapticDelaySeconds. Tracked so
+        // HapbeatManager.OnHapticDelayChanged can flush them when the user
+        // edits latency mid-Play (otherwise stale coroutines fire late with
+        // the previous delay, causing timing chaos / burst delivery).
+        private readonly List<Coroutine> _pendingDelayCoroutines = new List<Coroutine>(4);
+
+        protected virtual void OnEnable()
+        {
+            HapbeatManager.OnHapticDelayChanged += FlushPendingDelayCoroutines;
+        }
+
+        protected virtual void OnDisable()
+        {
+            HapbeatManager.OnHapticDelayChanged -= FlushPendingDelayCoroutines;
+            FlushPendingDelayCoroutines();
+        }
+
+        /// <summary>
+        /// Stop and discard all Fire / Stop coroutines that are currently
+        /// waiting on the global <see cref="HapbeatConfig.hapticDelaySeconds"/>
+        /// (or per-entry offset) before delivering to the device.
+        /// <para>
+        /// Active StreamClip playbacks (loops, ongoing sequences), the mixer
+        /// session, and per-trigger state (_isActive, _activePlayback) are
+        /// <b>not</b> touched. Only the per-call deferral that captured the
+        /// previous delay value is cancelled.
+        /// </para>
+        /// </summary>
+        public void FlushPendingDelayCoroutines()
+        {
+            for (int i = 0; i < _pendingDelayCoroutines.Count; i++)
+            {
+                var c = _pendingDelayCoroutines[i];
+                if (c != null) StopCoroutine(c);
+            }
+            _pendingDelayCoroutines.Clear();
+        }
+
+        /// <summary>
+        /// Start a coroutine that represents a Fire / Stop request waiting on
+        /// the latency-compensation delay. Tracks the coroutine so it can be
+        /// flushed when <c>hapticDelaySeconds</c> changes during Play, and
+        /// auto-removes itself from the tracker on natural completion.
+        /// </summary>
+        protected Coroutine StartHapticDelayCoroutine(IEnumerator routine)
+        {
+            // Use a single-element array as a mutable holder so the wrapper
+            // can reference its own Coroutine handle. The Coroutine reference
+            // is returned by StartCoroutine and stored into the holder before
+            // the wrapper runs (Unity yields control back before the first
+            // iteration), so the wrapper sees the handle once it executes.
+            var holder = new Coroutine[1];
+            holder[0] = StartCoroutine(WrapHapticDelayCoroutine(routine, holder));
+            _pendingDelayCoroutines.Add(holder[0]);
+            return holder[0];
+        }
+
+        private IEnumerator WrapHapticDelayCoroutine(IEnumerator inner, Coroutine[] selfHolder)
+        {
+            yield return StartCoroutine(inner);
+            // Natural completion → drop ourselves from the tracker list.
+            // If we were cancelled via StopCoroutine, this line never runs
+            // and the (now invalid) Coroutine ref stays in the list until
+            // the next Flush, which is harmless (StopCoroutine on a stopped
+            // coroutine is a no-op and Clear() drops the entry).
+            _pendingDelayCoroutines.Remove(selfHolder[0]);
+        }
 
         /// <summary>The event map this trigger references.</summary>
         public HapbeatEventMap EventMap => _eventMap;
@@ -285,7 +355,7 @@ namespace Hapbeat
                     Debug.Log($"[Hapbeat] Fire deferred by {delay * 1000f:F0}ms on {name} " +
                               $"(global={HapbeatManager.Instance.HapticDelaySeconds:F3}s + " +
                               $"entry.offset={entry.delayOffsetSeconds:F3}s)", this);
-                StartCoroutine(FireHapticAfterDelay(entry, delay));
+                StartHapticDelayCoroutine(FireHapticAfterDelay(entry, delay));
                 return;
             }
 
@@ -440,7 +510,7 @@ namespace Hapbeat
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
-                StartCoroutine(StopHapticAfterDelay(entry, delay));
+                StartHapticDelayCoroutine(StopHapticAfterDelay(entry, delay));
                 return;
             }
 

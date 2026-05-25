@@ -280,9 +280,12 @@ namespace Hapbeat
             return _eventMap.FindById(id);
         }
 
-        private void OnDisable()
+        protected override void OnDisable()
         {
-            // Don't leave a coroutine dangling past component/object teardown.
+            base.OnDisable();  // unsubscribe + flush pending haptic-delay coroutines
+            // Don't leave the internal LoopStartCoroutine dangling past
+            // component/object teardown (it's tracked separately from the
+            // haptic-delay coroutines that base.OnDisable handles).
             CancelPendingLoop();
             // Also reset active state so re-enabling doesn't leave us stuck
             // thinking we're mid-hold.
@@ -329,7 +332,7 @@ namespace Hapbeat
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
-                StartCoroutine(PlayOneShotAfterDelay(entry, gain, label, target, phase, delay));
+                StartHapticDelayCoroutine(PlayOneShotAfterDelay(entry, gain, label, target, phase, delay));
                 return;
             }
             DispatchOneShot(entry, gain, label, target, phase);

@@ -216,6 +216,10 @@ namespace Hapbeat
                 FireHaptic();
         }
 
-        private void OnDisable() => _hasReference = false;
+        protected override void OnDisable()
+        {
+            base.OnDisable();  // flush pending haptic-delay coroutines + event unsubscribe
+            _hasReference = false;
+        }
     }
 }

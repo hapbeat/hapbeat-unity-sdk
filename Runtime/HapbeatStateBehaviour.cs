@@ -162,7 +162,7 @@ namespace Hapbeat
                     Debug.Log($"[HapbeatState] {animator.gameObject.name}: Enter deferred by " +
                               $"{delay * 1000f:F0}ms (global={HapbeatManager.Instance.HapticDelaySeconds:F3}s + " +
                               $"entry.offset={entry.delayOffsetSeconds:F3}s)", animator);
-                _pendingEnterFire = HapbeatManager.Instance.StartCoroutine(EnterAfterDelay(animator, entry, delay));
+                _pendingEnterFire = HapbeatManager.Instance.StartTrackedHapticDelay(EnterAfterDelay(animator, entry, delay));
                 return;
             }
 
@@ -207,7 +207,7 @@ namespace Hapbeat
                     if (_verboseLog)
                         Debug.Log($"[HapbeatState] {animator.gameObject.name}: stopping enter playback " +
                                   $"deferred by {enterDelay * 1000f:F0}ms", animator);
-                    HapbeatManager.Instance.StartCoroutine(StopPlaybackAfterDelay(playbackToStop, enterDelay));
+                    HapbeatManager.Instance.StartTrackedHapticDelay(StopPlaybackAfterDelay(playbackToStop, enterDelay));
                 }
                 else
                 {
@@ -234,7 +234,7 @@ namespace Hapbeat
                 if (_verboseLog)
                     Debug.Log($"[HapbeatState] {animator.gameObject.name}: Exit deferred by " +
                               $"{delay * 1000f:F0}ms", animator);
-                _pendingExitFire = HapbeatManager.Instance.StartCoroutine(ExitAfterDelay(animator, entry, delay));
+                _pendingExitFire = HapbeatManager.Instance.StartTrackedHapticDelay(ExitAfterDelay(animator, entry, delay));
                 return;
             }
 
