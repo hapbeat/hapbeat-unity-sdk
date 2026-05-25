@@ -20,8 +20,13 @@ namespace Hapbeat
     /// <para>
     /// Pan semantics: −1 = full left, 0 = centered, +1 = full right. For mono
     /// clips the pan value is ignored (there is only one channel to scale).
-    /// An equal-power panning law is used for stereo so a center pan preserves
-    /// perceived loudness.
+    /// <b>Stereo balance (linear)</b> is used — center (pan = 0) is
+    /// passthrough (gainL = gainR = 1.0), full pan attenuates the opposite
+    /// channel to zero. This matches haptic intent: left / right actuators
+    /// are physically separate on the body, so the audio-mixing
+    /// "equal-power compensates for binaural summation" assumption doesn't
+    /// apply — equal-power would silently attenuate every centered stereo
+    /// clip by √½ ≈ 0.71 (~3 dB) versus the same clip played as mono.
     /// </para>
     /// </summary>
     public sealed class HapbeatStreamPlayback
@@ -108,19 +113,30 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Equal-power per-channel gain coefficients derived from
+        /// Stereo-balance per-channel gain coefficients derived from
         /// <see cref="Pan"/>. Returns <c>(gainL, gainR)</c>. For mono paths,
         /// the caller should just use the overall <see cref="Gain"/>.
+        ///
+        /// <para><b>Linear balance, not equal-power</b>:
+        /// <list type="bullet">
+        ///   <item><c>pan = 0</c> (default): <c>gainL = gainR = 1.0</c> — passthrough.
+        ///         A stereo clip plays at the same per-channel amplitude as an
+        ///         equivalent mono clip; no hidden attenuation by √½.</item>
+        ///   <item><c>pan = −1</c>: <c>gainL = 1.0, gainR = 0</c> — full left.</item>
+        ///   <item><c>pan = +1</c>: <c>gainL = 0, gainR = 1.0</c> — full right.</item>
+        /// </list>
+        /// Audio mixers favour equal-power because binaural summation in one ear
+        /// would otherwise add up. Hapbeat's left / right actuators are
+        /// physically separate on the body — they don't sum into a single
+        /// perception — so equal-power's compensation only hurts, attenuating
+        /// every centered clip by ~3 dB relative to the mono equivalent.
+        /// </para>
         /// </summary>
         internal void GetStereoChannelGains(out float gainL, out float gainR)
         {
-            // Equal-power panning: maps pan ∈ [-1,1] to angle θ ∈ [0, π/2].
-            // gainL = cos(θ), gainR = sin(θ). At θ=π/4 (centered), both are √½
-            // so a centered pan preserves total power.
             float pan = Volatile.Read(ref _pan);
-            float theta = (pan + 1f) * (Mathf.PI * 0.25f); // 0..π/2
-            gainL = Mathf.Cos(theta);
-            gainR = Mathf.Sin(theta);
+            gainL = pan <= 0f ? 1f : 1f - pan;
+            gainR = pan >= 0f ? 1f : 1f + pan;
         }
     }
 }
