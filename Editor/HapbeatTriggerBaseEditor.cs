@@ -8,7 +8,7 @@ namespace Hapbeat.Editor
     /// Custom inspector for all HapbeatTriggerBase subclasses.
     /// Renders the event reference as a dropdown of event-map entry display
     /// names. Under the hood the selection writes the entry's <b>stable GUID</b>
-    /// (<c>_entryId</c>) plus a mirrored <c>_entryIndex</c> for display.
+    /// (<c>_entryId</c>) so reordering entries in the map does not break wiring.
     /// </summary>
     [CustomEditor(typeof(HapbeatTriggerBase), true)]
     [CanEditMultipleObjects]
@@ -16,13 +16,11 @@ namespace Hapbeat.Editor
     {
         private SerializedProperty _eventMapProp;
         private SerializedProperty _entryIdProp;
-        private SerializedProperty _entryIndexProp;
 
         protected virtual void OnEnable()
         {
             _eventMapProp = serializedObject.FindProperty("_eventMap");
             _entryIdProp = serializedObject.FindProperty("_entryId");
-            _entryIndexProp = serializedObject.FindProperty("_entryIndex");
         }
 
         public override void OnInspectorGUI()
@@ -32,13 +30,13 @@ namespace Hapbeat.Editor
             EditorGUILayout.PropertyField(_eventMapProp);
 
             var eventMap = _eventMapProp.objectReferenceValue as HapbeatEventMap;
-            DrawEntryDropdown(eventMap, _entryIdProp, _entryIndexProp, "Event",
+            DrawEntryDropdown(eventMap, _entryIdProp, "Event",
                 "Select a haptic event from the event map. The reference is stored " +
                 "by stable GUID so reordering entries won't break this trigger.");
 
             if (eventMap != null && eventMap.entries.Count > 0)
             {
-                var entry = ResolveEntry(eventMap, _entryIdProp, _entryIndexProp);
+                var entry = ResolveEntry(eventMap, _entryIdProp);
                 if (entry != null)
                 {
                     EditorGUI.indentLevel++;
@@ -62,21 +60,20 @@ namespace Hapbeat.Editor
             }
 
             DrawPropertiesExcluding(serializedObject,
-                "_eventMap", "_entryIndex", "_entryId", "m_Script");
+                "_eventMap", "_entryId", "m_Script");
 
             serializedObject.ApplyModifiedProperties();
         }
 
         /// <summary>
-        /// Draw a dropdown of event map entries. On selection, writes both
-        /// the stable id (<paramref name="idProp"/>) and the display-cache index
-        /// (<paramref name="indexProp"/>). Handles migration from the legacy
-        /// index-only state when <paramref name="idProp"/> is empty.
+        /// Draw a dropdown of event map entries. On selection, writes the entry's
+        /// stable GUID into <paramref name="idProp"/>. Shows the currently-stored
+        /// entry name if the id resolves; falls through to "(missing entry)" when
+        /// the id is stale (referenced entry was deleted).
         /// </summary>
         public static void DrawEntryDropdown(
             HapbeatEventMap eventMap,
             SerializedProperty idProp,
-            SerializedProperty indexProp,
             string label,
             string tooltip)
         {
@@ -91,22 +88,14 @@ namespace Hapbeat.Editor
                 return;
             }
 
-            // Resolve currently-selected index: prefer id, fall back to index.
             int currentIndex = -1;
             if (idProp != null && !string.IsNullOrEmpty(idProp.stringValue))
-            {
                 currentIndex = eventMap.IndexOfId(idProp.stringValue);
-                // Stale id → clamp to index cache so the dropdown doesn't show random stuff.
-                if (currentIndex < 0) currentIndex = Mathf.Clamp(indexProp.intValue, 0, eventMap.entries.Count - 1);
-            }
-            else
-            {
-                currentIndex = Mathf.Clamp(indexProp.intValue, 0, eventMap.entries.Count - 1);
-            }
 
             string[] names = eventMap.GetDisplayNames();
+            int displayIndex = currentIndex >= 0 ? currentIndex : -1;
             int newIndex = EditorGUILayout.Popup(new GUIContent(label, tooltip),
-                currentIndex, names);
+                displayIndex, names);
 
             if (newIndex >= 0 && newIndex < eventMap.entries.Count)
             {
@@ -120,19 +109,23 @@ namespace Hapbeat.Editor
                     EditorUtility.SetDirty(eventMap);
                     AssetDatabase.SaveAssetIfDirty(eventMap);
                 }
-                indexProp.intValue = newIndex;
+            }
+
+            // Surface stale-id state to the designer so they know to re-pick.
+            if (currentIndex < 0 && idProp != null && !string.IsNullOrEmpty(idProp.stringValue))
+            {
+                EditorGUILayout.HelpBox(
+                    "選択中の entry が EventMap に見つかりません (削除された可能性)。" +
+                    "再度 entry を選択してください。",
+                    MessageType.Warning);
             }
         }
 
         private static HapbeatEventEntry ResolveEntry(
-            HapbeatEventMap map, SerializedProperty idProp, SerializedProperty indexProp)
+            HapbeatEventMap map, SerializedProperty idProp)
         {
-            if (idProp != null && !string.IsNullOrEmpty(idProp.stringValue))
-            {
-                var e = map.FindById(idProp.stringValue);
-                if (e != null) return e;
-            }
-            return map.GetEntry(indexProp.intValue);
+            if (idProp == null || string.IsNullOrEmpty(idProp.stringValue)) return null;
+            return map.FindById(idProp.stringValue);
         }
     }
 }

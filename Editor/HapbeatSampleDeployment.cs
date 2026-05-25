@@ -165,7 +165,7 @@ namespace Hapbeat.Editor
                 var newMap = ResolveRemap(trig.EventMap, mapRemap);
                 if (newMap != null && newMap != trig.EventMap)
                 {
-                    trig.EditorSetupEntry(newMap, trig.EntryId, trig.EntryIndex);
+                    trig.EditorSetupEntry(newMap, trig.EntryId);
                     EditorUtility.SetDirty(trig);
                 }
                 // Sequence trigger has secondary entry refs; the entry IDs

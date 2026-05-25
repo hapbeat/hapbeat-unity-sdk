@@ -6,27 +6,22 @@ namespace Hapbeat.Editor
 {
     /// <summary>
     /// Custom inspector for <see cref="HapbeatSequenceTrigger"/>. Shows all three
-    /// entries (On Start / Loop / On Stop) as dropdowns with the shared event-map
-    /// icon prefix. Selections are written by stable GUID so reorders don't break
-    /// wiring.
+    /// entries (On Start / Loop / On Stop) as dropdowns. Selections are written
+    /// by stable GUID so reorders don't break wiring.
     /// </summary>
     [CustomEditor(typeof(HapbeatSequenceTrigger))]
     [CanEditMultipleObjects]
     public class HapbeatSequenceTriggerEditor : HapbeatTriggerBaseEditor
     {
         private SerializedProperty _onStartIdProp;
-        private SerializedProperty _onStartIndexProp;
         private SerializedProperty _onStopIdProp;
-        private SerializedProperty _onStopIndexProp;
         private bool _showUsageGuide;
 
         protected override void OnEnable()
         {
             base.OnEnable();
             _onStartIdProp = serializedObject.FindProperty("_onStartEntryId");
-            _onStartIndexProp = serializedObject.FindProperty("_onStartEntryIndex");
             _onStopIdProp = serializedObject.FindProperty("_onStopEntryId");
-            _onStopIndexProp = serializedObject.FindProperty("_onStopEntryIndex");
         }
 
         public override void OnInspectorGUI()
@@ -53,20 +48,19 @@ namespace Hapbeat.Editor
             EditorGUIUtility.labelWidth = Mathf.Max(160f, EditorGUIUtility.currentViewWidth * 0.45f);
             try
             {
-                DrawOptionalEntryDropdown(eventMap, _onStartIdProp, _onStartIndexProp,
+                DrawOptionalEntryDropdown(eventMap, _onStartIdProp,
                     "On Start",
                     "Optional one-shot haptic fired by Fire() (the 'attack' moment: " +
                     "grab click, button click, enter ping). Set to (none) to skip.");
 
                 DrawEntryDropdown(eventMap,
                     serializedObject.FindProperty("_entryId"),
-                    serializedObject.FindProperty("_entryIndex"),
                     "Loop (hold)",
                     "Continuous haptic that plays between Fire() and Stop(). " +
                     "Normally a StreamClip with loop=true, optionally driven by a " +
                     "HapbeatParameterBinding for dynamic gain / pan modulation.");
 
-                DrawOptionalEntryDropdown(eventMap, _onStopIdProp, _onStopIndexProp,
+                DrawOptionalEntryDropdown(eventMap, _onStopIdProp,
                     "On Stop",
                     "Optional one-shot haptic fired by Stop() (the 'release' moment: " +
                     "release thud, button release, exit ping). Set to (none) to skip.");
@@ -79,8 +73,7 @@ namespace Hapbeat.Editor
             EditorGUILayout.Space(4);
             DrawPropertiesExcluding(
                 serializedObject,
-                "_eventMap", "_entryIndex", "_entryId",
-                "_onStartEntryIndex", "_onStopEntryIndex",
+                "_eventMap", "_entryId",
                 "_onStartEntryId", "_onStopEntryId",
                 "m_Script");
 
@@ -107,13 +100,12 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Entry dropdown that includes a leading "(none)" option, mapped to
-        /// empty-id + index=-1. Used for Sequence's optional On Start / On Stop.
+        /// Entry dropdown that includes a leading "(none)" option, mapped to an
+        /// empty id. Used for Sequence's optional On Start / On Stop phases.
         /// </summary>
         private static void DrawOptionalEntryDropdown(
             HapbeatEventMap eventMap,
             SerializedProperty idProp,
-            SerializedProperty indexProp,
             string label,
             string tooltip)
         {
@@ -122,18 +114,11 @@ namespace Hapbeat.Editor
             options[0] = "(none)";
             System.Array.Copy(names, 0, options, 1, names.Length);
 
-            // Resolve current popup index: popup uses 0 for "(none)", 1..N for entries.
-            int popupIdx;
+            // popup index: 0 = (none), 1..N = entry index + 1.
+            int currentEntryIdx = -1;
             if (!string.IsNullOrEmpty(idProp.stringValue))
-            {
-                int resolved = eventMap.IndexOfId(idProp.stringValue);
-                popupIdx = resolved >= 0 ? resolved + 1 : Mathf.Max(0, indexProp.intValue + 1);
-            }
-            else
-            {
-                popupIdx = Mathf.Max(0, indexProp.intValue + 1);
-            }
-            popupIdx = Mathf.Clamp(popupIdx, 0, options.Length - 1);
+                currentEntryIdx = eventMap.IndexOfId(idProp.stringValue);
+            int popupIdx = currentEntryIdx >= 0 ? currentEntryIdx + 1 : 0;
 
             int newPopupIdx = EditorGUILayout.Popup(new GUIContent(label, tooltip),
                 popupIdx, options);
@@ -143,7 +128,6 @@ namespace Hapbeat.Editor
             {
                 if (!string.IsNullOrEmpty(idProp.stringValue))
                     idProp.stringValue = "";
-                indexProp.intValue = -1;
             }
             else if (resolvedEntryIdx < eventMap.entries.Count)
             {
@@ -155,7 +139,6 @@ namespace Hapbeat.Editor
                     EditorUtility.SetDirty(eventMap);
                     AssetDatabase.SaveAssetIfDirty(eventMap);
                 }
-                indexProp.intValue = resolvedEntryIdx;
             }
 
             // Short readonly preview line for the resolved entry
@@ -169,6 +152,15 @@ namespace Hapbeat.Editor
             else
             {
                 EditorGUILayout.LabelField("   (disabled)", EditorStyles.miniLabel);
+            }
+
+            // Surface stale-id state.
+            if (currentEntryIdx < 0 && !string.IsNullOrEmpty(idProp.stringValue))
+            {
+                EditorGUILayout.HelpBox(
+                    "選択中の entry が EventMap に見つかりません (削除された可能性)。" +
+                    "再度 entry を選択してください。",
+                    MessageType.Warning);
             }
         }
     }

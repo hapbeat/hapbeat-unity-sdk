@@ -48,17 +48,9 @@ namespace Hapbeat
         [SerializeField, HideInInspector]
         private string _entryIdOnEnter;
 
-        // Display cache for the enter entry. -1 = none.
-        [SerializeField, HideInInspector]
-        private int _entryIndexOnEnter = -1;
-
         // Stable GUID of the entry fired on OnStateExit. Empty = don't fire on exit.
         [SerializeField, HideInInspector]
         private string _entryIdOnExit;
-
-        // Display cache for the exit entry. -1 = none.
-        [SerializeField, HideInInspector]
-        private int _entryIndexOnExit = -1;
 
         [Header("Transition Filter")]
         [Tooltip("Optional. If non-empty, OnStateEnter fires only when the " +
@@ -117,7 +109,7 @@ namespace Hapbeat
 
         public override void OnStateEnter(Animator animator, AnimatorStateInfo stateInfo, int layerIndex)
         {
-            if (string.IsNullOrEmpty(_entryIdOnEnter) && _entryIndexOnEnter < 0)
+            if (string.IsNullOrEmpty(_entryIdOnEnter))
             {
                 // No enter event configured — nothing to do, but still fall through
                 // to the Required Previous State log path if verbose.
@@ -154,7 +146,7 @@ namespace Hapbeat
                 }
             }
 
-            var entry = ResolveEntry(_entryIdOnEnter, _entryIndexOnEnter);
+            var entry = ResolveEntry(_entryIdOnEnter);
             if (entry == null) return;
 
             float delay = ComputeEffectiveDelaySeconds(entry);
@@ -183,8 +175,8 @@ namespace Hapbeat
             // stop-of-enter-playback coroutine (keeps the Enter playback's
             // audio-haptic alignment intact on exit).
             HapbeatEventEntry enterEntry = null;
-            if (!string.IsNullOrEmpty(_entryIdOnEnter) || _entryIndexOnEnter >= 0)
-                enterEntry = ResolveEntry(_entryIdOnEnter, _entryIndexOnEnter);
+            if (!string.IsNullOrEmpty(_entryIdOnEnter))
+                enterEntry = ResolveEntry(_entryIdOnEnter);
             float enterDelay = ComputeEffectiveDelaySeconds(enterEntry);
 
             // Pending Enter that hasn't fired yet → **leave it pending**. The
@@ -225,10 +217,10 @@ namespace Hapbeat
                 }
             }
 
-            if (string.IsNullOrEmpty(_entryIdOnExit) && _entryIndexOnExit < 0)
+            if (string.IsNullOrEmpty(_entryIdOnExit))
                 return;
 
-            var entry = ResolveEntry(_entryIdOnExit, _entryIndexOnExit);
+            var entry = ResolveEntry(_entryIdOnExit);
             if (entry == null) return;
 
             float delay = ComputeEffectiveDelaySeconds(entry);
@@ -292,20 +284,12 @@ namespace Hapbeat
 
         // --- Internal ---
 
-        /// <summary>
-        /// Resolve an entry, preferring stable GUID, falling back to the index cache.
-        /// </summary>
-        private HapbeatEventEntry ResolveEntry(string id, int index)
+        /// <summary>Resolve an entry by stable GUID. Returns null when id is empty or stale.</summary>
+        private HapbeatEventEntry ResolveEntry(string id)
         {
             if (_eventMap == null) return null;
-            if (!string.IsNullOrEmpty(id))
-            {
-                var byId = _eventMap.FindById(id);
-                if (byId != null) return byId;
-            }
-            if (index >= 0 && index < _eventMap.entries.Count)
-                return _eventMap.GetEntry(index);
-            return null;
+            if (string.IsNullOrEmpty(id)) return null;
+            return _eventMap.FindById(id);
         }
 
         /// <summary>

@@ -14,7 +14,7 @@ namespace Hapbeat
     ///   <item><b>Loop</b> — continuous sustain (held rumble, drag scrape).
     ///     A looping StreamClip entry. Attach a HapbeatParameterBinding to
     ///     modulate its gain / pan from game state (velocity, position …)
-    ///     while the loop is running. Uses the inherited <c>_entryIndex</c>
+    ///     while the loop is running. Uses the inherited <c>_entryId</c>
     ///     field so it plugs into the same FireHaptic / StopHaptic pipeline
     ///     as <see cref="HapbeatUnityEventTrigger"/>.</item>
     ///   <item><b>On Stop</b> — release moment (release thud, exit ping).
@@ -30,23 +30,11 @@ namespace Hapbeat
     public class HapbeatSequenceTrigger : HapbeatTriggerBase
     {
         [Header("Sequence")]
-        // Stable GUID references for On Start / On Stop. Mirror the base class's
-        // _entryId / _entryIndex pairing: _*EntryId is authoritative, _*EntryIndex
-        // is a display cache + legacy fallback for scenes authored before ids.
+        // Stable GUID references for On Start / On Stop. Empty = (none).
         [SerializeField, HideInInspector]
         private string _onStartEntryId = "";
         [SerializeField, HideInInspector]
         private string _onStopEntryId = "";
-
-        [Tooltip("List index of the On Start entry (display cache). -1 = none. " +
-                 "The authoritative reference is the hidden stable GUID.")]
-        [SerializeField]
-        private int _onStartEntryIndex = -1;
-
-        [Tooltip("List index of the On Stop entry (display cache). -1 = none. " +
-                 "The authoritative reference is the hidden stable GUID.")]
-        [SerializeField]
-        private int _onStopEntryIndex = -1;
 
         [Tooltip("Delay (seconds) between the On Start one-shot and the Loop phase start.\n" +
                  "-1 = auto (use the On Start clip's duration).\n" +
@@ -96,36 +84,11 @@ namespace Hapbeat
         // user released before the delay elapsed (i.e. Loop never started).
         private Coroutine _pendingLoopStart;
 
-        /// <summary>Index of the "on start" one-shot entry (display cache), or -1 if none.</summary>
-        public int OnStartEntryIndex => _onStartEntryIndex;
-
-        /// <summary>Index of the "on stop" one-shot entry (display cache), or -1 if none.</summary>
-        public int OnStopEntryIndex => _onStopEntryIndex;
-
-        /// <summary>Stable id of the "on start" entry, or empty if none / not yet migrated.</summary>
+        /// <summary>Stable id of the "on start" entry, or empty if (none).</summary>
         public string OnStartEntryId => _onStartEntryId;
 
-        /// <summary>Stable id of the "on stop" entry, or empty if none / not yet migrated.</summary>
+        /// <summary>Stable id of the "on stop" entry, or empty if (none).</summary>
         public string OnStopEntryId => _onStopEntryId;
-
-        private void Awake()
-        {
-            // Best-effort in-memory migration: populate the id fields from the
-            // legacy index fields on first load. Editor tooling persists the
-            // migration to disk (HapbeatMigrateLegacyReferences); this path
-            // covers runtime scenes that haven't been re-saved yet.
-            if (_eventMap == null) return;
-            if (string.IsNullOrEmpty(_onStartEntryId) && _onStartEntryIndex >= 0)
-            {
-                var e = _eventMap.GetEntry(_onStartEntryIndex);
-                if (e != null) _onStartEntryId = e.id;
-            }
-            if (string.IsNullOrEmpty(_onStopEntryId) && _onStopEntryIndex >= 0)
-            {
-                var e = _eventMap.GetEntry(_onStopEntryIndex);
-                if (e != null) _onStopEntryId = e.id;
-            }
-        }
 
         /// <summary>
         /// Delay (seconds) between the On Start one-shot and the Loop phase start.
@@ -145,9 +108,8 @@ namespace Hapbeat
         {
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] SequenceTrigger.Fire() invoked on {name} " +
-                          $"(onStart id='{_onStartEntryId}' idx={_onStartEntryIndex}, " +
-                          $"loop id='{_entryId}' idx={_entryIndex}, " +
-                          $"onStop id='{_onStopEntryId}' idx={_onStopEntryIndex}, active={_isActive})", this);
+                          $"(onStart='{_onStartEntryId}', loop='{_entryId}', " +
+                          $"onStop='{_onStopEntryId}', active={_isActive})", this);
 
             // Idempotent re-entry guard. See _guardReentry tooltip — XRI fires
             // selectEntered per-interactor, so a second Fire() often arrives
@@ -177,7 +139,7 @@ namespace Hapbeat
             }
 
             _isActive = true;
-            PlayOneShot(_onStartEntryId, _onStartEntryIndex, "start");
+            PlayOneShot(_onStartEntryId, "start");
             StartLoopAfterDelay();
         }
 
@@ -216,7 +178,7 @@ namespace Hapbeat
             _isActive = false;
             CancelPendingLoop();
             StopHaptic(); // inherited — stops the loop
-            PlayOneShot(_onStopEntryId, _onStopEntryIndex, "end");
+            PlayOneShot(_onStopEntryId, "end");
         }
 
         /// <summary>
@@ -241,7 +203,7 @@ namespace Hapbeat
                 return;
             }
             _isActive = true;
-            PlayOneShot(_onStartEntryId, _onStartEntryIndex, "start", gainMultiplier);
+            PlayOneShot(_onStartEntryId, "start", gainMultiplier);
             StartLoopAfterDelay();
         }
 
@@ -300,7 +262,7 @@ namespace Hapbeat
         {
             if (_startShotDelay >= 0f) return _startShotDelay;
             if (_eventMap == null) return 0f;
-            var entry = ResolveSequenceEntry(_onStartEntryId, _onStartEntryIndex);
+            var entry = ResolveSequenceEntry(_onStartEntryId);
             if (entry == null) return 0f;
             if (entry.mode == HapticMode.Command) return 0f;
             if (entry.streamClip == null) return 0f;
@@ -308,18 +270,14 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Resolve an On Start / On Stop entry by id (authoritative) with
-        /// <paramref name="legacyIndex"/> as a fallback when the id is empty.
-        /// Mirrors <see cref="HapbeatTriggerBase.ResolveEntry"/>. Returns null
-        /// when the phase is (none) (index &lt; 0 and id empty).
+        /// Resolve an On Start / On Stop entry by stable GUID. Returns null when
+        /// the phase is (none), the id is stale, or the EventMap is unassigned.
         /// </summary>
-        private HapbeatEventEntry ResolveSequenceEntry(string id, int legacyIndex)
+        private HapbeatEventEntry ResolveSequenceEntry(string id)
         {
             if (_eventMap == null) return null;
-            if (!string.IsNullOrEmpty(id))
-                return _eventMap.FindById(id);
-            if (legacyIndex < 0) return null;
-            return _eventMap.GetEntry(legacyIndex);
+            if (string.IsNullOrEmpty(id)) return null;
+            return _eventMap.FindById(id);
         }
 
         private void OnDisable()
@@ -331,21 +289,20 @@ namespace Hapbeat
             _isActive = false;
         }
 
-        private void PlayOneShot(string entryId, int legacyIndex, string phase, float gainMultiplier = 1f)
+        private void PlayOneShot(string entryId, string phase, float gainMultiplier = 1f)
         {
-            // "(none)" — both id empty AND legacy index -1 means the user deliberately
-            // left this phase unset.
-            if (string.IsNullOrEmpty(entryId) && legacyIndex < 0) return;
+            // "(none)" — empty id means the user deliberately left this phase unset.
+            if (string.IsNullOrEmpty(entryId)) return;
             if (!_triggerEnabled) return;
             if (_eventMap == null) return;
 
-            var entry = ResolveSequenceEntry(entryId, legacyIndex);
+            var entry = ResolveSequenceEntry(entryId);
             if (entry == null)
             {
                 if (_verboseLog)
                     Debug.LogWarning(
                         $"[Hapbeat] Sequence {phase}-shot: entry not found on {name} " +
-                        $"(id='{entryId}', idx={legacyIndex})", this);
+                        $"(id='{entryId}')", this);
                 return;
             }
 

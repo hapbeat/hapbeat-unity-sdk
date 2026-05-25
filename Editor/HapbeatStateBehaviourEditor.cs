@@ -26,9 +26,7 @@ namespace Hapbeat.Editor
     {
         private SerializedProperty _eventMapProp;
         private SerializedProperty _entryIdOnEnterProp;
-        private SerializedProperty _entryIndexOnEnterProp;
         private SerializedProperty _entryIdOnExitProp;
-        private SerializedProperty _entryIndexOnExitProp;
         private SerializedProperty _requiredPreviousStateProp;
         private SerializedProperty _gainMultiplierProp;
         private SerializedProperty _verboseLogProp;
@@ -46,9 +44,7 @@ namespace Hapbeat.Editor
         {
             _eventMapProp = serializedObject.FindProperty("_eventMap");
             _entryIdOnEnterProp = serializedObject.FindProperty("_entryIdOnEnter");
-            _entryIndexOnEnterProp = serializedObject.FindProperty("_entryIndexOnEnter");
             _entryIdOnExitProp = serializedObject.FindProperty("_entryIdOnExit");
-            _entryIndexOnExitProp = serializedObject.FindProperty("_entryIndexOnExit");
             _requiredPreviousStateProp = serializedObject.FindProperty("_requiredPreviousState");
             _gainMultiplierProp = serializedObject.FindProperty("_gainMultiplier");
             _verboseLogProp = serializedObject.FindProperty("_verboseLog");
@@ -75,13 +71,13 @@ namespace Hapbeat.Editor
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("On State Enter", EditorStyles.boldLabel);
-            DrawEntryDropdownWithClear(eventMap, _entryIdOnEnterProp, _entryIndexOnEnterProp,
+            DrawEntryDropdownWithClear(eventMap, _entryIdOnEnterProp,
                 "Entry",
                 "Haptic event fired when this state is entered. Leave unset to skip OnEnter.");
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("On State Exit", EditorStyles.boldLabel);
-            DrawEntryDropdownWithClear(eventMap, _entryIdOnExitProp, _entryIndexOnExitProp,
+            DrawEntryDropdownWithClear(eventMap, _entryIdOnExitProp,
                 "Entry",
                 "Haptic event fired when this state is exited. Leave unset to skip OnExit. " +
                 "If OnEnter fired a looping StreamClip, it is stopped automatically before this fires.");
@@ -105,13 +101,12 @@ namespace Hapbeat.Editor
 
         /// <summary>
         /// Entry picker with an additional "(none)" option at the top so designers
-        /// can explicitly say "no event on this phase". When selected, both id and
-        /// index are cleared to the sentinel values.
+        /// can explicitly say "no event on this phase". Stores the entry's stable
+        /// GUID into <paramref name="idProp"/>; empty string = (none).
         /// </summary>
         private static void DrawEntryDropdownWithClear(
             HapbeatEventMap eventMap,
             SerializedProperty idProp,
-            SerializedProperty indexProp,
             string label,
             string tooltip)
         {
@@ -133,19 +128,9 @@ namespace Hapbeat.Editor
             for (int i = 0; i < displayNames.Length; i++)
                 options[i + 1] = displayNames[i];
 
-            // Resolve current display index: 0 = none, else 1-based index of entry.
             int currentEntryIdx = -1;
             if (!string.IsNullOrEmpty(idProp.stringValue))
-            {
                 currentEntryIdx = eventMap.IndexOfId(idProp.stringValue);
-                if (currentEntryIdx < 0)
-                    currentEntryIdx = (indexProp.intValue >= 0 && indexProp.intValue < eventMap.entries.Count)
-                        ? indexProp.intValue : -1;
-            }
-            else if (indexProp.intValue >= 0 && indexProp.intValue < eventMap.entries.Count)
-            {
-                currentEntryIdx = indexProp.intValue;
-            }
             int currentDisplay = currentEntryIdx >= 0 ? currentEntryIdx + 1 : 0;
 
             int newDisplay = EditorGUILayout.Popup(new GUIContent(label, tooltip),
@@ -153,12 +138,8 @@ namespace Hapbeat.Editor
 
             if (newDisplay == 0)
             {
-                // (none) selected
-                if (!string.IsNullOrEmpty(idProp.stringValue) || indexProp.intValue >= 0)
-                {
+                if (!string.IsNullOrEmpty(idProp.stringValue))
                     idProp.stringValue = "";
-                    indexProp.intValue = -1;
-                }
             }
             else
             {
@@ -173,7 +154,6 @@ namespace Hapbeat.Editor
                         EditorUtility.SetDirty(eventMap);
                         AssetDatabase.SaveAssetIfDirty(eventMap);
                     }
-                    indexProp.intValue = entryIdx;
                 }
             }
 
@@ -196,6 +176,13 @@ namespace Hapbeat.Editor
                     EditorGUI.EndDisabledGroup();
                     EditorGUI.indentLevel--;
                 }
+            }
+            else if (!string.IsNullOrEmpty(idProp.stringValue))
+            {
+                EditorGUILayout.HelpBox(
+                    "選択中の entry が EventMap に見つかりません (削除された可能性)。" +
+                    "再度 entry を選択してください。",
+                    MessageType.Warning);
             }
         }
 

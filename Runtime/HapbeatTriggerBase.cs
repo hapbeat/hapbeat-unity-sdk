@@ -6,9 +6,8 @@ namespace Hapbeat
     /// <summary>
     /// Abstract base for all Hapbeat trigger components.
     /// References a HapbeatEventMap and a specific entry by <b>stable GUID</b>
-    /// (<see cref="HapbeatEventEntry.id"/>). The list-index (<see cref="_entryIndex"/>)
-    /// is kept as a human-readable display cache and as a migration path for
-    /// scenes authored before the id system existed.
+    /// (<see cref="HapbeatEventEntry.id"/>) so reordering / inserting / duplicating
+    /// entries cannot silently break wiring.
     /// <para>
     /// Supports Command and StreamClip modes. When a StreamClip entry fires, the
     /// resulting <see cref="HapbeatStreamPlayback"/> handle is exposed via
@@ -24,16 +23,9 @@ namespace Hapbeat
         protected HapbeatEventMap _eventMap;
 
         // Stable GUID reference into _eventMap.entries. Authored by the Inspector
-        // dropdown / Batch Setup, and migrated from _entryIndex on first access
-        // for legacy data.
+        // dropdown / Batch Setup. Authoritative — no index fallback.
         [SerializeField, HideInInspector]
         protected string _entryId;
-
-        [Tooltip("List index of the entry (display cache — the authoritative reference " +
-                 "is the hidden stable GUID). Safe to ignore unless debugging; reorders " +
-                 "in the EventMap will not change which entry this trigger fires.")]
-        [SerializeField]
-        protected int _entryIndex;
 
         [Header("Trigger Settings")]
         [Tooltip("Enable or disable this trigger.")]
@@ -73,18 +65,8 @@ namespace Hapbeat
         /// <summary>The event map this trigger references.</summary>
         public HapbeatEventMap EventMap => _eventMap;
 
-        /// <summary>
-        /// Stable GUID of the referenced entry. Authoritative reference — if empty,
-        /// <see cref="EntryIndex"/> is used as a fallback and lazily migrated.
-        /// </summary>
+        /// <summary>Stable GUID of the referenced entry. Empty = unassigned.</summary>
         public string EntryId => _entryId;
-
-        /// <summary>
-        /// List index of the referenced entry (display cache). The actual entry
-        /// resolution happens via <see cref="EntryId"/>; this integer is only
-        /// authoritative when <c>_entryId</c> is empty (legacy data).
-        /// </summary>
-        public int EntryIndex => _entryIndex;
 
         /// <summary>Whether this trigger is enabled.</summary>
         public bool TriggerEnabled
@@ -99,11 +81,10 @@ namespace Hapbeat
         /// Bypasses SerializedObject to avoid inheritance-traversal issues.
         /// Caller must call EditorUtility.SetDirty(this) after.
         /// </summary>
-        public void EditorSetupEntry(HapbeatEventMap map, string entryId, int entryIndex)
+        public void EditorSetupEntry(HapbeatEventMap map, string entryId)
         {
-            _eventMap   = map;
-            _entryId    = entryId;
-            _entryIndex = entryIndex;
+            _eventMap = map;
+            _entryId  = entryId;
         }
 #endif
 
@@ -159,52 +140,29 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Resolve the referenced entry, preferring <see cref="_entryId"/> (stable
-        /// GUID) and falling back to <see cref="_entryIndex"/> (legacy) when the
-        /// id field is empty. Returns null if nothing matched.
-        /// <para>
-        /// Side effect: when the id is empty but index resolves to a valid entry,
-        /// we write the entry's id back into <see cref="_entryId"/> so future
-        /// lookups go through the stable path. This is a best-effort in-memory
-        /// migration; editor-side tools (<c>HapbeatMigrateLegacyReferences</c>)
-        /// persist the migration to disk.
-        /// </para>
+        /// Resolve the referenced entry by stable GUID. Returns null if the id
+        /// is unassigned or stale (entry was deleted from the EventMap).
         /// </summary>
         public HapbeatEventEntry ResolveEntry()
         {
             if (_eventMap == null) return null;
+            if (string.IsNullOrEmpty(_entryId)) return null;
 
-            if (!string.IsNullOrEmpty(_entryId))
-            {
-                var byId = _eventMap.FindById(_entryId);
-                if (byId != null)
-                {
-                    // Keep the index cache in sync for Inspector display.
-                    int idx = _eventMap.IndexOfId(_entryId);
-                    if (idx >= 0) _entryIndex = idx;
-                    return byId;
-                }
-                // Stale id — entry was deleted. Don't silently fall back to index
-                // (would fire the wrong haptic). Warn once.
-                if (!_warnedStaleId)
-                {
-                    Debug.LogWarning(
-                        $"[Hapbeat] Trigger on {name}: entry id '{_entryId}' not found " +
-                        $"in EventMap '{_eventMap.name}'. The referenced entry may have " +
-                        "been deleted. Open the EventMap and re-assign the entry in the " +
-                        "Inspector.", this);
-                    _warnedStaleId = true;
-                }
-                return null;
-            }
+            var byId = _eventMap.FindById(_entryId);
+            if (byId != null) return byId;
 
-            // Legacy path — no id stored. Use index and migrate.
-            var byIndex = _eventMap.GetEntry(_entryIndex);
-            if (byIndex != null)
+            // Stale id — entry was deleted from the map. Warn once so the user
+            // knows to re-assign in the Inspector.
+            if (!_warnedStaleId)
             {
-                _entryId = byIndex.id;
+                Debug.LogWarning(
+                    $"[Hapbeat] Trigger on {name}: entry id '{_entryId}' not found " +
+                    $"in EventMap '{_eventMap.name}'. The referenced entry may have " +
+                    "been deleted. Open the EventMap and re-assign the entry in the " +
+                    "Inspector.", this);
+                _warnedStaleId = true;
             }
-            return byIndex;
+            return null;
         }
 
         /// <summary>
@@ -242,7 +200,7 @@ namespace Hapbeat
         protected void FireHaptic()
         {
             if (_verboseLog)
-                Debug.Log($"[Hapbeat] Fire() called on {name} ({GetType().Name} entryId={_entryId} idx={_entryIndex})", this);
+                Debug.Log($"[Hapbeat] Fire() called on {name} ({GetType().Name} entryId={_entryId})", this);
 
             if (!_triggerEnabled)
             {
@@ -264,7 +222,7 @@ namespace Hapbeat
             if (entry == null)
             {
                 Debug.LogWarning($"[Hapbeat] Fire rejected: entry not found on {name} " +
-                                 $"(id='{_entryId}', idx={_entryIndex}, map has {_eventMap.entries.Count} entries)", this);
+                                 $"(id='{_entryId}', map has {_eventMap.entries.Count} entries)", this);
                 return;
             }
 
@@ -448,7 +406,7 @@ namespace Hapbeat
         protected void StopHaptic()
         {
             if (_verboseLog)
-                Debug.Log($"[Hapbeat] Stop() called on {name} ({GetType().Name} entryId={_entryId} idx={_entryIndex})", this);
+                Debug.Log($"[Hapbeat] Stop() called on {name} ({GetType().Name} entryId={_entryId})", this);
 
             if (_eventMap == null) return;
 

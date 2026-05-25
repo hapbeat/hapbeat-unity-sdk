@@ -274,14 +274,19 @@ namespace Hapbeat.Editor
                 _triggerType = TriggerType.UnityEventTrigger;
 
             _eventMap = first.EventMap;
-            _entryIndex = first.EntryIndex;
+            // Resolve the loaded trigger's selected entry by id (authoritative
+            // reference). Falls to 0 if id is empty / stale so the window has
+            // a sane default popup selection.
+            _entryIndex = (_eventMap != null && !string.IsNullOrEmpty(first.EntryId))
+                ? Mathf.Max(0, _eventMap.IndexOfId(first.EntryId))
+                : 0;
             var cdProp = so.FindProperty("_cooldown");
             _cooldown = cdProp != null ? cdProp.floatValue : 0f;
 
             if (first is HapbeatSequenceTrigger)
             {
-                _onStartEntryIndex = so.FindProperty("_onStartEntryIndex")?.intValue ?? -1;
-                _onStopEntryIndex = so.FindProperty("_onStopEntryIndex")?.intValue ?? -1;
+                _onStartEntryIndex = ResolveIndexFromIdProp(so, "_onStartEntryId", _eventMap);
+                _onStopEntryIndex  = ResolveIndexFromIdProp(so, "_onStopEntryId",  _eventMap);
                 _startShotDelay = so.FindProperty("_startShotDelay")?.floatValue ?? -1f;
             }
 
@@ -1026,9 +1031,14 @@ namespace Hapbeat.Editor
 
         private T FindOrCreate<T>(GameObject go, out bool isNew) where T : HapbeatTriggerBase
         {
+            string targetId = (_eventMap != null && _entryIndex >= 0 && _entryIndex < _eventMap.entries.Count)
+                ? _eventMap.entries[_entryIndex]?.id ?? ""
+                : "";
             foreach (var existing in go.GetComponents<T>())
             {
-                if (existing.EventMap == _eventMap && existing.EntryIndex == _entryIndex)
+                if (existing.EventMap == _eventMap
+                    && !string.IsNullOrEmpty(targetId)
+                    && existing.EntryId == targetId)
                 {
                     Undo.RecordObject(existing, "Update Hapbeat Trigger");
                     isNew = false;
@@ -1043,7 +1053,6 @@ namespace Hapbeat.Editor
         {
             var so = new SerializedObject(trigger);
             so.FindProperty("_eventMap").objectReferenceValue = _eventMap;
-            so.FindProperty("_entryIndex").intValue = _entryIndex;
             // Write stable id so reorders don't break this wiring. Lazy-assigns
             // the entry's id if this is the first access — mark the event map
             // dirty so the new id survives the next domain reload.
@@ -1084,12 +1093,9 @@ namespace Hapbeat.Editor
         private void ConfigureSequence(HapbeatSequenceTrigger trigger)
         {
             var so = new SerializedObject(trigger);
-            so.FindProperty("_onStartEntryIndex").intValue = _onStartEntryIndex;
-            so.FindProperty("_onStopEntryIndex").intValue = _onStopEntryIndex;
 
             // Stable ids for the sequence's On Start / On Stop phases. Empty id
-            // for (none) — the trigger's ResolveSequenceEntry treats empty id + -1
-            // index as "disabled".
+            // = (none) — the trigger's ResolveSequenceEntry treats empty id as disabled.
             var startIdProp = so.FindProperty("_onStartEntryId");
             if (startIdProp != null)
             {
@@ -1113,6 +1119,20 @@ namespace Hapbeat.Editor
             var delayProp = so.FindProperty("_startShotDelay");
             if (delayProp != null) delayProp.floatValue = _startShotDelay;
             so.ApplyModifiedProperties();
+        }
+
+        /// <summary>
+        /// Locate the entry list index for the id stored at <paramref name="idPropName"/>
+        /// on <paramref name="so"/>, against <paramref name="map"/>. Returns -1 when
+        /// the id is empty or stale (= the "(none)" popup selection in the window UI).
+        /// </summary>
+        private static int ResolveIndexFromIdProp(
+            SerializedObject so, string idPropName, HapbeatEventMap map)
+        {
+            if (map == null) return -1;
+            var idProp = so.FindProperty(idPropName);
+            if (idProp == null || string.IsNullOrEmpty(idProp.stringValue)) return -1;
+            return map.IndexOfId(idProp.stringValue);
         }
 
         private int WireScannedEvents(GameObject go, HapbeatTriggerBase trigger)
