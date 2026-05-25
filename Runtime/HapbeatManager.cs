@@ -720,11 +720,21 @@ namespace Hapbeat
                 _client.SendStreamData(globalByteOffset, pcmChunk, 0, chunkBytes);
                 globalByteOffset += (uint)chunkBytes;
 
-                // 5. Pace
+                // 5. Pace — pin lead at sendAheadSeconds regardless of frame rate / chunk size.
+                //
+                // 旧実装は `yield return null` 1 回だけで再開し、即次 chunk を送っていた。
+                // chunk duration (mono=43.75ms / stereo=21.875ms @16kHz) が Unity frame interval
+                // (~16.67ms @60fps) を上回るケースでは、yield 1 回では追いつかず lead が
+                // 線形に成長 → device ring buffer (256ms) を即飽和 → 新規 chunk が drop され、
+                // Stop / parameter 変更が device に届かなくなる。
+                //
+                // overshoot 分だけ WaitForSecondsRealtime で待つことで、frame rate / chunk size
+                // に依存せず lead を sendAheadSeconds 付近に張り付かせる。
                 float elapsedTime = Time.realtimeSinceStartup - startTime;
                 float sentDuration = globalByteOffset / bytesPerSecond;
-                if (sentDuration > elapsedTime + sendAheadSeconds)
-                    yield return null;
+                float overshoot = sentDuration - elapsedTime - sendAheadSeconds;
+                if (overshoot > 0f)
+                    yield return new WaitForSecondsRealtime(overshoot);
             }
 
             // All sources done → end session
