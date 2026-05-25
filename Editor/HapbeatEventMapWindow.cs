@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
@@ -4587,12 +4588,52 @@ namespace Hapbeat.Editor
                         continue;
                 }
 
-                var so = new SerializedObject(mb);
-                var iter = so.GetIterator();
-                while (iter.NextVisible(true))
+                ScanComponentStringFields(mb, type, index);
+            }
+        }
+
+        /// <summary>
+        /// Walk a component's declared SerializeField <c>string</c> members
+        /// (including those marked <c>[HideInInspector]</c>) via reflection,
+        /// look up each value in the entry index, and register matches.
+        ///
+        /// <para>
+        /// Using <c>SerializedObject.NextVisible()</c> instead would skip
+        /// <c>[SerializeField, HideInInspector]</c> fields — the exact pattern
+        /// HapbeatTriggerBase / HapbeatStateBehaviour / ChargeShooter use to
+        /// store the stable entry GUID without leaking it to the default
+        /// inspector. Reflection sees those, then <c>SerializedObject.FindProperty</c>
+        /// reads the serialized value through the normal Unity pipeline.
+        /// </para>
+        /// </summary>
+        private void ScanComponentStringFields(
+            MonoBehaviour mb,
+            Type type,
+            Dictionary<string, (int idx, string matchType)> index)
+        {
+            var so = new SerializedObject(mb);
+            var t = type;
+            // Walk up the class hierarchy so private SerializeFields declared
+            // on a base class (e.g. HapbeatTriggerBase._entryId via subclass)
+            // are also visible. Stop at MonoBehaviour to avoid scanning Unity
+            // internals (Component, Behaviour, etc.).
+            while (t != null && t != typeof(MonoBehaviour) && t != typeof(object))
+            {
+                foreach (var field in t.GetFields(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+                    | BindingFlags.DeclaredOnly))
                 {
-                    if (iter.propertyType != SerializedPropertyType.String) continue;
-                    string val = iter.stringValue;
+                    if (field.FieldType != typeof(string)) continue;
+                    // Serialization eligibility: public + not [NonSerialized],
+                    // or non-public + [SerializeField].
+                    bool serialized = field.IsPublic
+                        ? !field.IsDefined(typeof(NonSerializedAttribute), inherit: false)
+                        : field.IsDefined(typeof(SerializeField), inherit: false);
+                    if (!serialized) continue;
+
+                    var prop = so.FindProperty(field.Name);
+                    if (prop == null || prop.propertyType != SerializedPropertyType.String) continue;
+                    string val = prop.stringValue;
                     if (string.IsNullOrEmpty(val)) continue;
                     if (!index.TryGetValue(val, out var hit)) continue;
 
@@ -4600,11 +4641,12 @@ namespace Hapbeat.Editor
                     {
                         script = mb,
                         componentName = type.Name,
-                        fieldName = iter.name,
+                        fieldName = field.Name,
                         matchedValue = val,
                         matchType = hit.matchType,
                     });
                 }
+                t = t.BaseType;
             }
         }
 
