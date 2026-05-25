@@ -2248,7 +2248,9 @@ namespace Hapbeat.Editor
         /// <c>fieldName = "matchedValue"</c> so the user can verify the match
         /// is intentional (heuristic detection has some false-positive risk
         /// when an unrelated string field coincidentally matches an entry
-        /// name).
+        /// name). When matched by entry id (stable GUID, opaque hex), show
+        /// the resolved entry display name instead since the raw GUID is
+        /// not readable.
         /// </summary>
         private void DrawScriptWiringRow(ScriptWiringInfo w, float nameW)
         {
@@ -2257,10 +2259,47 @@ namespace Hapbeat.Editor
             string display = w.fieldName;
             if (display.StartsWith("m_")) display = display.Substring(2);
             else if (display.StartsWith("_")) display = display.Substring(1);
-            string label = $"{display} = \"{w.matchedValue}\"  ({w.matchType})";
+
+            // For GUID matches, show the resolved entry name (the raw 32-char
+            // hex string would be useless to the user). For displayName /
+            // eventId matches, show the literal value since it IS readable
+            // and the author may want to confirm the match is on the right form.
+            string shown;
+            if (w.matchType == "id")
+            {
+                string entryName = ResolveEntryNameByGuid(w.matchedValue);
+                shown = entryName != null
+                    ? $"→ {entryName}"
+                    : $"→ (entry id={w.matchedValue.Substring(0, System.Math.Min(8, w.matchedValue.Length))}…)";
+            }
+            else
+            {
+                shown = $"= \"{w.matchedValue}\"";
+            }
+            string label = $"{display} {shown}  ({w.matchType})";
             var labelRect = new Rect(rect.x + nameW + 4, rect.y,
                 rect.width - nameW - 4, rect.height);
             GUI.Label(labelRect, label, EditorStyles.miniLabel);
+        }
+
+        /// <summary>
+        /// Find an entry's human-readable name from its stable GUID. Used to
+        /// render GUID-keyed script references as something the author can
+        /// actually identify in the wiring list.
+        /// </summary>
+        private string ResolveEntryNameByGuid(string guid)
+        {
+            if (_selectedMap == null || string.IsNullOrEmpty(guid)) return null;
+            foreach (var e in _selectedMap.entries)
+            {
+                if (e != null && e.HasId && e.id == guid)
+                {
+                    if (!string.IsNullOrEmpty(e.displayName)) return e.displayName;
+                    if (!string.IsNullOrEmpty(e.eventId)) return e.eventId;
+                    return "(unnamed entry)";
+                }
+            }
+            return null;
         }
 
         private void DrawBindingsWiringList(SerializedProperty entryProp)
@@ -4468,11 +4507,19 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Build a value-keyed lookup of EventMap entries by both displayName
-        /// and eventId, so the script-field scan can match in O(1) per field.
-        /// Each value maps to (entryIndex, matchType). Entries with empty
-        /// names or duplicate values resolve to the first matching entry —
-        /// callers can still navigate manually if they need a specific one.
+        /// Build a value-keyed lookup of EventMap entries by their three
+        /// addressable forms: stable GUID (<c>entry.id</c>), wire-format
+        /// <c>eventId</c>, and human <c>displayName</c>. The script-field
+        /// scan can then match in O(1) per field regardless of which form
+        /// the author's script chose to store.
+        /// <para>
+        /// Entry GUIDs are the canonical reference (HapbeatTriggerBase and
+        /// HapbeatStateBehaviour both use them), so user scripts that follow
+        /// the same convention — e.g. ChargeShooter's
+        /// <c>[SerializeField, HideInInspector] private string _chargeLoopEntryId</c>
+        /// — store the 32-char hex GUID. Matching against <c>entry.id</c>
+        /// catches those without requiring a custom attribute.
+        /// </para>
         /// </summary>
         private Dictionary<string, (int idx, string matchType)> BuildEntryValueIndex()
         {
@@ -4481,6 +4528,10 @@ namespace Hapbeat.Editor
             {
                 var e = _selectedMap.entries[i];
                 if (e == null) continue;
+                // id (stable GUID) — most authoritative, scripts following the
+                // Hapbeat trigger convention store this.
+                if (e.HasId && !dict.ContainsKey(e.id))
+                    dict[e.id] = (i, "id");
                 if (!string.IsNullOrEmpty(e.displayName) && !dict.ContainsKey(e.displayName))
                     dict[e.displayName] = (i, "displayName");
                 if (!string.IsNullOrEmpty(e.eventId) && !dict.ContainsKey(e.eventId))
