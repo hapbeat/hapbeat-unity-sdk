@@ -4238,61 +4238,13 @@ namespace Hapbeat.Editor
         /// Parse a target string back into prefix, player, position parts.
         /// Handles: "", "player_1", "*/pos_neck", "player_1/pos_neck", "red/player_1/pos_neck"
         /// </summary>
+        // Target parsing / encoding は HapbeatTargetEditorUtil に集約。
+        // HapbeatManager Inspector (Test play Targeting) と仕様共有のため一本化。
         private static void ParseTarget(string target, out string prefix, out int player, out string position, out int group)
-        {
-            prefix = "";
-            player = -1;
-            position = "";
-            group = -1;
+            => HapbeatTargetEditorUtil.ParseTarget(target, out prefix, out player, out position, out group);
 
-            if (string.IsNullOrEmpty(target)) return;
-
-            var parts = target.Split('/');
-            var prefixParts = new List<string>();
-
-            foreach (var part in parts)
-            {
-                if (part.StartsWith("player_") && int.TryParse(part.Substring(7), out int p))
-                    player = p;
-                else if (part.StartsWith("group_") && int.TryParse(part.Substring(6), out int g))
-                    group = g;
-                else if (part.StartsWith("pos_"))
-                    position = part;
-                else if (part != "*")
-                    prefixParts.Add(part);
-            }
-
-            prefix = string.Join("/", prefixParts);
-        }
-
-        /// <summary>
-        /// Build a target string from separate parts.
-        /// Path layout (per device-addressing.md §2):
-        ///   <c>[prefix/]player_M[/pos_X][/group_N]</c>
-        /// player=-1 → wildcard or omit. position="" → omit. group=-1 → omit.
-        /// </summary>
         private static string BuildTargetFromParts(string prefix, int player, string position, int group)
-        {
-            var parts = new List<string>();
-
-            if (!string.IsNullOrEmpty(prefix))
-                parts.Add(prefix.Trim());
-
-            if (player >= 1)
-                parts.Add($"player_{player}");
-            else if (!string.IsNullOrEmpty(position) || group >= 1)
-                parts.Add("*"); // wildcard player when only position/group is set
-
-            if (!string.IsNullOrEmpty(position))
-                parts.Add(position);
-            else if (group >= 1)
-                parts.Add("*"); // wildcard position when only group is set
-
-            if (group >= 1)
-                parts.Add($"group_{group}");
-
-            return string.Join("/", parts);
-        }
+            => HapbeatTargetEditorUtil.BuildTargetFromParts(prefix, player, position, group);
     }
 
     // ----- Project window で dirty な EventMap に ● を描画 -----
