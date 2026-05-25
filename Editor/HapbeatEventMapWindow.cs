@@ -73,6 +73,7 @@ namespace Hapbeat.Editor
         // Cached scene scan results
         private Dictionary<int, List<TriggerInfo>> _triggersByEntry = new Dictionary<int, List<TriggerInfo>>();
         private Dictionary<int, List<StateWiringInfo>> _stateWiringsByEntry = new Dictionary<int, List<StateWiringInfo>>();
+        private Dictionary<int, List<ScriptWiringInfo>> _scriptWiringsByEntry = new Dictionary<int, List<ScriptWiringInfo>>();
         private List<TriggerInfo> _orphanedTriggers = new List<TriggerInfo>();
 
         // Cache of (preset.id → last sourceTransformPath we synced) so that
@@ -110,6 +111,25 @@ namespace Hapbeat.Editor
             public string stateName;
             public string phase;             // "Enter" or "Exit"
             public GameObject animatorObject; // a scene Animator using this controller (or null for asset-only)
+        }
+
+        /// <summary>
+        /// Wiring entry for a custom MonoBehaviour script that references an
+        /// EventMap entry by string (typically <c>[SerializeField] private
+        /// string _eventName = "..."</c>). Detected heuristically by scanning
+        /// every non-Hapbeat MonoBehaviour's serialized string fields and
+        /// matching the value against entry <c>displayName</c> or
+        /// <c>eventId</c>. Surfaces script-driven fires (e.g. ChargeShooter,
+        /// custom game logic) in the EventMap Wiring panel so authors can see
+        /// who is calling each entry without grep-ing the codebase.
+        /// </summary>
+        private struct ScriptWiringInfo
+        {
+            public MonoBehaviour script;
+            public string componentName;     // e.g., "ChargeShooter"
+            public string fieldName;         // e.g., "_eventName"
+            public string matchedValue;      // the literal string in the field
+            public string matchType;         // "displayName" or "eventId"
         }
 
         [MenuItem("Hapbeat/Event Map", false, 10)]
@@ -1305,7 +1325,8 @@ namespace Hapbeat.Editor
             {
                 var entry = _selectedMap.entries[i];
                 int triggerCount = (_triggersByEntry.TryGetValue(i, out var tList) ? tList.Count : 0)
-                                 + (_stateWiringsByEntry.TryGetValue(i, out var sList) ? sList.Count : 0);
+                                 + (_stateWiringsByEntry.TryGetValue(i, out var sList) ? sList.Count : 0)
+                                 + (_scriptWiringsByEntry.TryGetValue(i, out var scList) ? scList.Count : 0);
                 bool hasTriggers = triggerCount > 0;
                 bool isSelected = _selectedEntryIndex == i;
 
@@ -1819,6 +1840,15 @@ namespace Hapbeat.Editor
                 DrawStateWiringSection(_stateWiringsByEntry[_selectedEntryIndex]);
             }
 
+            // Script wiring (heuristic SerializeField string match) — surfaces
+            // custom MonoBehaviours that fire this entry via script
+            // (e.g. ChargeShooter._eventName = "charge_release").
+            if (_scriptWiringsByEntry.ContainsKey(_selectedEntryIndex))
+            {
+                EditorGUILayout.Space(4);
+                DrawScriptWiringSection(_scriptWiringsByEntry[_selectedEntryIndex]);
+            }
+
             // Parameter Bindings — compact per-wired-object layout. Only
             // shown for StreamClip entries since bindings have no effect in
             // Command mode (the device side has no stream to modulate).
@@ -2142,6 +2172,95 @@ namespace Hapbeat.Editor
                     EditorGUIUtility.PingObject(w.controller);
                 }
             }
+        }
+
+        /// <summary>
+        /// Render the "Script Wiring:" section for entries referenced by
+        /// non-Hapbeat MonoBehaviour scripts (e.g. ChargeShooter holding
+        /// <c>_eventName = "charge_release"</c> in a SerializeField).
+        /// One row per matching field, grouped by the script's GameObject so
+        /// multiple field matches on the same GO collapse visually.
+        /// </summary>
+        private void DrawScriptWiringSection(List<ScriptWiringInfo> wirings)
+        {
+            EditorGUILayout.LabelField("Script Wiring:", EditorStyles.miniBoldLabel);
+
+            // Group by GameObject for visual coherence with the other sections.
+            var byGo = new Dictionary<GameObject, List<ScriptWiringInfo>>();
+            foreach (var w in wirings)
+            {
+                if (w.script == null) continue;
+                var go = w.script.gameObject;
+                if (!byGo.TryGetValue(go, out var list))
+                {
+                    list = new List<ScriptWiringInfo>();
+                    byGo[go] = list;
+                }
+                list.Add(w);
+            }
+
+            float nameW = 100f;
+            foreach (var kv in byGo.OrderBy(p => p.Key.name))
+            {
+                DrawScriptWiredObjectHeader(kv.Key, kv.Value[0], nameW);
+                foreach (var w in kv.Value)
+                    DrawScriptWiringRow(w, nameW);
+            }
+        }
+
+        /// <summary>
+        /// Header row for one GameObject in the Script Wiring section.
+        /// Shows the GO link + "Script" type tag + script component name.
+        /// Clicking the script component name selects/pings the component
+        /// so the user can inspect its fields directly.
+        /// </summary>
+        private void DrawScriptWiredObjectHeader(GameObject go, ScriptWiringInfo first, float nameW)
+        {
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            const float typeTagW = 38f;
+            const float gap = 4f;
+            const float tightGap = 1f;
+
+            // GO link
+            if (GUI.Button(new Rect(rect.x, rect.y, nameW, rect.height),
+                go.name, EditorStyles.linkLabel))
+            {
+                Selection.activeGameObject = go;
+                EditorGUIUtility.PingObject(go);
+            }
+
+            float cursor = rect.x + nameW + gap;
+            GUI.Label(new Rect(cursor, rect.y, typeTagW, rect.height),
+                "Script", EditorStyles.miniBoldLabel);
+            cursor += typeTagW + tightGap;
+
+            // Component name as a clickable link to ping the script component.
+            var componentRect = new Rect(cursor, rect.y, rect.width - (cursor - rect.x), rect.height);
+            if (GUI.Button(componentRect, first.componentName, EditorStyles.linkLabel))
+            {
+                Selection.activeObject = first.script;
+                EditorGUIUtility.PingObject(first.script);
+            }
+        }
+
+        /// <summary>
+        /// Detail row under a script-wiring header. Shows
+        /// <c>fieldName = "matchedValue"</c> so the user can verify the match
+        /// is intentional (heuristic detection has some false-positive risk
+        /// when an unrelated string field coincidentally matches an entry
+        /// name).
+        /// </summary>
+        private void DrawScriptWiringRow(ScriptWiringInfo w, float nameW)
+        {
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            // Trim the conventional Unity m_/_ prefix for display.
+            string display = w.fieldName;
+            if (display.StartsWith("m_")) display = display.Substring(2);
+            else if (display.StartsWith("_")) display = display.Substring(1);
+            string label = $"{display} = \"{w.matchedValue}\"  ({w.matchType})";
+            var labelRect = new Rect(rect.x + nameW + 4, rect.y,
+                rect.width - nameW - 4, rect.height);
+            GUI.Label(labelRect, label, EditorStyles.miniLabel);
         }
 
         private void DrawBindingsWiringList(SerializedProperty entryProp)
@@ -4170,6 +4289,7 @@ namespace Hapbeat.Editor
         {
             _triggersByEntry.Clear();
             _stateWiringsByEntry.Clear();
+            _scriptWiringsByEntry.Clear();
             _orphanedTriggers.Clear();
 
             if (_selectedMap == null) return;
@@ -4213,6 +4333,14 @@ namespace Hapbeat.Editor
             // authored in `Animator window → state → Add Behaviour` surface
             // here just like UnityEventTrigger does.
             ScanAnimatorControllers();
+
+            // ── Script-driven wiring (heuristic SerializedField string match) ─
+            // Custom MonoBehaviours that hold a `[SerializeField] private string
+            // _eventName = "charge_release"` (typical ChargeShooter / game-logic
+            // pattern) don't surface anywhere else. Walk all non-Hapbeat
+            // MonoBehaviours and match their serialized string fields against
+            // entry displayName / eventId.
+            ScanScriptWirings();
 
             Repaint();
         }
@@ -4337,6 +4465,107 @@ namespace Hapbeat.Editor
                 phase = phase,
                 animatorObject = animatorObject,
             });
+        }
+
+        /// <summary>
+        /// Build a value-keyed lookup of EventMap entries by both displayName
+        /// and eventId, so the script-field scan can match in O(1) per field.
+        /// Each value maps to (entryIndex, matchType). Entries with empty
+        /// names or duplicate values resolve to the first matching entry —
+        /// callers can still navigate manually if they need a specific one.
+        /// </summary>
+        private Dictionary<string, (int idx, string matchType)> BuildEntryValueIndex()
+        {
+            var dict = new Dictionary<string, (int, string)>();
+            for (int i = 0; i < _selectedMap.entries.Count; i++)
+            {
+                var e = _selectedMap.entries[i];
+                if (e == null) continue;
+                if (!string.IsNullOrEmpty(e.displayName) && !dict.ContainsKey(e.displayName))
+                    dict[e.displayName] = (i, "displayName");
+                if (!string.IsNullOrEmpty(e.eventId) && !dict.ContainsKey(e.eventId))
+                    dict[e.eventId] = (i, "eventId");
+            }
+            return dict;
+        }
+
+        /// <summary>
+        /// Scan every non-Hapbeat MonoBehaviour in open scenes and look for
+        /// serialized <c>string</c> fields whose value matches an entry's
+        /// displayName or eventId. Each match is recorded as a script-wiring
+        /// row so the EventMap detail panel can surface "this entry is also
+        /// fired from script X on GameObject Y".
+        ///
+        /// <para>
+        /// Heuristic, not perfect: scripts that build event IDs dynamically
+        /// (string.Format / runtime concat) won't be caught. False positives
+        /// are possible if an unrelated string field coincidentally matches
+        /// an entry name — the row shows the field name + value so the
+        /// author can verify.
+        /// </para>
+        /// </summary>
+        private void ScanScriptWirings()
+        {
+            var index = BuildEntryValueIndex();
+            if (index.Count == 0) return;
+
+            var allBehaviours = FindObjectsByType<MonoBehaviour>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+            foreach (var mb in allBehaviours)
+            {
+                if (mb == null) continue;
+                // Skip Hapbeat's own components — they're covered by the
+                // trigger / state / binding scans above. Filtering by
+                // namespace catches HapbeatTriggerBase, HapbeatBridge,
+                // HapbeatParameterBinding, HapbeatManager, HapbeatStatusOverlay,
+                // HapbeatKeyDispatcher, HapbeatEventLogger, HapbeatActionHelper,
+                // etc. in one shot.
+                var type = mb.GetType();
+                if (type.Namespace != null &&
+                    (type.Namespace == "Hapbeat" || type.Namespace.StartsWith("Hapbeat.")))
+                {
+                    // Sub-namespaces like Hapbeat.Samples.Showcase.* SHOULD be
+                    // scanned (ChargeShooter lives in Hapbeat.Samples.Showcase
+                    // and is exactly the kind of user-facing script we want
+                    // to surface). Only skip the framework namespace itself
+                    // and its direct ".Editor" / ".Internal" children.
+                    if (type.Namespace == "Hapbeat" ||
+                        type.Namespace == "Hapbeat.Editor" ||
+                        type.Namespace == "Hapbeat.Internal")
+                        continue;
+                }
+
+                var so = new SerializedObject(mb);
+                var iter = so.GetIterator();
+                while (iter.NextVisible(true))
+                {
+                    if (iter.propertyType != SerializedPropertyType.String) continue;
+                    string val = iter.stringValue;
+                    if (string.IsNullOrEmpty(val)) continue;
+                    if (!index.TryGetValue(val, out var hit)) continue;
+
+                    AddScriptWiring(hit.idx, new ScriptWiringInfo
+                    {
+                        script = mb,
+                        componentName = type.Name,
+                        fieldName = iter.name,
+                        matchedValue = val,
+                        matchType = hit.matchType,
+                    });
+                }
+            }
+        }
+
+        private void AddScriptWiring(int idx, ScriptWiringInfo info)
+        {
+            if (idx < 0 || idx >= _selectedMap.entries.Count) return;
+            if (!_scriptWiringsByEntry.TryGetValue(idx, out var list))
+            {
+                list = new List<ScriptWiringInfo>();
+                _scriptWiringsByEntry[idx] = list;
+            }
+            list.Add(info);
         }
 
         /// <summary>
