@@ -28,7 +28,7 @@ namespace Hapbeat
             if (!_triggerEnabled) return;
             if (_eventMap == null) return;
 
-            var entry = _eventMap.GetEntry(_entryIndex);
+            var entry = ResolveEntry();
             if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
 
             if (HapbeatManager.Instance == null) return;
