@@ -321,7 +321,7 @@ namespace Hapbeat
                         $"but no HapbeatTriggerBase on this GameObject (or its parents/children) " +
                         $"fires that entry. The binding will have no effect.\n" +
                         $"Fix: change the trigger's Event to the entry this binding belongs to, " +
-                        $"or re-run 'Hapbeat/Batch Setup' to align them.",
+                        $"or re-run 'Hapbeat/Open Batch Setup' to align them.",
                         this);
                 }
             }
@@ -372,7 +372,7 @@ namespace Hapbeat
                 Debug.LogWarning(
                     $"[HapbeatBinding] Linked preset id '{_linkedBindingId}' not found in " +
                     $"EventMap '{_linkedEventMap.name}' on {name}. Falling back to local values. " +
-                    "Re-run 'Hapbeat/Batch Setup' to refresh the link.", this);
+                    "Re-run 'Hapbeat/Open Batch Setup' to refresh the link.", this);
                 _warnedPresetNotFound = true;
             }
 

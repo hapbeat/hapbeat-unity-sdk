@@ -87,7 +87,7 @@ namespace Hapbeat.Editor
         // Persisted selection keys (survives editor restart)
         private const string kSelectedEventsKey = "HapbeatBatchSetup_SelectedEvents";
 
-        [MenuItem("Hapbeat/Batch Setup", false, 12)]
+        [MenuItem("Hapbeat/Open Batch Setup", false, 11)]
         public static void ShowWindow()
         {
             var w = GetWindow<HapbeatBatchSetupWindow>("Hapbeat Batch Setup");

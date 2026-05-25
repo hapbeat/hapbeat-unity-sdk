@@ -304,7 +304,7 @@ namespace Hapbeat.Editor
                 EditorGUILayout.HelpBox(
                     $"Linked to {map?.name ?? "(missing map)"} but preset id '{shortId}' " +
                     $"was not found. Falling back to local values. " +
-                    $"Re-run 'Hapbeat/Batch Setup' to refresh the link, or click Unlink.",
+                    $"Re-run 'Hapbeat/Open Batch Setup' to refresh the link, or click Unlink.",
                     MessageType.Warning);
             }
 
@@ -313,7 +313,7 @@ namespace Hapbeat.Editor
             {
                 Selection.activeObject = map;
                 EditorGUIUtility.PingObject(map);
-                EditorApplication.ExecuteMenuItem("Hapbeat/Event Map");
+                EditorApplication.ExecuteMenuItem("Hapbeat/Open Event Map");
             }
             if (GUILayout.Button("Unlink", GUILayout.Width(80)))
             {

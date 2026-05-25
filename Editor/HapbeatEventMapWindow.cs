@@ -133,7 +133,7 @@ namespace Hapbeat.Editor
             public string matchType;         // "displayName" or "eventId"
         }
 
-        [MenuItem("Hapbeat/Event Map", false, 10)]
+        [MenuItem("Hapbeat/Open Event Map", false, 10)]
         public static void ShowWindow()
         {
             var window = GetWindow<HapbeatEventMapWindow>("Hapbeat Event Map");
@@ -187,7 +187,7 @@ namespace Hapbeat.Editor
                 $"[Hapbeat] Initial Scene Setup 完了:\n" +
                 $"  - Event Router: {(routerExisted ? "(既存を再利用)" : "新規追加")} {router.name}\n" +
                 $"  - EventMap   : {mapPath}\n" +
-                $"  - Hapbeat → Event Map ウィンドウを開きました。+ Entry でイベント追加から始められます。");
+                $"  - Hapbeat → Open Event Map ウィンドウを開きました。+ Entry でイベント追加から始められます。");
         }
 
         /// <summary>
@@ -1712,7 +1712,7 @@ namespace Hapbeat.Editor
                     "  ・正値: global より遅らせる (音の attack peak が遅い素材の補正など)\n" +
                     "  ・負値: global より早める\n" +
                     "Range -0.2〜+0.2、デフォルト 0。\n\n" +
-                    "Global 側の調整は Hapbeat → Settings の「触覚遅延」から。"));
+                    "Global 側の調整は Hapbeat → Open Settings の「触覚遅延」から。"));
 
             // Effective delay readout (global + offset, clamped). Helps the
             // designer see "how late will this fire" without having to switch

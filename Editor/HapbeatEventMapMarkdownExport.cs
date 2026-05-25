@@ -54,7 +54,7 @@ namespace Hapbeat.Editor
             var sb = new StringBuilder();
             sb.AppendLine($"# {map.name}");
             sb.AppendLine();
-            sb.AppendLine($"_Auto-generated from `{assetPath}` (Hapbeat → Event Map → Export Markdown summary). " +
+            sb.AppendLine($"_Auto-generated from `{assetPath}` (Hapbeat → Export Event Map). " +
                           "編集は Unity の EventMap window 経由を推奨。手動編集はこの md ではなく .asset 側を変更してください。_");
             sb.AppendLine();
             sb.AppendLine($"**Entry count**: {map.entries.Count}");

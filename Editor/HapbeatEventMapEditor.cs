@@ -116,7 +116,7 @@ namespace Hapbeat.Editor
                 MessageType.None);
 
             if (GUILayout.Button("Open Event Map Window", GUILayout.Height(24)))
-                EditorApplication.ExecuteMenuItem("Hapbeat/Event Map");
+                EditorApplication.ExecuteMenuItem("Hapbeat/Open Event Map");
 
             // Raw entries list is hidden by default (labels truncate badly in the narrow
             // inspector). Expose via a toggle for the rare case someone wants it here.
