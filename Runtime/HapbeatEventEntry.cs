@@ -87,7 +87,7 @@ namespace Hapbeat
     /// ParameterBinding modulation for dynamic gain / pan).
     /// </summary>
     [Serializable]
-    public class HapbeatEventEntry : ISerializationCallbackReceiver
+    public class HapbeatEventEntry
     {
         // ---- Stable identifier ----
         //
@@ -120,19 +120,6 @@ namespace Hapbeat
 
         /// <summary>Force assignment of a fresh id (used when duplicating entries).</summary>
         public void RegenerateId() => _id = Guid.NewGuid().ToString("N");
-
-        /// <summary>
-        /// Legacy hardcoded category list. Kept only for backward compatibility
-        /// with any external tooling that may still reference it. The current
-        /// convention is <c>category = kit name</c> (the folder under
-        /// <c>HapbeatSDK/Kits/</c>) — the EventMap Window's category dropdown
-        /// now uses <c>HapbeatManifestIntensity.GetKitDirectoryNames()</c>
-        /// instead of this list.
-        /// </summary>
-        [System.Obsolete("category is now the kit folder name. " +
-            "Use HapbeatManifestIntensity.GetKitDirectoryNames() to list available kits.")]
-        public static readonly string[] StandardCategories =
-            { "clip", "impact", "vibration", "texture", "ambient", "ui", "custom" };
 
         /// <summary>Standard body positions defined by hapbeat-contracts device-addressing spec.</summary>
         public static readonly string[] StandardPositions =
@@ -197,13 +184,6 @@ namespace Hapbeat
         [Tooltip("Target filter for device addressing. Empty = broadcast to all.\n" +
                  "Examples: player_1, */pos_neck, player_1/pos_chest")]
         public string target = "";
-
-        // Legacy: kept on the data model for backward compat with existing
-        // serialized assets. Not used on the wire — current contracts spec
-        // (device-addressing.md §5) uses the `target` string only.
-        [System.Obsolete("Use 'target' string. The legacy group byte was removed from the wire protocol.")]
-        [HideInInspector]
-        public int group = -1;
 
         // ---- Latency offset ----
 
@@ -293,10 +273,6 @@ namespace Hapbeat
                 : gain * _cachedManifestIntensity;
         }
 
-        // Legacy field kept for migration from old serialized data.
-        [SerializeField, HideInInspector]
-        private string _eventId = "";
-
         /// <summary>
         /// Computed event ID in category.name format (contracts-compliant).
         /// Only meaningful in Command mode.
@@ -368,31 +344,6 @@ namespace Hapbeat
         public bool IsValid()
         {
             return IsValidSegment(category) && IsValidSegment(eventName);
-        }
-
-        // --- ISerializationCallbackReceiver ---
-
-        public void OnBeforeSerialize()
-        {
-            _eventId = eventId;
-        }
-
-        public void OnAfterDeserialize()
-        {
-            if (!string.IsNullOrEmpty(_eventId) && string.IsNullOrEmpty(category) && string.IsNullOrEmpty(eventName))
-            {
-                int dotIndex = _eventId.IndexOf('.');
-                if (dotIndex > 0 && dotIndex < _eventId.Length - 1)
-                {
-                    category = _eventId.Substring(0, dotIndex);
-                    eventName = _eventId.Substring(dotIndex + 1);
-                }
-                else if (_eventId.Length > 0 && !_eventId.Contains("."))
-                {
-                    category = "custom";
-                    eventName = _eventId;
-                }
-            }
         }
     }
 }

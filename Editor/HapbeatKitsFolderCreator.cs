@@ -22,7 +22,6 @@ namespace Hapbeat.Editor
     internal static class HapbeatKitsFolderCreator
     {
         private const string kReadmeName = "HapbeatKitsReadme.asset";
-        private const string kLegacyReadmeName = "README.md";
 
         // Note: this class no longer exposes a top-level menu item. Folder /
         // marker creation is invoked by HapbeatSDKFolderCreator (or directly
@@ -63,16 +62,6 @@ namespace Hapbeat.Editor
                 readme = ScriptableObject.CreateInstance<HapbeatKitsReadme>();
                 AssetDatabase.CreateAsset(readme, readmeAssetPath);
                 AssetDatabase.SaveAssets();
-            }
-
-            // Migrate away from the old Markdown readme: leave the file on disk
-            // (the user might have edited it), but log a hint so they can clean up.
-            string legacyPath = $"{targetFolder}/{kLegacyReadmeName}";
-            if (File.Exists(Path.GetFullPath(legacyPath)))
-            {
-                Debug.Log(
-                    $"[Hapbeat] 旧 {legacyPath} が残っています。" +
-                    $"新しい {kReadmeName} に置き換え済みなので、不要なら削除してかまいません。");
             }
 
             if (openReadme && readme != null)
