@@ -48,6 +48,20 @@ namespace Hapbeat
         [SerializeField]
         private float _startShotDelay = -1f;
 
+        [Tooltip("Delay (seconds) between the Loop stop and the On Stop one-shot.\n" +
+                 " 0 = no delay (default; fire immediately).\n" +
+                 " >0 = custom delay in seconds (50-100ms typical).\n\n" +
+                 "Symmetric to Start Shot Delay, for the end of the sequence:\n" +
+                 "after Loop stop the device receives STREAM_END + STREAM_BEGIN + STREAM_END\n" +
+                 "(ring-flush pair) in rapid succession. Firing the On Stop one-shot\n" +
+                 "immediately means its STREAM_BEGIN (StreamClip) or PLAY (Command) arrives\n" +
+                 "while the device is still processing those packets, causing:\n" +
+                 "  - StreamClip: shot mixed with loop residual → strength varies per trial\n" +
+                 "  - Command:    PLAY occasionally dropped → shot silently missing\n\n" +
+                 "Bump this to 0.05–0.10 if the On Stop shot feels unstable or sporadic.")]
+        [SerializeField, Range(0f, 0.5f)]
+        private float _stopShotDelay = 0f;
+
         [Tooltip("Ignore duplicate Fire()/Stop() calls that arrive while the sequence " +
                  "is already in the matching state.\n\n" +
                  "Why this matters (XRI specific):\n" +
@@ -84,6 +98,12 @@ namespace Hapbeat
         // user released before the delay elapsed (i.e. Loop never started).
         private Coroutine _pendingLoopStart;
 
+        // Handle to a pending On Stop one-shot scheduled by _stopShotDelay, so a
+        // re-Fire() arriving inside the delay window can cancel it (the user
+        // already moved on to a new hold; firing the stale stop-shot would be
+        // wrong).
+        private Coroutine _pendingStopShot;
+
         /// <summary>Stable id of the "on start" entry, or empty if (none).</summary>
         public string OnStartEntryId => _onStartEntryId;
 
@@ -98,6 +118,17 @@ namespace Hapbeat
         {
             get => _startShotDelay;
             set => _startShotDelay = value;
+        }
+
+        /// <summary>
+        /// Delay (seconds) between the Loop stop and the On Stop one-shot.
+        /// 0 = fire immediately. See serialized field tooltip for the
+        /// device packet-burst rationale.
+        /// </summary>
+        public float StopShotDelay
+        {
+            get => _stopShotDelay;
+            set => _stopShotDelay = Mathf.Max(0f, value);
         }
 
         /// <summary>
@@ -139,6 +170,11 @@ namespace Hapbeat
             }
 
             _isActive = true;
+            // If a previous Stop scheduled an On Stop one-shot via _stopShotDelay
+            // and we re-Fire before the delay elapsed, drop the pending stop-shot —
+            // firing it now would mean "user moved on but the old shot still plays
+            // on top of the new sequence".
+            CancelPendingStopShot();
             PlayOneShot(_onStartEntryId, "start");
             StartLoopAfterDelay();
         }
@@ -177,8 +213,25 @@ namespace Hapbeat
 
             _isActive = false;
             CancelPendingLoop();
-            StopHaptic(); // inherited — stops the loop
-            PlayOneShot(_onStopEntryId, "end");
+            CancelPendingStopShot(); // defensive: drop any stale stop-shot from a prior Stop
+
+            // STREAM_END + ring-flush packets go out of StopHaptic. The On Stop
+            // one-shot is scheduled after _stopShotDelay so its STREAM_BEGIN /
+            // PLAY doesn't collide with the loop's flush burst on the device.
+            // See _stopShotDelay tooltip for the symptom matrix.
+            StopHaptic(); // inherited — stops the loop (sends STREAM_END + flush)
+
+            if (_stopShotDelay > 0f && !string.IsNullOrEmpty(_onStopEntryId))
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] Sequence: delaying On Stop one-shot by {_stopShotDelay:F3}s on {name} " +
+                              "(workaround for loop-stop flush burst vs. shot collision)", this);
+                _pendingStopShot = StartCoroutine(StopShotCoroutine(_stopShotDelay));
+            }
+            else
+            {
+                PlayOneShot(_onStopEntryId, "end");
+            }
         }
 
         /// <summary>
@@ -254,6 +307,33 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Symmetric counterpart to <see cref="CancelPendingLoop"/> — invoked
+        /// when a fresh Fire() arrives during the <see cref="_stopShotDelay"/>
+        /// window so the now-stale stop-shot doesn't fire on top of the new
+        /// hold. Also called from <see cref="OnDisable"/> so the coroutine
+        /// doesn't leak past component teardown.
+        /// </summary>
+        private void CancelPendingStopShot()
+        {
+            if (_pendingStopShot != null)
+            {
+                StopCoroutine(_pendingStopShot);
+                _pendingStopShot = null;
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] Sequence: cancelled pending On Stop one-shot on {name} " +
+                              "(Fire re-engaged within the stop-shot delay window)", this);
+            }
+        }
+
+        private IEnumerator StopShotCoroutine(float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            _pendingStopShot = null;
+            if (HapbeatManager.Instance == null) yield break;
+            PlayOneShot(_onStopEntryId, "end");
+        }
+
+        /// <summary>
         /// Compute the effective delay to wait after the On Start one-shot before
         /// starting the Loop phase. Returns 0 when a delay is unnecessary
         /// (no On Start entry, On Start is Command mode, or missing clip).
@@ -283,10 +363,12 @@ namespace Hapbeat
         protected override void OnDisable()
         {
             base.OnDisable();  // unsubscribe + flush pending haptic-delay coroutines
-            // Don't leave the internal LoopStartCoroutine dangling past
-            // component/object teardown (it's tracked separately from the
-            // haptic-delay coroutines that base.OnDisable handles).
+            // Don't leave the internal LoopStartCoroutine / StopShotCoroutine
+            // dangling past component/object teardown (they're tracked
+            // separately from the haptic-delay coroutines that base.OnDisable
+            // handles).
             CancelPendingLoop();
+            CancelPendingStopShot();
             // Also reset active state so re-enabling doesn't leave us stuck
             // thinking we're mid-hold.
             _isActive = false;
