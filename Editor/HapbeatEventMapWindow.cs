@@ -72,6 +72,7 @@ namespace Hapbeat.Editor
 
         // Cached scene scan results
         private Dictionary<int, List<TriggerInfo>> _triggersByEntry = new Dictionary<int, List<TriggerInfo>>();
+        private Dictionary<int, List<StateWiringInfo>> _stateWiringsByEntry = new Dictionary<int, List<StateWiringInfo>>();
         private List<TriggerInfo> _orphanedTriggers = new List<TriggerInfo>();
 
         // Cache of (preset.id → last sourceTransformPath we synced) so that
@@ -91,6 +92,24 @@ namespace Hapbeat.Editor
             public string gameObjectName;
             public string typeName;
             public List<string> wiredEvents; // e.g. "XRGrabInteractable.selectEntered"
+        }
+
+        /// <summary>
+        /// Wiring entry for a <see cref="HapbeatStateBehaviour"/> living on an
+        /// AnimatorController state. Unlike scene Trigger components, these are
+        /// asset-side and may be referenced by multiple scene Animator GOs.
+        /// Stored separately from <see cref="TriggerInfo"/> so the Wiring panel
+        /// can render an "State Wiring" section with the (controller, state,
+        /// phase) info that doesn't exist on MonoBehaviour-based triggers.
+        /// </summary>
+        private struct StateWiringInfo
+        {
+            public HapbeatStateBehaviour behaviour;
+            public UnityEditor.Animations.AnimatorController controller;
+            public string layerName;
+            public string stateName;
+            public string phase;             // "Enter" or "Exit"
+            public GameObject animatorObject; // a scene Animator using this controller (or null for asset-only)
         }
 
         [MenuItem("Hapbeat/Event Map", false, 10)]
@@ -1285,7 +1304,9 @@ namespace Hapbeat.Editor
             for (int i = 0; i < _selectedMap.entries.Count; i++)
             {
                 var entry = _selectedMap.entries[i];
-                bool hasTriggers = _triggersByEntry.ContainsKey(i) && _triggersByEntry[i].Count > 0;
+                int triggerCount = (_triggersByEntry.TryGetValue(i, out var tList) ? tList.Count : 0)
+                                 + (_stateWiringsByEntry.TryGetValue(i, out var sList) ? sList.Count : 0);
+                bool hasTriggers = triggerCount > 0;
                 bool isSelected = _selectedEntryIndex == i;
 
                 // Single-line card using manual Rect layout for clipping control
@@ -1326,7 +1347,7 @@ namespace Hapbeat.Editor
                             tgt += $"G{gr}";
                         }
                     }
-                    if (hasTriggers) tgt += $" {_triggersByEntry[i].Count}\u25cf";
+                    if (hasTriggers) tgt += $" {triggerCount}\u25cf";
 
                     string eid = entry.GetSummary();
 
@@ -1789,6 +1810,15 @@ namespace Hapbeat.Editor
                 }
             }
 
+            // State-machine wiring (HapbeatStateBehaviour on AnimatorController state).
+            // Shown as a separate section because the data model differs from
+            // scene Trigger components — the wire is on an asset, not a GO.
+            if (_stateWiringsByEntry.ContainsKey(_selectedEntryIndex))
+            {
+                EditorGUILayout.Space(4);
+                DrawStateWiringSection(_stateWiringsByEntry[_selectedEntryIndex]);
+            }
+
             // Parameter Bindings — compact per-wired-object layout. Only
             // shown for StreamClip entries since bindings have no effect in
             // Command mode (the device side has no stream to modulate).
@@ -1966,6 +1996,150 @@ namespace Hapbeat.Editor
                     if (axisProp != null) axisProp.enumValueIndex = newAxis;
                     so.ApplyModifiedProperties();
                     EditorUtility.SetDirty(tick);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Render the "State Wiring:" section for entries fired by
+        /// <see cref="HapbeatStateBehaviour"/>. One row per
+        /// (animator GO, state, phase) pair, grouped by animator GO.
+        /// Each row shows a link to the Animator's GameObject, the state
+        /// name + phase (Enter/Exit), and the per-behaviour Gain multiplier
+        /// edited inline.
+        /// </summary>
+        private void DrawStateWiringSection(List<StateWiringInfo> wirings)
+        {
+            EditorGUILayout.LabelField("State Wiring:", EditorStyles.miniBoldLabel);
+
+            // Group by animator GameObject (null = "asset-only" group at the bottom).
+            var byGo = new Dictionary<GameObject, List<StateWiringInfo>>();
+            var assetOnly = new List<StateWiringInfo>();
+            foreach (var w in wirings)
+            {
+                if (w.animatorObject == null) { assetOnly.Add(w); continue; }
+                if (!byGo.TryGetValue(w.animatorObject, out var list))
+                {
+                    list = new List<StateWiringInfo>();
+                    byGo[w.animatorObject] = list;
+                }
+                list.Add(w);
+            }
+
+            float nameW = 100f;
+            foreach (var kv in byGo.OrderBy(p => p.Key.name))
+            {
+                DrawStateWiredObjectHeader(kv.Key, kv.Value[0], nameW);
+                foreach (var w in kv.Value)
+                    DrawStateWiringRow(w, nameW);
+            }
+
+            // Asset-only entries (no scene Animator uses the controller yet).
+            if (assetOnly.Count > 0)
+            {
+                EditorGUILayout.LabelField(
+                    "(Controllers without a scene Animator)",
+                    EditorStyles.miniLabel);
+                foreach (var w in assetOnly)
+                    DrawStateWiringAssetOnlyRow(w, nameW);
+            }
+        }
+
+        /// <summary>
+        /// Header row for a scene Animator GameObject that uses a controller
+        /// with at least one matching HapbeatStateBehaviour. Mirrors
+        /// <see cref="DrawWiredObjectHeaderRow"/> visually: GO link + "State" tag
+        /// + per-behaviour Gain editor (uses the first wiring's behaviour;
+        /// users tweak each behaviour's gain individually from the rows below).
+        /// </summary>
+        private void DrawStateWiredObjectHeader(GameObject go, StateWiringInfo first, float nameW)
+        {
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            const float typeTagW = 34f;
+            const float gainLabelW = 28f;
+            const float gainFieldW = 42f;
+            const float gap = 4f;
+            const float tightGap = 1f;
+
+            // GO link
+            if (GUI.Button(new Rect(rect.x, rect.y, nameW, rect.height),
+                go.name, EditorStyles.linkLabel))
+            {
+                Selection.activeGameObject = go;
+                EditorGUIUtility.PingObject(go);
+            }
+
+            float cursor = rect.x + nameW + gap;
+            GUI.Label(new Rect(cursor, rect.y, typeTagW, rect.height),
+                "State", EditorStyles.miniBoldLabel);
+            cursor += typeTagW + tightGap;
+
+            // Gain editor for the first matching behaviour. (When multiple
+            // behaviours fire this entry on the same Animator, only the first
+            // one's gain is shown here as a quick-edit affordance — the others
+            // expose their gain via Project window selection.)
+            if (first.behaviour != null)
+            {
+                GUI.Label(new Rect(cursor, rect.y, gainLabelW, rect.height),
+                    new GUIContent("gain",
+                        "Per-state-behaviour gain multiplier.\n" +
+                        "実効値 = entry.gain × manifest.intensity × この値。"),
+                    EditorStyles.miniLabel);
+                cursor += gainLabelW;
+
+                float newGain = EditorGUI.FloatField(
+                    new Rect(cursor, rect.y, gainFieldW, rect.height),
+                    first.behaviour.GainMultiplier);
+                cursor += gainFieldW + gap;
+                if (!Mathf.Approximately(newGain, first.behaviour.GainMultiplier))
+                {
+                    Undo.RecordObject(first.behaviour, "Edit Hapbeat State Gain");
+                    first.behaviour.GainMultiplier = Mathf.Clamp(newGain, 0f, 2f);
+                    EditorUtility.SetDirty(first.behaviour);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Detail row under a state-wiring header: controller / state / phase.
+        /// Clicking pings the AnimatorController asset so the user can open
+        /// the Animator window and locate the state.
+        /// </summary>
+        private void DrawStateWiringRow(StateWiringInfo w, float nameW)
+        {
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            string ctrlName = w.controller != null ? w.controller.name : "(controller missing)";
+            string label = $"{ctrlName} / {w.stateName}  ({w.phase})";
+            var labelRect = new Rect(rect.x + nameW + 4, rect.y,
+                rect.width - nameW - 4, rect.height);
+            if (GUI.Button(labelRect, label, EditorStyles.linkLabel))
+            {
+                if (w.controller != null)
+                {
+                    Selection.activeObject = w.controller;
+                    EditorGUIUtility.PingObject(w.controller);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Asset-only row when no scene Animator uses the controller.
+        /// Shows the controller path + state name so the user can still
+        /// navigate to the wire. No GO link / no gain editor (no instance to
+        /// tweak — gain still applies, edit it via Project selection).
+        /// </summary>
+        private void DrawStateWiringAssetOnlyRow(StateWiringInfo w, float nameW)
+        {
+            var rect = EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight);
+            string ctrlName = w.controller != null ? w.controller.name : "(controller missing)";
+            string label = $"  {ctrlName} / {w.stateName}  ({w.phase})";
+            if (GUI.Button(new Rect(rect.x, rect.y, rect.width, rect.height),
+                label, EditorStyles.linkLabel))
+            {
+                if (w.controller != null)
+                {
+                    Selection.activeObject = w.controller;
+                    EditorGUIUtility.PingObject(w.controller);
                 }
             }
         }
@@ -3995,10 +4169,12 @@ namespace Hapbeat.Editor
         private void ScanScene()
         {
             _triggersByEntry.Clear();
+            _stateWiringsByEntry.Clear();
             _orphanedTriggers.Clear();
 
             if (_selectedMap == null) return;
 
+            // ── Scene Trigger components (MonoBehaviour) ───────────────────
             // Include inactive so wires on disabled branches stay visible.
             var allTriggers = FindObjectsByType<HapbeatTriggerBase>(
                 FindObjectsInactive.Include, FindObjectsSortMode.None);
@@ -4031,7 +4207,136 @@ namespace Hapbeat.Editor
                 }
             }
 
+            // ── AnimatorController StateMachineBehaviours ───────────────────
+            // HapbeatStateBehaviour lives on AnimatorController state assets,
+            // not in the scene. Scan all controllers in the project so wires
+            // authored in `Animator window → state → Add Behaviour` surface
+            // here just like UnityEventTrigger does.
+            ScanAnimatorControllers();
+
             Repaint();
+        }
+
+        /// <summary>
+        /// Walk every <c>AnimatorController</c> asset in the project, enumerate
+        /// states in all layers (including nested state machines), and surface
+        /// <see cref="HapbeatStateBehaviour"/> instances that reference the
+        /// currently-selected EventMap. For each scene <c>Animator</c> using
+        /// the controller, add a wiring row so the user can locate the affected
+        /// GameObject(s). Asset-only (controller with no scene Animator) also
+        /// gets a row with <c>animatorObject == null</c>.
+        /// </summary>
+        private void ScanAnimatorControllers()
+        {
+            // Pre-collect scene Animators once for O(controllers × animators) match.
+            var sceneAnimators = FindObjectsByType<Animator>(
+                FindObjectsInactive.Include, FindObjectsSortMode.None);
+
+            string[] controllerGuids = AssetDatabase.FindAssets("t:AnimatorController");
+            foreach (var guid in controllerGuids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                var ctrl = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(path);
+                if (ctrl == null) continue;
+
+                // Find scene Animators bound to THIS controller.
+                var animatorsUsingCtrl = new List<GameObject>();
+                foreach (var anim in sceneAnimators)
+                {
+                    if (anim == null) continue;
+                    // runtimeAnimatorController may be an AnimatorOverrideController; resolve to its base.
+                    var runtime = anim.runtimeAnimatorController;
+                    var baseCtrl = runtime is UnityEngine.AnimatorOverrideController over
+                        ? over.runtimeAnimatorController as UnityEditor.Animations.AnimatorController
+                        : runtime as UnityEditor.Animations.AnimatorController;
+                    if (baseCtrl == ctrl)
+                        animatorsUsingCtrl.Add(anim.gameObject);
+                }
+
+                foreach (var layer in ctrl.layers)
+                {
+                    if (layer == null || layer.stateMachine == null) continue;
+                    EnumerateStateBehaviours(layer.stateMachine, layer.name, ctrl, animatorsUsingCtrl);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Recursively enumerate all states in a state machine (including child
+        /// state machines), check each state's behaviours for
+        /// <see cref="HapbeatStateBehaviour"/>, and register matches into
+        /// <see cref="_stateWiringsByEntry"/>.
+        /// </summary>
+        private void EnumerateStateBehaviours(
+            UnityEditor.Animations.AnimatorStateMachine sm,
+            string layerName,
+            UnityEditor.Animations.AnimatorController ctrl,
+            List<GameObject> animatorsUsingCtrl)
+        {
+            foreach (var stateRef in sm.states)
+            {
+                var state = stateRef.state;
+                if (state == null) continue;
+
+                foreach (var behaviour in state.behaviours)
+                {
+                    if (!(behaviour is HapbeatStateBehaviour hb)) continue;
+                    if (hb.EventMap != _selectedMap) continue;
+
+                    int enterIdx = ResolveTriggerEntryIndex(hb.EntryIdOnEnter);
+                    int exitIdx  = ResolveTriggerEntryIndex(hb.EntryIdOnExit);
+
+                    if (animatorsUsingCtrl.Count == 0)
+                    {
+                        // No scene Animator uses this controller — still surface
+                        // it (asset-only) so the user can navigate via the
+                        // controller asset link.
+                        if (enterIdx >= 0) AddStateWiring(enterIdx, hb, ctrl, layerName, state.name, "Enter", null);
+                        if (exitIdx  >= 0) AddStateWiring(exitIdx,  hb, ctrl, layerName, state.name, "Exit",  null);
+                    }
+                    else
+                    {
+                        foreach (var go in animatorsUsingCtrl)
+                        {
+                            if (enterIdx >= 0) AddStateWiring(enterIdx, hb, ctrl, layerName, state.name, "Enter", go);
+                            if (exitIdx  >= 0) AddStateWiring(exitIdx,  hb, ctrl, layerName, state.name, "Exit",  go);
+                        }
+                    }
+                }
+            }
+
+            // Recurse into nested state machines.
+            foreach (var sub in sm.stateMachines)
+            {
+                if (sub.stateMachine != null)
+                    EnumerateStateBehaviours(sub.stateMachine, layerName, ctrl, animatorsUsingCtrl);
+            }
+        }
+
+        private void AddStateWiring(
+            int idx,
+            HapbeatStateBehaviour behaviour,
+            UnityEditor.Animations.AnimatorController ctrl,
+            string layerName,
+            string stateName,
+            string phase,
+            GameObject animatorObject)
+        {
+            if (idx < 0 || idx >= _selectedMap.entries.Count) return;
+            if (!_stateWiringsByEntry.TryGetValue(idx, out var list))
+            {
+                list = new List<StateWiringInfo>();
+                _stateWiringsByEntry[idx] = list;
+            }
+            list.Add(new StateWiringInfo
+            {
+                behaviour = behaviour,
+                controller = ctrl,
+                layerName = layerName,
+                stateName = stateName,
+                phase = phase,
+                animatorObject = animatorObject,
+            });
         }
 
         /// <summary>
