@@ -42,10 +42,15 @@ namespace Hapbeat.Editor
             public string kitName;
             /// <summary>Full event id (e.g. "showcase-kit.pin_hit").</summary>
             public string eventId;
-            /// <summary>Manifest's clip field (relative to kit dir, e.g. "stream-clips/foo.wav").
+            /// <summary>Manifest's clip path relative to kit dir (e.g. "stream-clips/foo.wav").
+            /// In schema 2.0.0 the manifest stores a bare filename; the parser auto-prefixes
+            /// with <c>install-clips/</c> (events bucket) or <c>stream-clips/</c> (stream_events
+            /// bucket) so consumers see the same kit-root-relative form regardless of schema.
             /// May be empty for events without a packaged clip.</summary>
             public string clipRelPath;
-            /// <summary>Event mode — "command" or "stream_clip". Defaults to "command" if absent.</summary>
+            /// <summary>Event mode — "command" (from <c>events</c> bucket) or "stream_clip"
+            /// (from <c>stream_events</c> bucket). Bucket-derived in schema 2.0.0;
+            /// the manifest no longer carries a per-event <c>mode</c> field.</summary>
             public string mode;
             /// <summary>Optional designer description from manifest.</summary>
             public string description;
@@ -174,6 +179,13 @@ namespace Hapbeat.Editor
         /// <summary>
         /// Resolution against a specific event list. Sets both the intensity
         /// and the kit asset path of the matched entry (for source reporting).
+        /// <para>
+        /// schema 2.0.0: same eventId can appear in both <c>events</c> (command)
+        /// and <c>stream_events</c> buckets (BOTH mode). Resolution is therefore
+        /// keyed by (eventId × mode) tuple — a Command EventEntry only matches
+        /// command-bucket entries; a StreamClip EventEntry only matches
+        /// stream_events-bucket entries.
+        /// </para>
         /// </summary>
         private static bool TryResolveFromList(
             List<KitManifestEvent> list, HapbeatEventEntry entry,
@@ -183,13 +195,16 @@ namespace Hapbeat.Editor
             kitPath = "";
             if (list == null || list.Count == 0) return false;
 
-            // Command — match by eventId only.
+            // Command — match by (eventId, mode=command) tuple.
             if (entry.mode == HapticMode.Command)
             {
-                return TryMatchByEventId(list, entry.eventId, out intensity, out kitPath);
+                return TryMatchByEventIdAndMode(list, entry.eventId, "command",
+                    out intensity, out kitPath);
             }
 
-            // StreamClip — prefer clip-path match (more specific).
+            // StreamClip — prefer clip-path match (more specific), restricted to
+            // stream_clip entries so a Command-only event with the same id can't
+            // hijack a StreamClip's intensity.
             if (entry.streamClip != null)
             {
                 string clipAssetPath = AssetDatabase.GetAssetPath(entry.streamClip);
@@ -198,6 +213,7 @@ namespace Hapbeat.Editor
                     string clipPath = clipAssetPath.Replace('\\', '/');
                     foreach (var ev in list)
                     {
+                        if (ev.mode != "stream_clip") continue;
                         string expected = $"{ev.kitDir}/{ev.clipRelPath}".Replace('\\', '/');
                         if (clipPath == expected)
                         {
@@ -209,15 +225,21 @@ namespace Hapbeat.Editor
                 }
             }
 
-            // Fallback: eventId match.
+            // Fallback: (eventId, mode=stream_clip) match.
             if (!string.IsNullOrEmpty(entry.eventId))
-                return TryMatchByEventId(list, entry.eventId, out intensity, out kitPath);
+                return TryMatchByEventIdAndMode(list, entry.eventId, "stream_clip",
+                    out intensity, out kitPath);
 
             return false;
         }
 
-        private static bool TryMatchByEventId(
-            List<KitManifestEvent> all, string eventId,
+        /// <summary>
+        /// (eventId × mode) tuple exact match. schema 2.0.0 では同 eventId が
+        /// command / stream_clip 両 bucket に並存しうるので、entry の mode と
+        /// 一致するもののみを返す。
+        /// </summary>
+        private static bool TryMatchByEventIdAndMode(
+            List<KitManifestEvent> all, string eventId, string expectedMode,
             out float intensity, out string kitPath)
         {
             intensity = 1f;
@@ -225,7 +247,7 @@ namespace Hapbeat.Editor
             if (string.IsNullOrEmpty(eventId)) return false;
             foreach (var ev in all)
             {
-                if (ev.eventId == eventId)
+                if (ev.eventId == eventId && ev.mode == expectedMode)
                 {
                     intensity = ev.intensity;
                     kitPath = ev.kitDir;
@@ -360,12 +382,32 @@ namespace Hapbeat.Editor
             return result;
         }
 
+        /// <summary>
+        /// Kit manifest schema 2.0.0 parser. Reads <c>events</c> (command bucket)
+        /// と <c>stream_events</c> (stream_clip bucket) を別々に走査し、bucket 名から
+        /// mode を確定する (旧 <c>"mode"</c> field は廃止)。<c>clip</c> は bare filename
+        /// で書かれ、bucket に応じて <c>install-clips/</c> / <c>stream-clips/</c> を自動 prefix する。
+        /// <para>
+        /// 同じ eventId が両 bucket に存在することは <b>valid</b> (Studio の BOTH モード相当)。
+        /// (eventId × mode) tuple で intensity lookup を区別するため、両 entry が独立に
+        /// output に積まれる。
+        /// </para>
+        /// </summary>
         private static void ParseEvents(string json, string kitAssetPath, List<KitManifestEvent> output)
         {
-            // Locate top-level "events": { ... }
-            var eventsMatch = Regex.Match(json, "\"events\"\\s*:\\s*\\{");
-            if (!eventsMatch.Success) return;
-            int blockStart = eventsMatch.Index + eventsMatch.Length;
+            ParseBucket(json, "events",        "command",     "install-clips", kitAssetPath, output);
+            ParseBucket(json, "stream_events", "stream_clip", "stream-clips",  kitAssetPath, output);
+        }
+
+        private static void ParseBucket(
+            string json, string bucketName, string mode, string subdir,
+            string kitAssetPath, List<KitManifestEvent> output)
+        {
+            // Anchor on `"<bucket>": {` at any depth (top-level in schema 2 but
+            // the regex doesn't care about nesting — FindMatchingBrace handles it).
+            var bucketMatch = Regex.Match(json, $"\"{bucketName}\"\\s*:\\s*\\{{");
+            if (!bucketMatch.Success) return;
+            int blockStart = bucketMatch.Index + bucketMatch.Length;
             int blockEnd = FindMatchingBrace(json, blockStart);
             if (blockEnd < 0) return;
             string block = json.Substring(blockStart, blockEnd - blockStart);
@@ -382,42 +424,18 @@ namespace Hapbeat.Editor
                 if (entryEnd < 0) break;
                 string body = block.Substring(entryStart, entryEnd - entryStart);
 
-                // clip: may be absent for stream_source-without-WAV
-                string clipRel = "";
+                // clip: bare filename in schema 2.0.0 — auto-prefix with bucket's subdir.
+                string clipBare = "";
                 var clipMatch = Regex.Match(body, "\"clip\"\\s*:\\s*\"([^\"]*)\"");
-                if (clipMatch.Success) clipRel = clipMatch.Groups[1].Value;
-
-                // mode: defaults to "command" per kit-format spec when absent.
-                string mode = "command";
-                var modeMatch = Regex.Match(body, "\"mode\"\\s*:\\s*\"([^\"]+)\"");
-                if (modeMatch.Success) mode = modeMatch.Groups[1].Value;
+                if (clipMatch.Success) clipBare = clipMatch.Groups[1].Value;
+                string clipRel = string.IsNullOrEmpty(clipBare) ? "" : $"{subdir}/{clipBare}";
 
                 // description: optional designer notes.
                 string description = "";
                 var descMatch = Regex.Match(body, "\"description\"\\s*:\\s*\"([^\"]*)\"");
                 if (descMatch.Success) description = descMatch.Groups[1].Value;
 
-                // parameters.intensity — grab via the inner parameters block to avoid
-                // accidentally matching any other "intensity" key further in the JSON.
-                float intensity = 1f;
-                var paramsMatch = Regex.Match(body, "\"parameters\"\\s*:\\s*\\{");
-                if (paramsMatch.Success)
-                {
-                    int pStart = paramsMatch.Index + paramsMatch.Length;
-                    int pEnd = FindMatchingBrace(body, pStart);
-                    if (pEnd > 0)
-                    {
-                        string pBody = body.Substring(pStart, pEnd - pStart);
-                        var intensityMatch = Regex.Match(pBody, "\"intensity\"\\s*:\\s*([0-9.]+)");
-                        if (intensityMatch.Success)
-                        {
-                            float.TryParse(intensityMatch.Groups[1].Value,
-                                System.Globalization.NumberStyles.Float,
-                                System.Globalization.CultureInfo.InvariantCulture,
-                                out intensity);
-                        }
-                    }
-                }
+                float intensity = ExtractIntensity(body);
 
                 output.Add(new KitManifestEvent
                 {
@@ -432,6 +450,29 @@ namespace Hapbeat.Editor
 
                 pos = entryEnd + 1;
             }
+        }
+
+        /// <summary>
+        /// Extract <c>parameters.intensity</c> from an event body. Returns 1.0 if
+        /// absent. Grabs via the inner parameters block to avoid accidentally
+        /// matching any other "intensity" key further in the JSON.
+        /// </summary>
+        private static float ExtractIntensity(string body)
+        {
+            var paramsMatch = Regex.Match(body, "\"parameters\"\\s*:\\s*\\{");
+            if (!paramsMatch.Success) return 1f;
+            int pStart = paramsMatch.Index + paramsMatch.Length;
+            int pEnd = FindMatchingBrace(body, pStart);
+            if (pEnd <= 0) return 1f;
+            string pBody = body.Substring(pStart, pEnd - pStart);
+            var intensityMatch = Regex.Match(pBody, "\"intensity\"\\s*:\\s*([0-9.]+)");
+            if (!intensityMatch.Success) return 1f;
+            if (float.TryParse(intensityMatch.Groups[1].Value,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out float intensity))
+                return intensity;
+            return 1f;
         }
 
         private static int FindMatchingBrace(string s, int openAfterIdx)

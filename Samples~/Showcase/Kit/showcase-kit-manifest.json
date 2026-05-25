@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "version": "1.0.0",
   "name": "showcase-kit",
   "description": "Hapbeat Unity SDK の Showcase サンプル用 Kit。各 event の intensity 既定値を提供する。Showcase は StreamClip ファースト設計なので install-clips/ は初期空 (任意で Command モード化したい場合に WAV を入れる)、stream-clips/ も同様。StreamClip 実体は Audio/ から参照される。",
@@ -8,80 +8,69 @@
   "target_device": {
     "firmware_version_min": "0.0.2"
   },
-  "events": {
+  "events": {},
+  "stream_events": {
     "showcase-kit.pin_hit": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/pin_hit.wav",
+      "clip": "pin_hit.wav",
       "description": "Z1 Bowling Pin への衝撃 (VelocityScaled)",
       "parameters": { "intensity": 1.0, "loop": false }
     },
     "showcase-kit.door_open": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/door_open.wav",
+      "clip": "door_open.wav",
       "description": "Z2 ドアが開いた瞬間",
       "parameters": { "intensity": 0.7, "loop": false }
     },
     "showcase-kit.door_close": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/door_close.wav",
+      "clip": "door_close.wav",
       "description": "Z2 ドアが閉じた瞬間",
       "parameters": { "intensity": 0.7, "loop": false }
     },
     "showcase-kit.grab_start": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/grab_start.wav",
+      "clip": "grab_start.wav",
       "description": "Z3 PickupBox を掴んだ瞬間 (Sequence Fire)",
       "parameters": { "intensity": 0.8, "loop": false }
     },
     "showcase-kit.grab_loop": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/grab_loop.wav",
+      "clip": "grab_loop.wav",
       "description": "Z3 PickupBox 保持中のループ (ParameterBinding で位置 delta → gain modulation)",
       "parameters": { "intensity": 0.9, "loop": true }
     },
     "showcase-kit.grab_release": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/grab_release.wav",
+      "clip": "grab_release.wav",
       "description": "Z3 PickupBox を放した瞬間 (Sequence Stop)",
       "parameters": { "intensity": 0.6, "loop": false }
     },
     "showcase-kit.stream_demo": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/stream_demo.wav",
+      "clip": "stream_demo.wav",
       "description": "Z4 StreamConsole の単発ストリーミングテスト",
       "parameters": { "intensity": 1.0, "loop": true }
     },
     "showcase-kit.slider_tick": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/slider_tick.wav",
+      "clip": "slider_tick.wav",
       "description": "Z4 Slider の段階フィードバック (TickEmitter)",
       "parameters": { "intensity": 0.5, "loop": false }
     },
     "showcase-kit.charge_release": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/charge_release.wav",
+      "clip": "charge_release.wav",
       "description": "Z5 弾を発射した瞬間 (PlayWithCurve でチャージ量を gain に反映)",
       "parameters": { "intensity": 1.0, "loop": false }
     },
     "showcase-kit.target_hit": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/target_hit.wav",
+      "clip": "target_hit.wav",
       "description": "Z5 弾が的に命中した瞬間 (UnityEventTrigger)",
       "parameters": { "intensity": 0.9, "loop": false }
     },
     "showcase-kit.manual_fire": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/manual_fire.wav",
+      "clip": "manual_fire.wav",
       "description": "Q キーで単発発火するホットキー event",
       "parameters": { "intensity": 0.8, "loop": false }
     },
     "showcase-kit.burst": {
-      "mode": "stream_clip",
-      "clip": "stream-clips/burst.wav",
+      "clip": "burst.wav",
       "description": "1〜5 キーで gain スケール可変発火するホットキー event",
       "parameters": { "intensity": 1.0, "loop": false }
     }
   },
   "install_clips": {},
-  "_note": "Showcase Kit は StreamClip 専用の intensity プロファイルとして同梱されています。Command モードを試したい場合は、各 event の mode を 'command' に切り替え、install-clips/ に対応する WAV (例: pin_hit.wav) を追加し、Studio で deploy してください。stream-clips/ は空のままで構いません — runtime の StreamClip 参照は EventMap が Audio/ を直接指しているため、Kit 側 WAV の有無は intensity lookup に影響しません (eventId fallback で解決します)。"
+  "_note": "Showcase Kit は schema 2.0.0 で stream_events のみを持つ StreamClip 専用 intensity プロファイルとして同梱されています。Command モードを試したい場合は、各 event を events bucket に複製し install-clips/ に対応する WAV を追加してから Studio で deploy してください。runtime の StreamClip 参照は EventMap が Audio/ を直接指しているため、Kit 側 WAV の有無は intensity lookup に影響しません (eventId fallback で解決します)。"
 }
