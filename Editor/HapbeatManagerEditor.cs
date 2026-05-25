@@ -25,13 +25,15 @@ namespace Hapbeat.Editor
     public class HapbeatManagerEditor : UnityEditor.Editor
     {
         // SessionState keys (persist between domain reloads while editor open).
-        private const string PREF_MODE         = "Hapbeat_TestMode";          // 0=Command, 1=StreamClip
-        private const string PREF_EVENT_ID     = "Hapbeat_TestEventId";
-        private const string PREF_KIT_NAME     = "Hapbeat_TestKitName";
-        private const string PREF_STREAM_GUID  = "Hapbeat_TestStreamClipGuid";
-        private const string PREF_LOOP         = "Hapbeat_TestLoop";
-        private const string PREF_GAIN         = "Hapbeat_TestGain";
-        private const string PREF_TARGET       = "Hapbeat_TestTarget";
+        // `_v2` suffix: schema 変更 (gain semantics + None default) で legacy session を捨てる
+        // — 旧キーには "weapon.gunshot" や intensity と取り違えた 0.3 等が残っている可能性がある。
+        private const string PREF_MODE         = "Hapbeat_TestMode_v2";       // 0=Command, 1=StreamClip
+        private const string PREF_EVENT_ID     = "Hapbeat_TestEventId_v2";
+        private const string PREF_KIT_NAME     = "Hapbeat_TestKitName_v2";
+        private const string PREF_STREAM_GUID  = "Hapbeat_TestStreamClipGuid_v2";
+        private const string PREF_LOOP         = "Hapbeat_TestLoop_v2";
+        private const string PREF_GAIN         = "Hapbeat_TestGain_v2";
+        private const string PREF_TARGET       = "Hapbeat_TestTarget_v2";
 
         // --- Test play state ---
         private int _testMode;          // 0 = Command, 1 = StreamClip
@@ -70,7 +72,9 @@ namespace Hapbeat.Editor
                     _testStreamClip = AssetDatabase.LoadAssetAtPath<AudioClip>(path);
             }
             _testLoop      = SessionState.GetBool(PREF_LOOP, false);
-            _testGain      = SessionState.GetFloat(PREF_GAIN, 0.5f);
+            // _testGain は EventMap の entry.gain と同じ意味で「authored intensity の倍率」。
+            // 既定 1.0 = manifest intensity をそのまま使う。送信 gain = _testGain × intensity。
+            _testGain      = SessionState.GetFloat(PREF_GAIN, 1.0f);
             _testTarget    = SessionState.GetString(PREF_TARGET, "");
 
             ResolveIntensity();
@@ -338,7 +342,8 @@ namespace Hapbeat.Editor
             }
             else
             {
-                buttonLabel = "(pick event...)";
+                // Default state — no event selected. Match EventMap "(None)" convention.
+                buttonLabel = "(None)";
             }
 
             if (GUILayout.Button(buttonLabel, EditorStyles.popup))
@@ -361,6 +366,19 @@ namespace Hapbeat.Editor
         private void ShowKitEventMenu(List<HapbeatManifestIntensity.KitManifestEvent> events)
         {
             var menu = new GenericMenu();
+
+            // Top: (None) to clear the selection back to default.
+            menu.AddItem(new GUIContent("(None)"), string.IsNullOrEmpty(_testEventId), () =>
+            {
+                _testEventId = "";
+                _testKitName = "";
+                _resolvedIntensity = float.NaN;
+                _resolvedKitPath = "";
+                PersistSession();
+                Repaint();
+            });
+            menu.AddSeparator("");
+
             // Group events under their kit name for readability.
             var byKit = events.GroupBy(e => e.kitName).OrderBy(g => g.Key);
             foreach (var grp in byKit)
@@ -374,9 +392,9 @@ namespace Hapbeat.Editor
                     {
                         _testEventId = captured.eventId;
                         _testKitName = captured.kitName;
-                        // Auto-derive gain from manifest intensity so the test play
-                        // matches authored intent without manual slider adjustment.
-                        _testGain = Mathf.Clamp(captured.intensity, 0f, 2f);
+                        // _testGain は触らない (EventMap entry.gain と同じ semantics で
+                        // 「authored intensity の倍率」)。送信時に intensity と掛け算するので
+                        // gain = 1.0 のままで「manifest 通り」になる。
                         _resolvedIntensity = captured.intensity;
                         _resolvedKitPath = captured.kitDir;
                         PersistSession();
@@ -404,9 +422,7 @@ namespace Hapbeat.Editor
             {
                 _testStreamClip = newClip;
                 ResolveIntensity();
-                // Auto-pull gain from manifest intensity for consistency with EventMap test play.
-                if (!float.IsNaN(_resolvedIntensity))
-                    _testGain = Mathf.Clamp(_resolvedIntensity, 0f, 2f);
+                // _testGain は触らない (gain × intensity が送信値になる semantics を維持)。
             }
 
             _testLoop = EditorGUILayout.Toggle(
@@ -471,28 +487,51 @@ namespace Hapbeat.Editor
             EditorGUI.EndDisabledGroup();
         }
 
-        // ── Gain slider with manifest-intensity hint ───────────────────────
+        // ── Gain slider — EventMap entry.gain と同じ semantics ──────────────
+        // _testGain は「authored intensity の倍率」(EventMap.entry.gain と同義)。
+        // 送信値 = _testGain × manifest.intensity (resolved 時) または _testGain (未解決時)。
+        // 例) manifest.intensity = 0.5 で _testGain = 1.0 → 送信 0.5。
+        //     gain を 2.0 にすれば boost (送信 1.0)。
 
         private void DrawGainSlider()
         {
-            string suffix = "";
+            float effective = ComputeEffectiveGain();
+            string suffix;
             if (!float.IsNaN(_resolvedIntensity))
             {
                 string kitLabel = string.IsNullOrEmpty(_resolvedKitPath)
                     ? ""
-                    : $" — {System.IO.Path.GetFileName(_resolvedKitPath)}";
-                suffix = $"  (manifest intensity = {_resolvedIntensity:F2}{kitLabel})";
+                    : $", {System.IO.Path.GetFileName(_resolvedKitPath)}";
+                // gain × intensity の式と結果を見せる。EventMap と同じ思想。
+                suffix = $"  ({_testGain:F2} × intensity {_resolvedIntensity:F2}{kitLabel} = {effective:F2} sent)";
             }
-            else if (_testMode == 0 && !string.IsNullOrEmpty(_testEventId))
-                suffix = "  (no manifest match — set gain manually)";
-            else if (_testMode == 1 && _testStreamClip != null)
-                suffix = "  (clip not in a Kit — set gain manually)";
+            else if ((_testMode == 0 && !string.IsNullOrEmpty(_testEventId)) ||
+                     (_testMode == 1 && _testStreamClip != null))
+            {
+                // No manifest match — send raw _testGain.
+                suffix = $"  (no manifest match → sending {effective:F2})";
+            }
+            else
+            {
+                suffix = "";
+            }
 
             _testGain = EditorGUILayout.Slider(
                 new GUIContent("Gain" + suffix,
-                    "再生 gain。EventMap 同様、Kit から選択した直後は manifest intensity が自動で\n" +
-                    "セットされる (上書き可)。"),
+                    "Authored intensity の倍率 (EventMap entry.gain と同じ semantics)。\n" +
+                    "1.0 = manifest intensity そのまま。0.5 = 半分。2.0 = ブースト。\n" +
+                    "実際に送信される値 = Gain × manifest.intensity (intensity が無ければ Gain そのまま)。"),
                 _testGain, 0f, 2f);
+        }
+
+        /// <summary>
+        /// _testGain (entry.gain 相当) × manifest.intensity (resolved 時)。
+        /// EventMap の <c>entry.GetEffectiveGain()</c> と同じ計算。
+        /// </summary>
+        private float ComputeEffectiveGain()
+        {
+            float intensity = float.IsNaN(_resolvedIntensity) ? 1.0f : _resolvedIntensity;
+            return _testGain * intensity;
         }
 
         // ── Manifest intensity resolution ──────────────────────────────────
@@ -544,6 +583,7 @@ namespace Hapbeat.Editor
         private void RuntimePlay(HapbeatManager manager)
         {
             string target = NullIfEmpty(_testTarget);
+            float effective = ComputeEffectiveGain();
             if (_testMode == 0)
             {
                 if (string.IsNullOrEmpty(_testEventId))
@@ -551,7 +591,7 @@ namespace Hapbeat.Editor
                     Debug.LogWarning("[Hapbeat] Test play: Event ID is empty.");
                     return;
                 }
-                manager.Play(_testEventId, _testGain, target: target);
+                manager.Play(_testEventId, effective, target: target);
             }
             else
             {
@@ -560,7 +600,7 @@ namespace Hapbeat.Editor
                     Debug.LogWarning("[Hapbeat] Test play: Stream Clip is empty.");
                     return;
                 }
-                manager.StreamAudioClip(_testStreamClip, _testGain, target, _testLoop);
+                manager.StreamAudioClip(_testStreamClip, effective, target, _testLoop);
             }
         }
 
@@ -584,6 +624,7 @@ namespace Hapbeat.Editor
         {
             if (_editorClient == null || !_editorClient.IsConnected) return;
             string target = NullIfEmpty(_testTarget);
+            float effective = ComputeEffectiveGain();
             if (_testMode == 0)
             {
                 if (string.IsNullOrEmpty(_testEventId))
@@ -591,8 +632,8 @@ namespace Hapbeat.Editor
                     Debug.LogWarning("[Hapbeat Edit] Test play: Event ID is empty.");
                     return;
                 }
-                HapbeatEditorTransport.Play(_testEventId, _testGain, target);
-                Debug.Log($"[Hapbeat Edit] Play: eventId={_testEventId} gain={_testGain:F2} target={target ?? "(broadcast)"}");
+                HapbeatEditorTransport.Play(_testEventId, effective, target);
+                Debug.Log($"[Hapbeat Edit] Play: eventId={_testEventId} gain={_testGain:F2} × intensity={(float.IsNaN(_resolvedIntensity) ? 1.0f : _resolvedIntensity):F2} = {effective:F2} target={target ?? "(broadcast)"}");
             }
             else
             {
@@ -601,8 +642,8 @@ namespace Hapbeat.Editor
                     Debug.LogWarning("[Hapbeat Edit] Test play: Stream Clip is empty.");
                     return;
                 }
-                HapbeatEditorTransport.StartStream(_testStreamClip, _testGain, target, _testLoop);
-                Debug.Log($"[Hapbeat Edit] StartStream: clip={_testStreamClip.name} gain={_testGain:F2} loop={_testLoop} target={target ?? "(broadcast)"}");
+                HapbeatEditorTransport.StartStream(_testStreamClip, effective, target, _testLoop);
+                Debug.Log($"[Hapbeat Edit] StartStream: clip={_testStreamClip.name} gain={_testGain:F2} × intensity={(float.IsNaN(_resolvedIntensity) ? 1.0f : _resolvedIntensity):F2} = {effective:F2} loop={_testLoop} target={target ?? "(broadcast)"}");
             }
         }
 
