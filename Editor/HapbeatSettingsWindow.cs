@@ -129,6 +129,26 @@ namespace Hapbeat.Editor
                 _serializedConfig.FindProperty("enableLogging"),
                 new GUIContent("ログ出力", "詳細ログをコンソールに出力"));
 
+            // ── レイテンシ補正 ────────────────────────────────────────
+            // Audio 出力デバイス (Bluetooth 等) との遅延差を吸収する全体オフセット。
+            // 個別 entry 単位の追加調整は EventMap Window 側 (delayOffsetSeconds)。
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("レイテンシ補正", EditorStyles.boldLabel);
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("hapticDelaySeconds"),
+                new GUIContent(
+                    "触覚遅延 (秒)",
+                    "Audio 出力デバイス (Bluetooth 等) の latency に合わせて、全 Play / StreamClip\n" +
+                    "に加算するグローバル遅延。Hapbeat 触覚は UDP 直送で非常に低遅延 (~10ms) なので、\n" +
+                    "speakers / headphones が遅い環境では触覚が先に来てしまう。これを補正する offset。\n\n" +
+                    "目安:\n" +
+                    "  ・有線 / USB DAC      → 0.00\n" +
+                    "  ・内蔵スピーカー       → 0.02〜0.05\n" +
+                    "  ・Bluetooth (aptX LL) → 0.03〜0.05\n" +
+                    "  ・Bluetooth (SBC/AAC) → 0.15〜0.20\n\n" +
+                    "各 EventMap entry の Delay Offset でさらに ±0.2 秒の個別調整も可能。"));
+
             EditorGUILayout.Space(5);
 
             EditorGUILayout.BeginHorizontal();

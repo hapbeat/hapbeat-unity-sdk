@@ -36,11 +36,11 @@ namespace Hapbeat.Editor
         /// </summary>
         public class KitManifestEvent
         {
-            /// <summary>Kit folder asset path (e.g. "Assets/HapbeatSDK/Kits/tutorial-kit").</summary>
+            /// <summary>Kit folder asset path (e.g. "Assets/HapbeatSDK/Kits/showcase-kit").</summary>
             public string kitDir;
-            /// <summary>Kit folder name (e.g. "tutorial-kit"). Equals manifest's "name" by convention.</summary>
+            /// <summary>Kit folder name (e.g. "showcase-kit"). Equals manifest's "name" by convention.</summary>
             public string kitName;
-            /// <summary>Full event id (e.g. "tutorial-kit.pin_hit").</summary>
+            /// <summary>Full event id (e.g. "showcase-kit.pin_hit").</summary>
             public string eventId;
             /// <summary>Manifest's clip field (relative to kit dir, e.g. "stream-clips/foo.wav").
             /// May be empty for events without a packaged clip.</summary>
@@ -90,7 +90,7 @@ namespace Hapbeat.Editor
 
         /// <summary>
         /// Return the asset path of the kit folder for the given kit name
-        /// (e.g. "tutorial-kit" → "Assets/HapbeatSDK/Kits/tutorial-kit"),
+        /// (e.g. "showcase-kit" → "Assets/HapbeatSDK/Kits/showcase-kit"),
         /// or null if no such folder exists under the kits root.
         /// </summary>
         public static string GetKitDirectory(string kitName)
@@ -309,7 +309,7 @@ namespace Hapbeat.Editor
 
         /// <summary>
         /// Locate the manifest file inside a Kit folder. Naming convention is
-        /// <c>&lt;kitname&gt;-manifest.json</c> (e.g. <c>tutorial-kit-manifest.json</c>).
+        /// <c>&lt;kitname&gt;-manifest.json</c> (e.g. <c>showcase-kit-manifest.json</c>).
         /// Falls back to any <c>*manifest*.json</c> in the kit folder if the
         /// preferred name isn't present, so kits authored with non-conventional
         /// names still resolve. Returns null when no manifest is found.

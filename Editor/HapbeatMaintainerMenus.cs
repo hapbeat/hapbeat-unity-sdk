@@ -30,27 +30,27 @@ namespace Hapbeat.Editor
     public static class HapbeatMaintainerMenus
     {
         // ----------------------------------------------------------------
-        // Tutorial
+        // Showcase
         // ----------------------------------------------------------------
 
-        [MenuItem("Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (Tutorial)", false, 201)]
-        public static void SyncTutorialToSamples()
+        [MenuItem("Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (Showcase)", false, 201)]
+        public static void SyncShowcaseToSamples()
         {
-            if (!TryResolveSamplesRoot("Tutorial", out string samplesRoot)) return;
+            if (!TryResolveSamplesRoot("Showcase", out string samplesRoot)) return;
 
-            const string sdkRoot = "Assets/HapbeatSDK/SDK_Samples/Tutorial";
+            const string sdkRoot = "Assets/HapbeatSDK/SDK_Samples/Showcase";
             var pairs = new List<(string src, string dst)>
             {
-                ($"{sdkRoot}/Scenes/Tutorial.unity",
-                 $"{samplesRoot}/Scenes/Tutorial.unity"),
-                ($"{sdkRoot}/Scenes/Tutorial_Plain.unity",
-                 $"{samplesRoot}/Scenes/Tutorial_Plain.unity"),
-                ($"{sdkRoot}/EventMaps/TutorialEventMap.asset",
-                 $"{samplesRoot}/EventMaps/TutorialEventMap.asset"),
+                ($"{sdkRoot}/Scenes/Showcase.unity",
+                 $"{samplesRoot}/Scenes/Showcase.unity"),
+                ($"{sdkRoot}/Scenes/Showcase_Plain.unity",
+                 $"{samplesRoot}/Scenes/Showcase_Plain.unity"),
+                ($"{sdkRoot}/EventMaps/ShowcaseEventMap.asset",
+                 $"{samplesRoot}/EventMaps/ShowcaseEventMap.asset"),
                 ($"{sdkRoot}/Animation/DoorAnimator.controller",
                  $"{samplesRoot}/Animation/DoorAnimator.controller"),
             };
-            RunSync("Tutorial", pairs);
+            RunSync("Showcase", pairs);
         }
 
         // ----------------------------------------------------------------

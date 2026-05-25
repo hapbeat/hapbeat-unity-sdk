@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 namespace Hapbeat
@@ -76,6 +77,12 @@ namespace Hapbeat
                 return;
             }
 
+            float delay = HapbeatManager.Instance.HapticDelaySeconds;
+            if (delay > 0f)
+            {
+                StartCoroutine(PlayAfterDelay(_eventId, _gain, _target, delay));
+                return;
+            }
             HapbeatManager.Instance.Play(_eventId, _gain, target: _target);
         }
 
@@ -97,7 +104,31 @@ namespace Hapbeat
                 return;
             }
 
+            float delay = HapbeatManager.Instance.HapticDelaySeconds;
+            if (delay > 0f)
+            {
+                StartCoroutine(StopAfterDelay(_eventId, _target, delay));
+                return;
+            }
             HapbeatManager.Instance.Stop(_eventId, target: _target);
+        }
+
+        // --- Delay helpers (mirror HapbeatBridge / HapbeatTriggerBase) ---
+        // HapbeatEvent has no EventMap binding so only the global
+        // HapbeatConfig.hapticDelaySeconds applies (no per-entry offset).
+
+        private static IEnumerator PlayAfterDelay(string eventId, float gain, string target, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (HapbeatManager.Instance == null) yield break;
+            HapbeatManager.Instance.Play(eventId, gain, target: target);
+        }
+
+        private static IEnumerator StopAfterDelay(string eventId, string target, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (HapbeatManager.Instance == null) yield break;
+            HapbeatManager.Instance.Stop(eventId, target: target);
         }
     }
 }

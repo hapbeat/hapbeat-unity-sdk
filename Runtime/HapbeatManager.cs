@@ -87,6 +87,15 @@ namespace Hapbeat
             ? _config.appName
             : Application.productName;
 
+        /// <summary>
+        /// Global haptic-side latency compensation (seconds). All Trigger-based
+        /// Fire / Stop calls add this to the per-entry <c>delayOffsetSeconds</c>
+        /// and clamp at zero to compute the effective deferral. Direct callers
+        /// of <c>Play / StreamAudioClip / Stop</c> bypass this — Triggers are
+        /// the canonical integration point.
+        /// </summary>
+        public float HapticDelaySeconds => _config != null ? _config.hapticDelaySeconds : 0f;
+
         /// <summary>Internal UDP client.</summary>
         internal HapbeatClient Client => _client;
 

@@ -205,6 +205,19 @@ namespace Hapbeat
         [HideInInspector]
         public int group = -1;
 
+        // ---- Latency offset ----
+
+        [Tooltip("この entry 個別の遅延オフセット (秒)。HapbeatConfig.hapticDelaySeconds (global) " +
+                 "に加算される。\n" +
+                 "  ・正値: global より遅らせる (audio の attack peak が遅い素材の補正など)\n" +
+                 "  ・負値: global より早める (合計が 0 未満になる場合は 0 にクランプ)\n\n" +
+                 "用途例:\n" +
+                 "  ・global=0.15 (Bluetooth audio 補正) + 特定の打撃音だけ追加で +0.03 → 0.18\n" +
+                 "  ・特定の音源だけ pre-attack なし → -0.05 で早めに発火\n\n" +
+                 "デフォルト 0 (entry 個別オフセットなし)。")]
+        [Range(-0.2f, 0.2f)]
+        public float delayOffsetSeconds = 0f;
+
         // ---- Notes ----
 
         [Tooltip("Designer notes (not sent to devices).")]

@@ -54,10 +54,10 @@ namespace Hapbeat.Editor
             // Assets/HapbeatSDK/SDK_Samples/. End users open imported
             // sample scenes directly from Assets/Samples/.../ instead.
             "Hapbeat/Build Samples/1. Basic Example",
-            "Hapbeat/Build Samples/2. Tutorial (full scene)",
+            "Hapbeat/Build Samples/2. Showcase (full scene)",
             // Maintainer Sync — writes back into the package's Samples~/
             // folder, requires Local/Embedded source to be useful at all.
-            "Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (Tutorial)",
+            "Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (Showcase)",
             "Hapbeat/Maintainers/Sync HapbeatSDK → Samples~ (BasicExample)",
         };
 

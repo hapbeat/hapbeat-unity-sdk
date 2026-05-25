@@ -367,6 +367,28 @@ namespace Hapbeat
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] Sequence {phase}-shot: '{label}' mode={entry.mode} gain={gain:F2}", this);
 
+            // Latency compensation (start / stop one-shots). Loop phase delegates
+            // to inherited FireHaptic which already applies the same offset.
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f)
+            {
+                StartCoroutine(PlayOneShotAfterDelay(entry, gain, label, target, phase, delay));
+                return;
+            }
+            DispatchOneShot(entry, gain, label, target, phase);
+        }
+
+        private IEnumerator PlayOneShotAfterDelay(
+            HapbeatEventEntry entry, float gain, string label, string target, string phase, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (!_triggerEnabled || HapbeatManager.Instance == null) yield break;
+            DispatchOneShot(entry, gain, label, target, phase);
+        }
+
+        private void DispatchOneShot(
+            HapbeatEventEntry entry, float gain, string label, string target, string phase)
+        {
             switch (entry.mode)
             {
                 case HapticMode.Command:

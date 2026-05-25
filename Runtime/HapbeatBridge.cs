@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 namespace Hapbeat
@@ -45,6 +46,65 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Effective fire-time deferral (seconds) — global config + per-entry
+        /// offset, clamped to >= 0. Mirrors <see cref="HapbeatTriggerBase.ComputeEffectiveDelaySeconds"/>.
+        /// </summary>
+        private static float ComputeEffectiveDelaySeconds(HapbeatEventEntry entry)
+        {
+            float global = HapbeatManager.Instance != null
+                ? HapbeatManager.Instance.HapticDelaySeconds
+                : 0f;
+            float offset = entry != null ? entry.delayOffsetSeconds : 0f;
+            return Mathf.Max(0f, global + offset);
+        }
+
+        /// <summary>
+        /// Dispatch a Command-mode Play, deferring via coroutine when an
+        /// effective delay is configured. Keeps the entry-resolution / gain
+        /// math in the caller (only the wire send is delayed).
+        /// </summary>
+        private void DispatchPlay(HapbeatEventEntry entry, float gain)
+        {
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f)
+            {
+                StartCoroutine(PlayAfterDelay(entry.eventId, gain, entry.target, delay));
+                return;
+            }
+            HapbeatManager.Instance.Play(entry.eventId, gain, target: entry.target);
+        }
+
+        private IEnumerator PlayAfterDelay(string eventId, float gain, string target, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (HapbeatManager.Instance == null) yield break;
+            HapbeatManager.Instance.Play(eventId, gain, target: target);
+        }
+
+        /// <summary>
+        /// Dispatch a Command-mode Stop with the same delay as the matching Play
+        /// (so the perceived loop / duration matches the caller's Fire→Stop
+        /// interval rather than collapsing to zero).
+        /// </summary>
+        private void DispatchStop(HapbeatEventEntry entry)
+        {
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f)
+            {
+                StartCoroutine(StopAfterDelay(entry.eventId, entry.target, delay));
+                return;
+            }
+            HapbeatManager.Instance.Stop(entry.eventId, target: entry.target);
+        }
+
+        private IEnumerator StopAfterDelay(string eventId, string target, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (HapbeatManager.Instance == null) yield break;
+            HapbeatManager.Instance.Stop(eventId, target: target);
+        }
+
+        /// <summary>
         /// Play a haptic event by display name from the event map.
         /// </summary>
         /// <param name="displayName">Display name of the entry in the event map.</param>
@@ -63,7 +123,7 @@ namespace Hapbeat
 
             float rawGain = gainOverride >= 0f ? gainOverride : entry.gain;
             float g = ApplyManifestIntensity(entry, rawGain);
-            HapbeatManager.Instance.Play(entry.eventId, g, target: entry.target);
+            DispatchPlay(entry, g);
         }
 
         /// <summary>
@@ -78,7 +138,7 @@ namespace Hapbeat
 
             float rawGain = gainOverride >= 0f ? gainOverride : entry.gain;
             float g = ApplyManifestIntensity(entry, rawGain);
-            HapbeatManager.Instance.Play(entry.eventId, g, target: entry.target);
+            DispatchPlay(entry, g);
         }
 
         /// <summary>
@@ -102,7 +162,7 @@ namespace Hapbeat
             float t = Mathf.Clamp01((velocity - minVelocity) / (maxVelocity - minVelocity));
             float rawGain = t * entry.gain;
             float gain = ApplyManifestIntensity(entry, rawGain);
-            HapbeatManager.Instance.Play(entry.eventId, gain, target: entry.target);
+            DispatchPlay(entry, gain);
         }
 
         /// <summary>
@@ -121,7 +181,7 @@ namespace Hapbeat
 
             float rawGain = curve.Evaluate(inputValue) * entry.gain;
             float gain = ApplyManifestIntensity(entry, rawGain);
-            HapbeatManager.Instance.Play(entry.eventId, gain, target: entry.target);
+            DispatchPlay(entry, gain);
         }
 
         /// <summary>
@@ -134,7 +194,7 @@ namespace Hapbeat
             var entry = _eventMap.FindByName(displayName);
             if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
 
-            HapbeatManager.Instance.Stop(entry.eventId, target: entry.target);
+            DispatchStop(entry);
         }
 
         /// <summary>

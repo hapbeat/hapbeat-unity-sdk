@@ -2,21 +2,21 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
-    /// Tutorial-wide keyboard shortcuts used to demonstrate script-driven
+    /// Showcase-wide keyboard shortcuts used to demonstrate script-driven
     /// SDK calls without taking up a dedicated zone:
     ///   <list type="bullet">
     ///     <item><b>Q</b> — single Bridge.Play() of the manual_fire entry.</item>
     ///     <item><b>1-5</b> — Bridge.PlayScaled() with key value as gain factor (0.2 / 0.4 / ... / 1.0).</item>
     ///     <item><b>P</b> — HapbeatManager.Ping() with the round-trip latency shown in the HUD.</item>
     ///   </list>
-    /// All calls go through TutorialBridge so they honour the active TargetPicker selection.
+    /// All calls go through ShowcaseBridge so they honour the active TargetPicker selection.
     /// </summary>
     public class GlobalHotkeys : MonoBehaviour
     {
-        [SerializeField] private TutorialBridge _bridge;
+        [SerializeField] private ShowcaseBridge _bridge;
         [SerializeField] private Text _pingResultText;
         [SerializeField] private string _manualFireEvent = "manual_fire";
         [SerializeField] private string _burstEvent = "burst";

@@ -631,7 +631,7 @@ namespace Hapbeat.Editor
                 foreach (var comp in go.GetComponents<Component>())
                 {
                     if (comp == null) continue;
-                    if (comp is HapbeatTriggerBase || comp is HapbeatEvent)
+                    if (comp is HapbeatTriggerBase)
                         continue;
 
                     string typeName = comp.GetType().Name;
@@ -1195,7 +1195,6 @@ namespace Hapbeat.Editor
                 "除去されるもの:\n" +
                 "・ HapbeatTriggerBase コンポーネント (UnityEventTrigger, CollisionTrigger 等)\n" +
                 "・ HapbeatParameterBinding\n" +
-                "・ HapbeatEvent\n" +
                 "・ 上記に向けた UnityEvent 接続\n\n" +
                 "価値ある設定を失う可能性があります。\n" +
                 "Ctrl+Z で Undo 可能ですが、確認してから実行してください。",
@@ -1211,8 +1210,6 @@ namespace Hapbeat.Editor
                 var hapComps = new List<Component>();
                 hapComps.AddRange(go.GetComponents<HapbeatTriggerBase>());
                 hapComps.AddRange(go.GetComponents<HapbeatParameterBinding>());
-                var he = go.GetComponent<HapbeatEvent>();
-                if (he != null) hapComps.Add(he);
 
                 foreach (var hc in hapComps)
                     removedWires += RemoveWiring(go, hc);
@@ -1236,8 +1233,7 @@ namespace Hapbeat.Editor
             foreach (var comp in go.GetComponents<Component>())
             {
                 if (comp == null || comp == triggerTarget) continue;
-                if (comp is HapbeatTriggerBase || comp is HapbeatEvent
-                    || comp is HapbeatParameterBinding)
+                if (comp is HapbeatTriggerBase || comp is HapbeatParameterBinding)
                     continue;
 
                 var so = new SerializedObject(comp);

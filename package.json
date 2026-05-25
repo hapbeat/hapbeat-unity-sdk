@@ -12,9 +12,9 @@
       "path": "Samples~/BasicExample"
     },
     {
-      "displayName": "Tutorial",
-      "description": "キーマウスで SDK 全機能 (Trigger 各種・Stream・ParameterBinding・Targeting) を体験する 1 シーン × 5 ゾーンのチュートリアル。Without/With 2 バージョン同梱。XR デバイス不要。",
-      "path": "Samples~/Tutorial"
+      "displayName": "Showcase",
+      "description": "SDK の触覚配線パターン (Trigger 各種・Stream・ParameterBinding・Targeting) を 1 シーン × 5 ゾーンで一覧できるショーケース。XR デバイス不要、キーマウスで完結。Import してすぐ Showcase.unity を Play できます。",
+      "path": "Samples~/Showcase"
     },
     {
       "displayName": "XR Helpers",

@@ -1,10 +1,10 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
-    /// Minimal keyboard / mouse FPS controller for the Tutorial sample.
+    /// Minimal keyboard / mouse FPS controller for the Showcase sample.
     /// WASD or arrow keys to move, mouse look (right-click to toggle look mode
     /// so left-click stays available for interactions like ball launch / pickup),
     /// Space to jump (optional). Uses Unity Input System (Keyboard.current /

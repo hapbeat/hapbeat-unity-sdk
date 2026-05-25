@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 namespace Hapbeat
@@ -30,12 +31,25 @@ namespace Hapbeat
             var entry = _eventMap.GetEntry(_entryIndex);
             if (entry == null || string.IsNullOrEmpty(entry.eventId)) return;
 
-            if (HapbeatManager.Instance != null)
+            if (HapbeatManager.Instance == null) return;
+
+            string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
+            string target = entry.HasTarget ? entry.target : null;
+
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f)
             {
-                string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
-                string target = entry.HasTarget ? entry.target : null;
-                HapbeatManager.Instance.Play(entry.eventId, gain, label, target);
+                StartCoroutine(FireWithGainAfterDelay(entry.eventId, gain, label, target, delay));
+                return;
             }
+            HapbeatManager.Instance.Play(entry.eventId, gain, label, target);
+        }
+
+        private IEnumerator FireWithGainAfterDelay(string eventId, float gain, string label, string target, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (!_triggerEnabled || HapbeatManager.Instance == null) yield break;
+            HapbeatManager.Instance.Play(eventId, gain, label, target);
         }
 
         /// <summary>

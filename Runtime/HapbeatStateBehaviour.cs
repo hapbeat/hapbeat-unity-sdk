@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 namespace Hapbeat
@@ -83,6 +84,14 @@ namespace Hapbeat
         // the enter event (if any). Cleared on Exit so the stream stops cleanly.
         private HapbeatStreamPlayback _enterPlayback;
 
+        // Pending fire coroutines created when effectiveDelay > 0. Tracked so
+        // OnStateExit can cancel a still-undelivered Enter fire when the state
+        // was left before the delay elapsed (preserves Fire→Stop integrity).
+        // Coroutines run on HapbeatManager (singleton MonoBehaviour) since
+        // StateMachineBehaviour itself cannot host coroutines.
+        private Coroutine _pendingEnterFire;
+        private Coroutine _pendingExitFire;
+
         // --- Public read-only accessors (parity with HapbeatTriggerBase) ---
 
         /// <summary>The event map referenced by this behaviour.</summary>
@@ -147,18 +156,73 @@ namespace Hapbeat
 
             var entry = ResolveEntry(_entryIdOnEnter, _entryIndexOnEnter);
             if (entry == null) return;
+
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f && HapbeatManager.Instance != null)
+            {
+                // Cancel any stale pending Enter from a previous re-entry.
+                if (_pendingEnterFire != null)
+                {
+                    HapbeatManager.Instance.StopCoroutine(_pendingEnterFire);
+                    _pendingEnterFire = null;
+                }
+                if (_verboseLog)
+                    Debug.Log($"[HapbeatState] {animator.gameObject.name}: Enter deferred by " +
+                              $"{delay * 1000f:F0}ms (global={HapbeatManager.Instance.HapticDelaySeconds:F3}s + " +
+                              $"entry.offset={entry.delayOffsetSeconds:F3}s)", animator);
+                _pendingEnterFire = HapbeatManager.Instance.StartCoroutine(EnterAfterDelay(animator, entry, delay));
+                return;
+            }
+
             _enterPlayback = FireEntry(animator, entry, "Enter");
         }
 
         public override void OnStateExit(Animator animator, AnimatorStateInfo stateInfo, int layerIndex)
         {
-            // Always stop any stream started on enter, even if no exit event is configured.
+            // Resolve enter entry up-front so we can use its delay for the
+            // stop-of-enter-playback coroutine (keeps the Enter playback's
+            // audio-haptic alignment intact on exit).
+            HapbeatEventEntry enterEntry = null;
+            if (!string.IsNullOrEmpty(_entryIdOnEnter) || _entryIndexOnEnter >= 0)
+                enterEntry = ResolveEntry(_entryIdOnEnter, _entryIndexOnEnter);
+            float enterDelay = ComputeEffectiveDelaySeconds(enterEntry);
+
+            // Pending Enter that hasn't fired yet → **leave it pending**. The
+            // haptic should fire even if the Animator state was briefer than
+            // the configured delay, because the audio it's compensating against
+            // is also in-flight and will be heard. Cancelling here would cause
+            // the user to hear the audio but feel no haptic — exactly the
+            // mismatch the delay system is trying to prevent (the classic
+            // "lock state was 0.1s long, but global delay was 0.2s" case).
+            //
+            // Edge case (acceptable limitation): looping StreamClip Enter whose
+            // state ended before the delay elapsed → the loop will start after
+            // the delay with no matching Stop, resulting in an orphan loop.
+            // Avoid pairing brief Animator states with looping StreamClip when
+            // global delay > state duration. Non-loop entries (Command +
+            // StreamClip one-shot) end naturally and have no orphan risk.
+            _pendingEnterFire = null;  // clear local tracking; coroutine still runs to completion
+
+            // Active playback from a previously-fired Enter → stop it. If a
+            // delay is configured, defer the stop by the same amount so the
+            // perceived loop duration matches the Fire→Stop call interval.
             if (_enterPlayback != null)
             {
-                if (_verboseLog)
-                    Debug.Log($"[HapbeatState] {animator.gameObject.name}: stopping enter playback on exit", animator);
-                _enterPlayback.Stop();
+                var playbackToStop = _enterPlayback;
                 _enterPlayback = null;
+                if (enterDelay > 0f && HapbeatManager.Instance != null)
+                {
+                    if (_verboseLog)
+                        Debug.Log($"[HapbeatState] {animator.gameObject.name}: stopping enter playback " +
+                                  $"deferred by {enterDelay * 1000f:F0}ms", animator);
+                    HapbeatManager.Instance.StartCoroutine(StopPlaybackAfterDelay(playbackToStop, enterDelay));
+                }
+                else
+                {
+                    if (_verboseLog)
+                        Debug.Log($"[HapbeatState] {animator.gameObject.name}: stopping enter playback on exit", animator);
+                    playbackToStop.Stop();
+                }
             }
 
             if (string.IsNullOrEmpty(_entryIdOnExit) && _entryIndexOnExit < 0)
@@ -166,7 +230,64 @@ namespace Hapbeat
 
             var entry = ResolveEntry(_entryIdOnExit, _entryIndexOnExit);
             if (entry == null) return;
+
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f && HapbeatManager.Instance != null)
+            {
+                if (_pendingExitFire != null)
+                {
+                    HapbeatManager.Instance.StopCoroutine(_pendingExitFire);
+                    _pendingExitFire = null;
+                }
+                if (_verboseLog)
+                    Debug.Log($"[HapbeatState] {animator.gameObject.name}: Exit deferred by " +
+                              $"{delay * 1000f:F0}ms", animator);
+                _pendingExitFire = HapbeatManager.Instance.StartCoroutine(ExitAfterDelay(animator, entry, delay));
+                return;
+            }
+
             FireEntry(animator, entry, "Exit");
+        }
+
+        // --- Delay helpers ---
+
+        /// <summary>
+        /// Effective fire-time deferral for an entry (mirrors
+        /// <see cref="HapbeatTriggerBase.ComputeEffectiveDelaySeconds"/>).
+        /// </summary>
+        private static float ComputeEffectiveDelaySeconds(HapbeatEventEntry entry)
+        {
+            float global = HapbeatManager.Instance != null
+                ? HapbeatManager.Instance.HapticDelaySeconds
+                : 0f;
+            float offset = entry != null ? entry.delayOffsetSeconds : 0f;
+            return Mathf.Max(0f, global + offset);
+        }
+
+        private IEnumerator EnterAfterDelay(Animator animator, HapbeatEventEntry entry, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            _pendingEnterFire = null;
+            // Animator may have been destroyed while we were waiting.
+            if (animator == null) yield break;
+            if (HapbeatManager.Instance == null) yield break;
+            _enterPlayback = FireEntry(animator, entry, "Enter");
+        }
+
+        private IEnumerator ExitAfterDelay(Animator animator, HapbeatEventEntry entry, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            _pendingExitFire = null;
+            if (animator == null) yield break;
+            if (HapbeatManager.Instance == null) yield break;
+            FireEntry(animator, entry, "Exit");
+        }
+
+        private static IEnumerator StopPlaybackAfterDelay(HapbeatStreamPlayback playback, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (playback != null && !playback.IsStopped)
+                playback.Stop();
         }
 
         // --- Internal ---

@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// Z4 Stream Console: Space starts/stops streaming a selectable AudioClip.
@@ -16,7 +16,7 @@ namespace Hapbeat.Samples.Tutorial
     /// </summary>
     public class StreamDemoController : MonoBehaviour
     {
-        [SerializeField] private TutorialBridge _bridge;
+        [SerializeField] private ShowcaseBridge _bridge;
         [SerializeField] private AudioClip[] _clips;
         [SerializeField] private Slider _gainSlider;
         [SerializeField] private Slider _panSlider;

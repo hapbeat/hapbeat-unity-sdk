@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 namespace Hapbeat
@@ -156,9 +157,37 @@ namespace Hapbeat
             string label = $"{gameObject.name}: {baseName}";
             string target = entry.HasTarget ? entry.target : null;
 
+            // Latency compensation: use the same global + per-entry offset as
+            // the base FireHaptic path (VelocityScaled is a sibling fire path
+            // that does its own gain math, so it needs to defer explicitly).
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f)
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] VelocityScaled fire deferred by {delay * 1000f:F0}ms on {name}", this);
+                StartCoroutine(FireWithVelocityAfterDelay(entry, scaledGain, label, target, delay));
+                return;
+            }
+
+            DispatchVelocityScaled(entry, scaledGain, label, target);
+        }
+
+        private IEnumerator FireWithVelocityAfterDelay(
+            HapbeatEventEntry entry, float scaledGain, string label, string target, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (!_triggerEnabled || HapbeatManager.Instance == null) yield break;
+            DispatchVelocityScaled(entry, scaledGain, label, target);
+        }
+
+        private void DispatchVelocityScaled(HapbeatEventEntry entry, float scaledGain, string label, string target)
+        {
+            var mgr = HapbeatManager.Instance;
+            if (mgr == null) return;
+
             // entry.mode に応じて Command / StreamClip を呼び分け。
             // 旧実装は常に Manager.Play (Command) を叩いていたため、
-            // StreamClip mode の entry (Tutorial の pin_hit 等) では
+            // StreamClip mode の entry (Showcase の pin_hit 等) では
             // device 側で event_id 未登録 → silently 無音となるバグ有り。
             switch (entry.mode)
             {

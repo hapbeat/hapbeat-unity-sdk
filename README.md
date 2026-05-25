@@ -281,23 +281,7 @@ public class MyHapbeatBridge : HapbeatBridge
 
 ---
 
-### 方法4: HapbeatEvent コンポーネント（シンプル・単発用）
-
-EventMap を使わず、個別にイベント ID を指定。簡易的な用途向け。
-
-```
-設定項目:
-  Event ID         → "impact.landing"
-  Gain             → 0.3
-  Group            → -1（デフォルト）
-  Trigger On Start → ON にすると有効化時に自動再生
-```
-
-公開メソッド: `TriggerPlay()` / `TriggerStop()` を UnityEvent 等から呼び出し。
-
----
-
-### 方法5: Animation Event（足音など特定フレーム発火）
+### 方法4: Animation Event（足音など特定フレーム発火）
 
 Animation ウィンドウでアニメーションクリップの特定フレームにイベントを追加し、`HapbeatUnityEventTrigger.Fire()` を呼ぶ。コード変更不要。
 
@@ -317,10 +301,9 @@ Run アニメーション:
 | 通信テスト・プロトタイプ | 方法1（コード直接） |
 | 既存ゲームへの後付け | 方法2（EventMap + Trigger） |
 | 複雑なゲインロジック | 方法3（HapbeatBridge） |
-| 単発の簡易トリガー | 方法4（HapbeatEvent） |
-| アニメーション同期 | 方法5（Animation Event） |
+| アニメーション同期 | 方法4（Animation Event） |
 
-方法2〜5は組み合わせ可能です。例えば大部分を Trigger コンポーネントで設定し、特殊なケースだけ Bridge サブクラスで処理する構成が実用的です。
+方法2〜4は組み合わせ可能です。例えば大部分を Trigger コンポーネントで設定し、特殊なケースだけ Bridge サブクラスで処理する構成が実用的です。
 
 ## サンプルシーン
 

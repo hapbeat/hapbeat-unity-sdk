@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// HUD widget that lets the user pick which Hapbeat device target the
@@ -26,7 +26,7 @@ namespace Hapbeat.Samples.Tutorial
             Arm = 2,
         }
 
-        [SerializeField] private TutorialBridge _bridge;
+        [SerializeField] private ShowcaseBridge _bridge;
         [SerializeField] private Toggle _bothToggle;
         [SerializeField] private Toggle _neckToggle;
         [SerializeField] private Toggle _armToggle;

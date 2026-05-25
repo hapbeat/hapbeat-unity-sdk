@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 namespace Hapbeat
@@ -207,8 +208,36 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Effective fire-time deferral (seconds) for this entry. Combines the
+        /// global <see cref="HapbeatConfig.hapticDelaySeconds"/> with the
+        /// per-entry <see cref="HapbeatEventEntry.delayOffsetSeconds"/> and
+        /// clamps to >= 0 (no time-travel).
+        /// <para>
+        /// Used to compensate audio-output latency (Bluetooth ヘッドホン等) by
+        /// holding back the Hapbeat haptic so it aligns with the speakers /
+        /// headphones output. See <c>HapbeatConfig.hapticDelaySeconds</c> for
+        /// device-specific guidance.
+        /// </para>
+        /// </summary>
+        protected float ComputeEffectiveDelaySeconds(HapbeatEventEntry entry)
+        {
+            float global = HapbeatManager.Instance != null
+                ? HapbeatManager.Instance.HapticDelaySeconds
+                : 0f;
+            float offset = entry != null ? entry.delayOffsetSeconds : 0f;
+            return Mathf.Max(0f, global + offset);
+        }
+
+        /// <summary>
         /// Fire the haptic event referenced by this trigger.
         /// Behavior depends on the entry's mode (Command or StreamClip).
+        /// <para>
+        /// If <see cref="ComputeEffectiveDelaySeconds"/> returns > 0, the actual
+        /// device send is deferred via a coroutine. Validation / cooldown happens
+        /// at call time; deferral is transparent to the caller. Stop arriving
+        /// during the deferral window queues its own delayed coroutine, so the
+        /// Fire→Stop interval is preserved.
+        /// </para>
         /// </summary>
         protected void FireHaptic()
         {
@@ -258,6 +287,36 @@ namespace Hapbeat
                 return;
             }
 
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f)
+            {
+                if (_verboseLog)
+                    Debug.Log($"[Hapbeat] Fire deferred by {delay * 1000f:F0}ms on {name} " +
+                              $"(global={HapbeatManager.Instance.HapticDelaySeconds:F3}s + " +
+                              $"entry.offset={entry.delayOffsetSeconds:F3}s)", this);
+                StartCoroutine(FireHapticAfterDelay(entry, delay));
+                return;
+            }
+
+            FireHapticImmediate(entry);
+        }
+
+        private IEnumerator FireHapticAfterDelay(HapbeatEventEntry entry, float delay)
+        {
+            // Realtime: 出力 audio は Time.timeScale に影響されないので、触覚側も
+            // unscaled で測る (ペアの Stop も同じ delay で遅らせるので Fire-Stop
+            // インターバルは元のまま保たれる)。
+            yield return new WaitForSecondsRealtime(delay);
+
+            // Coroutine 中に MB が destroy された場合は Unity が自動停止する。
+            // 残った状態チェック: Manager が消えた / trigger が無効化された等を再評価。
+            if (!_triggerEnabled || HapbeatManager.Instance == null) yield break;
+
+            FireHapticImmediate(entry);
+        }
+
+        private void FireHapticImmediate(HapbeatEventEntry entry)
+        {
             string baseName = string.IsNullOrEmpty(entry.displayName) ? entry.GetSummary() : entry.displayName;
             // GameObject 名を prefix してログでどの trigger 由来か分かるようにする
             string label = $"{gameObject.name}: {baseName}";
@@ -379,6 +438,12 @@ namespace Hapbeat
 
         /// <summary>
         /// Stop the haptic event referenced by this trigger.
+        /// <para>
+        /// Symmetric to <see cref="FireHaptic"/>: if effective delay > 0, the
+        /// stop is deferred by the same amount so the perceived Fire→Stop
+        /// interval matches the caller's intent (otherwise an early Stop would
+        /// silently win the race against a still-pending Fire).
+        /// </para>
         /// </summary>
         protected void StopHaptic()
         {
@@ -392,6 +457,25 @@ namespace Hapbeat
 
             if (HapbeatManager.Instance == null) return;
 
+            float delay = ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f)
+            {
+                StartCoroutine(StopHapticAfterDelay(entry, delay));
+                return;
+            }
+
+            StopHapticImmediate(entry);
+        }
+
+        private IEnumerator StopHapticAfterDelay(HapbeatEventEntry entry, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            if (HapbeatManager.Instance == null) yield break;
+            StopHapticImmediate(entry);
+        }
+
+        private void StopHapticImmediate(HapbeatEventEntry entry)
+        {
             switch (entry.mode)
             {
                 case HapticMode.Command:

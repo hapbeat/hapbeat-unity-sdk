@@ -1,17 +1,17 @@
 using UnityEngine;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
-    /// Tutorial-scope HapbeatBridge subclass.
-    /// Centralizes all script-driven haptic calls for the Tutorial sample,
+    /// Showcase-scope HapbeatBridge subclass.
+    /// Centralizes all script-driven haptic calls for the Showcase sample,
     /// and lets <see cref="TargetPickerUI"/> override the device target at
     /// runtime so users can experiment with Hapbeat's targeting feature.
     ///
     /// <para>
     /// Mode handling: each call inspects <c>entry.mode</c> and routes to the
     /// matching transport. <see cref="HapticMode.StreamClip"/> entries are
-    /// streamed as <c>Manager.StreamAudioClip</c> so the Tutorial works
+    /// streamed as <c>Manager.StreamAudioClip</c> so the Showcase works
     /// out of the box without a Hapbeat Studio Kit on the device — only the
     /// SDK + the WAV files shipped with this sample are needed.
     /// <see cref="HapticMode.Command"/> entries fall through to
@@ -25,7 +25,7 @@ namespace Hapbeat.Samples.Tutorial
     /// use <see cref="CurrentTarget"/> so users can see the "dynamic target,
     /// chosen at runtime" pattern.
     /// </summary>
-    public class TutorialBridge : HapbeatBridge
+    public class ShowcaseBridge : HapbeatBridge
     {
         /// <summary>
         /// Current target string applied to script-driven calls.
@@ -118,7 +118,7 @@ namespace Hapbeat.Samples.Tutorial
             var entry = EventMap.FindByName(displayName);
             if (entry == null)
             {
-                Debug.LogWarning($"[TutorialBridge] Entry not found: '{displayName}'");
+                Debug.LogWarning($"[ShowcaseBridge] Entry not found: '{displayName}'");
                 return null;
             }
             return entry;
@@ -147,10 +147,10 @@ namespace Hapbeat.Samples.Tutorial
                 case HapticMode.StreamClip:
                     if (entry.streamClip == null)
                     {
-                        Debug.LogWarning($"[TutorialBridge] StreamClip entry '{entry.displayName}' has no AudioClip.");
+                        Debug.LogWarning($"[ShowcaseBridge] StreamClip entry '{entry.displayName}' has no AudioClip.");
                         return;
                     }
-                    // For Tutorial we treat script-driven StreamClip fires as one-shot
+                    // For Showcase we treat script-driven StreamClip fires as one-shot
                     // (loop=false). The Sequence loop path is handled by HapbeatSequenceTrigger.
                     mgr.StreamAudioClip(entry.streamClip, gain, CurrentTarget, loop: false);
                     break;
@@ -159,7 +159,7 @@ namespace Hapbeat.Samples.Tutorial
                 default:
                     if (string.IsNullOrEmpty(entry.eventId))
                     {
-                        Debug.LogWarning($"[TutorialBridge] Command entry '{entry.displayName}' has no event id.");
+                        Debug.LogWarning($"[ShowcaseBridge] Command entry '{entry.displayName}' has no event id.");
                         return;
                     }
                     mgr.Play(entry.eventId, gain, entry.displayName, CurrentTarget);

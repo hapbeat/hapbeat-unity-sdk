@@ -1,3 +1,3 @@
-# Command モード用 WAV をユーザーが追加する場所。Tutorial 同梱では空。
+# Command モード用 WAV をユーザーが追加する場所。Showcase 同梱では空。
 # 例: pin_hit.wav, door_open.wav 等を入れ、manifest.json で event の mode を "command" に切り替えると、
 # Studio から Hapbeat デバイスに焼き込んで Command モード再生できます。

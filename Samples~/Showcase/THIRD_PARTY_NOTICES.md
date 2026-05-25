@@ -1,8 +1,8 @@
-# Tutorial Sample — Third Party Notices
+# Showcase Sample — Third Party Notices
 
 ## Audio assets (`Audio/`)
 
-`Samples~/Tutorial/Audio/` 以下の WAV / MP3 ファイルは、配布 OK のフリー効果音サイトから取得した素材を、Hapbeat の触覚信号用にリサンプル・トリミング・ゲイン調整して再配布しています。
+`Samples~/Showcase/Audio/` 以下の WAV / MP3 ファイルは、配布 OK のフリー効果音サイトから取得した素材を、Hapbeat の触覚信号用にリサンプル・トリミング・ゲイン調整して再配布しています。
 
 由来として可能性のあるサイト (SDK ルート `README.md` のクレジットと共通):
 
@@ -18,7 +18,7 @@
 ## 3D Models (`Models/`)
 
 将来的に [Kenney CC0 アセット](https://kenney.nl/assets) のモデルを `Models/` フォルダに配置する予定です。
-現状の Build メニュー (`Hapbeat → Build Samples → 2. Tutorial`) は Unity プリミティブ (Cube / Sphere / Cylinder) のみで構成されているため、Models フォルダは空です。
+現状の Showcase シーンは Unity プリミティブ (Cube / Sphere / Cylinder) のみで構成されているため、Models フォルダは空です。
 
 Kenney アセットを利用する場合は、以下を本ファイルに追記してください:
 

@@ -1251,6 +1251,7 @@ namespace Hapbeat.Editor
                 bindings = CloneBindings(src.bindings),
                 gain = src.gain,
                 target = src.target,
+                delayOffsetSeconds = src.delayOffsetSeconds,
                 notes = src.notes,
             };
             // Propagate the manifest intensity cache. The new entry points at
@@ -1731,6 +1732,29 @@ namespace Hapbeat.Editor
                     "Master gain multiplier for this entry. 0.0 = silent, 1.0 = normal, 2.0 = maximum.\n\n" +
                     "For StreamClip with bindings: multiplied with the binding's StreamGain output.\n" +
                     "Example: Binding StreamGain = 1.0, entry Gain = 0.5 → stream is sent at 0.5 × samples"));
+
+            // Delay offset (per-entry latency tweak; added to HapbeatConfig.hapticDelaySeconds)
+            var delayOffsetProp = entryProp.FindPropertyRelative("delayOffsetSeconds");
+            EditorGUILayout.PropertyField(delayOffsetProp,
+                new GUIContent("Delay Offset (s)",
+                    "この entry 個別の遅延オフセット (秒)。HapbeatConfig.hapticDelaySeconds " +
+                    "(global) に加算される。最終値は 0 でクランプ。\n" +
+                    "  ・正値: global より遅らせる (音の attack peak が遅い素材の補正など)\n" +
+                    "  ・負値: global より早める\n" +
+                    "Range -0.2〜+0.2、デフォルト 0。\n\n" +
+                    "Global 側の調整は Hapbeat → Settings の「触覚遅延」から。"));
+
+            // Effective delay readout (global + offset, clamped). Helps the
+            // designer see "how late will this fire" without having to switch
+            // to the Settings window mentally.
+            float globalDelaySec = ResolveGlobalHapticDelaySeconds();
+            float entryOffsetSec = delayOffsetProp.floatValue;
+            float effectiveSec = Mathf.Max(0f, globalDelaySec + entryOffsetSec);
+            string offsetSign = entryOffsetSec >= 0f ? "+" : "";
+            EditorGUILayout.LabelField(
+                $"   → 実効遅延: {effectiveSec * 1000f:F0}ms  " +
+                $"(global {globalDelaySec * 1000f:F0}ms {offsetSign}{entryOffsetSec * 1000f:F0}ms)",
+                EditorStyles.miniLabel);
 
             // --- Targeting ---
             EditorGUILayout.Space(4);
@@ -2375,7 +2399,7 @@ namespace Hapbeat.Editor
         ///   <item>Click anywhere on the field opens
         ///         <see cref="EditorGUIUtility.ShowObjectPicker{T}"/> pre-filtered
         ///         with the search string "manifest" so files like
-        ///         <c>tutorial-kit-manifest.json</c> surface at the top.</item>
+        ///         <c>showcase-kit-manifest.json</c> surface at the top.</item>
         ///   <item>Drag-drop validates that the dropped asset is a TextAsset
         ///         whose path ends with ".json"; non-JSON drops are rejected
         ///         with a warning instead of silently overwriting the field.</item>
@@ -3515,7 +3539,7 @@ namespace Hapbeat.Editor
                 // First pass: validTargets 以外に居る同じ preset id への link を片付ける。
                 // ownerObjectName scope 外 + sourceTransformPath 変更で「居場所が
                 // 変わった」場合の両方を 1 ループでカバー。
-                // linker が auto-attach した orphan を残すと Tutorial で重複表示
+                // linker が auto-attach した orphan を残すと Showcase で重複表示
                 // されて混乱の元なので、destroy する (Undo で復活可)。
                 foreach (var info in triggers)
                 {
@@ -4126,7 +4150,7 @@ namespace Hapbeat.Editor
 
             foreach (var comp in go.GetComponents<Component>())
             {
-                if (comp == null || comp is HapbeatTriggerBase || comp is HapbeatEvent)
+                if (comp == null || comp is HapbeatTriggerBase)
                     continue;
 
                 string compName = comp.GetType().Name;
@@ -4202,6 +4226,22 @@ namespace Hapbeat.Editor
             // while this window was in the background.
             HapbeatManifestIntensity.Invalidate();
             RefreshIntensityCache();
+        }
+
+        /// <summary>
+        /// Editor-time accessor for the global haptic latency offset stored in
+        /// the project's <c>HapbeatConfig</c>. Returns 0 when no Config asset
+        /// exists yet (typical for fresh projects). Used by the entry detail
+        /// panel's "実効遅延" readout — the runtime path reads the same value
+        /// via <c>HapbeatManager.Instance.HapticDelaySeconds</c>.
+        /// </summary>
+        private static float ResolveGlobalHapticDelaySeconds()
+        {
+            var guids = UnityEditor.AssetDatabase.FindAssets("t:HapbeatConfig");
+            if (guids == null || guids.Length == 0) return 0f;
+            var path = UnityEditor.AssetDatabase.GUIDToAssetPath(guids[0]);
+            var cfg = UnityEditor.AssetDatabase.LoadAssetAtPath<HapbeatConfig>(path);
+            return cfg != null ? cfg.hapticDelaySeconds : 0f;
         }
 
         /// <summary>

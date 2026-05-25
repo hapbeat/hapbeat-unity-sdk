@@ -53,6 +53,20 @@ namespace Hapbeat
         [Range(0.01f, 0.2f)]
         public float streamSendAheadSeconds = 0.05f;
 
+        [Header("Latency Compensation")]
+        [Tooltip("Audio 出力デバイス (Bluetooth 等) の latency に合わせて、全 Play / StreamClip 呼び出しに " +
+                 "加算するグローバル遅延 (秒)。Hapbeat 触覚は UDP 直送で非常に低遅延 (~10ms) なので、" +
+                 "speakers / headphones が遅い環境では触覚が先に来てしまう。これを補正するための offset。\n\n" +
+                 "目安:\n" +
+                 "  ・有線 / USB DAC      → 0.00 (補正不要)\n" +
+                 "  ・内蔵スピーカー       → 0.02〜0.05\n" +
+                 "  ・Bluetooth (aptX LL) → 0.03〜0.05\n" +
+                 "  ・Bluetooth (SBC/AAC) → 0.15〜0.20\n\n" +
+                 "各 EventMap entry の delayOffsetSeconds でさらに ±0.2 秒の個別調整も可能。\n" +
+                 "デフォルト 0 (遅延なし)。")]
+        [Range(0f, 0.5f)]
+        public float hapticDelaySeconds = 0f;
+
         [Header("Debugging")]
         [Tooltip("Enable logging to the Unity console (Play, Stop, Connect, errors).")]
         public bool enableLogging = true;

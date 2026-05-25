@@ -2,17 +2,17 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// Z5 Target Range: hold left mouse button to charge, release to fire a
     /// projectile. Charge level (0..1) is mapped through an AnimationCurve
-    /// for the haptic gain via TutorialBridge.PlayWithCurveAndPickerTarget.
+    /// for the haptic gain via ShowcaseBridge.PlayWithCurveAndPickerTarget.
     /// On hit, TargetReceiver fires its own UnityEvent-wired trigger.
     /// </summary>
     public class ChargeShooter : MonoBehaviour
     {
-        [SerializeField] private TutorialBridge _bridge;
+        [SerializeField] private ShowcaseBridge _bridge;
         [SerializeField] private Transform _muzzle;
         [SerializeField] private Rigidbody _projectilePrefab;
         [SerializeField] private float _maxLaunchSpeed = 18f;
