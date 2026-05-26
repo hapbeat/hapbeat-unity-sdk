@@ -39,6 +39,12 @@ namespace Hapbeat.Editor
             RunDirectorySync("Showcase",
                 sdkSrcRoot: "Assets/HapbeatSDK/SDK_Samples/Showcase",
                 samplesDstRoot: samplesRoot);
+            // Also sync the deployed Kit (HapbeatSDK/Kits/<kit-name>/) into
+            // Samples~/Showcase/Kit/<kit-name>/ so the package ships the WAV
+            // files the EventMap references. Without this step, fresh users
+            // see "missing audio clip" on Sample import because the EventMap
+            // GUIDs only resolve in the author's local project.
+            SyncKitToSample(samplesRoot, "showcase-kit");
         }
 
         // ----------------------------------------------------------------
@@ -49,12 +55,63 @@ namespace Hapbeat.Editor
         public static void SyncBasicExampleToSamples()
         {
             if (!TryResolveSamplesRoot("BasicExample", out string samplesRoot)) return;
-            // Note: Kit (manifest.json + WAVs) is authored directly under
-            // Samples~/BasicExample/Kit/ — if the SDK_Samples copy doesn't
-            // contain a Kit/ subfolder, that destination remains untouched.
             RunDirectorySync("BasicExample",
                 sdkSrcRoot: "Assets/HapbeatSDK/SDK_Samples/BasicExample",
                 samplesDstRoot: samplesRoot);
+            // Same Kit-sync rationale as Showcase (see SyncShowcaseToSamples).
+            // If the BasicExample Kit isn't deployed locally this is a no-op.
+            SyncKitToSample(samplesRoot, "basic-example-kit");
+        }
+
+        /// <summary>
+        /// Copy <c>Assets/HapbeatSDK/Kits/&lt;kitName&gt;/</c> into
+        /// <c>&lt;samplesRoot&gt;/Kit/&lt;kitName&gt;/</c>, preserving <c>.meta</c>
+        /// files so the WAV GUIDs in the package match what the bundled
+        /// EventMap references. If the source kit isn't deployed in the
+        /// author's project, the sample-side Kit folder is left untouched
+        /// (existing manifest + .gitkeep stays).
+        /// </summary>
+        private static void SyncKitToSample(string samplesRoot, string kitName)
+        {
+            string srcKitAbs = Path.Combine(Application.dataPath,
+                $"HapbeatSDK/Kits/{kitName}").Replace('\\', '/');
+            if (!Directory.Exists(srcKitAbs))
+            {
+                Debug.Log($"[Hapbeat] SyncKitToSample skipped: {srcKitAbs} not found " +
+                          "(deploy the kit via Studio first if the EventMap references its WAVs).");
+                return;
+            }
+
+            string dstKitAbs = Path.Combine(samplesRoot, "Kit", kitName).Replace('\\', '/');
+            int copied = CopyDirectoryRecursivePreserveMeta(srcKitAbs, dstKitAbs);
+            Debug.Log($"[Hapbeat] Kit '{kitName}' synced into Samples~: {copied} file(s) " +
+                      $"copied (incl. .meta) to {dstKitAbs}/");
+        }
+
+        /// <summary>
+        /// Recursive file copy that DOES include <c>.meta</c> files (unlike
+        /// the deploy-direction kit copy, which strips them to force fresh
+        /// GUIDs). For the maintainer-sync direction we WANT to preserve
+        /// the local .meta GUIDs so the package ships stable references.
+        /// </summary>
+        private static int CopyDirectoryRecursivePreserveMeta(string srcAbs, string dstAbs)
+        {
+            int count = 0;
+            Directory.CreateDirectory(dstAbs);
+            foreach (var file in Directory.GetFiles(srcAbs))
+            {
+                string name = Path.GetFileName(file);
+                if (name == ".DS_Store") continue;
+                string dst = Path.Combine(dstAbs, name);
+                File.Copy(file, dst, overwrite: true);
+                count++;
+            }
+            foreach (var sub in Directory.GetDirectories(srcAbs))
+            {
+                string subName = Path.GetFileName(sub);
+                count += CopyDirectoryRecursivePreserveMeta(sub, Path.Combine(dstAbs, subName));
+            }
+            return count;
         }
 
         // ----------------------------------------------------------------
