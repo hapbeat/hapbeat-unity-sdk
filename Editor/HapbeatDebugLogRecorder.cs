@@ -72,7 +72,7 @@ namespace Hapbeat.Editor
 
         // ----------------- menu commands -----------------
 
-        [MenuItem(kMenuStart, false, 55)]
+        [MenuItem(kMenuStart, false, 92)]
         private static void StartRecording()
         {
             lock (_writerLock)
@@ -107,7 +107,7 @@ namespace Hapbeat.Editor
         [MenuItem(kMenuStart, true)]
         private static bool StartRecordingValidate() => _writer == null;
 
-        [MenuItem(kMenuStop, false, 56)]
+        [MenuItem(kMenuStop, false, 93)]
         private static void StopRecording()
         {
             // Detach the handler first. Removing a delegate while another thread is
@@ -140,7 +140,7 @@ namespace Hapbeat.Editor
         [MenuItem(kMenuStop, true)]
         private static bool StopRecordingValidate() => _writer != null;
 
-        [MenuItem(kMenuReveal, false, 57)]
+        [MenuItem(kMenuReveal, false, 94)]
         private static void RevealCurrent()
         {
             if (string.IsNullOrEmpty(_activePath) || !File.Exists(_activePath))
@@ -154,7 +154,7 @@ namespace Hapbeat.Editor
         [MenuItem(kMenuReveal, true)]
         private static bool RevealCurrentValidate() => _writer != null && File.Exists(_activePath);
 
-        [MenuItem(kMenuFolder, false, 58)]
+        [MenuItem(kMenuFolder, false, 95)]
         private static void OpenLogsFolder()
         {
             string dir = GetLogsDirectory();
@@ -162,7 +162,7 @@ namespace Hapbeat.Editor
             EditorUtility.RevealInFinder(dir);
         }
 
-        [MenuItem(kMenuDump, false, 59)]
+        [MenuItem(kMenuDump, false, 96)]
         private static void DumpLastToConsole()
         {
             string dir = GetLogsDirectory();

@@ -37,7 +37,7 @@ namespace Hapbeat.Editor
         // diagnostics flags on user scripts.
         private static readonly string[] kKnownFlags = { "_verboseLog", "_debugLog" };
 
-        [MenuItem("Hapbeat/Disable Verbose Log on All Hapbeat Components", false, 61)]
+        [MenuItem("Hapbeat/Disable Verbose Log on All Hapbeat Components", false, 98)]
         public static void DisableVerboseLogAll()
         {
             int scnCount = DisableInLoadedScenes();

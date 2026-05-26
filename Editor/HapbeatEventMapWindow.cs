@@ -154,7 +154,7 @@ namespace Hapbeat.Editor
         /// HapbeatSDK Folder) for advanced workflows where only one piece is needed.
         /// </para>
         /// </summary>
-        [MenuItem("Hapbeat/Initial Scene Setup", false, 30)]
+        [MenuItem("Hapbeat/Initial Scene Setup", false, 50)]
         public static void InitialSceneSetup()
         {
             HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
@@ -196,7 +196,7 @@ namespace Hapbeat.Editor
         /// HapbeatSDK/EventMaps/ location so first-time users don't have to hunt
         /// for the right folder.
         /// </summary>
-        [MenuItem("Hapbeat/Create Event Map", false, 32)]
+        [MenuItem("Hapbeat/Create Event Map", false, 31)]
         public static void CreateEventMapAsset()
         {
             HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
@@ -231,7 +231,7 @@ namespace Hapbeat.Editor
             return AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(finalPath);
         }
 
-        [MenuItem("Hapbeat/Create Event Router", false, 31)]
+        [MenuItem("Hapbeat/Create Event Router", false, 30)]
         [MenuItem("GameObject/Hapbeat/Event Router", false, 10)]
         public static void CreateEventRouter()
         {

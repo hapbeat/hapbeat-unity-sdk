@@ -35,7 +35,7 @@ namespace Hapbeat.Editor
 
         // ── Menu entry point ──────────────────────────────────────────────
 
-        [MenuItem("Hapbeat/Deploy Imported Sample", false, 34)]
+        [MenuItem("Hapbeat/Deploy Imported Sample", false, 52)]
         public static void DeployImportedSample()
         {
             var samples = DiscoverImportedSamples();

@@ -8,17 +8,17 @@
   "samples": [
     {
       "displayName": "Basic Example",
-      "description": "キーボードで Hapbeat を操作する最小サンプル (動作確認用)",
+      "description": "Smallest possible Hapbeat scene — keyboard input fires a few events. Use to confirm the device connection works.",
       "path": "Samples~/BasicExample"
     },
     {
       "displayName": "Showcase",
-      "description": "SDK の触覚配線パターン (Trigger 各種・Stream・ParameterBinding・Targeting) を 1 シーン × 5 ゾーンで一覧できるショーケース。XR デバイス不要、キーマウスで完結。Import してすぐ Showcase.unity を Play できます。",
+      "description": "One scene, 5 zones, covering every Hapbeat wiring pattern (collision / state behaviour / sequence / tick / script). Keyboard + mouse only — no XR device needed. Import and press Play.",
       "path": "Samples~/Showcase"
     },
     {
       "displayName": "XR Helpers",
-      "description": "XR Interaction Toolkit 向けヘルパー。XRGrabInteractable の select イベントを hand/socket で分岐する HapbeatXRGrabFilter 等を含む。XRI がプロジェクトに入っている場合のみ import してください。",
+      "description": "Optional helpers for XR Interaction Toolkit (HapbeatXRGrabFilter etc.). Import only when XRI is in your project.",
       "path": "Samples~/XriHelpers"
     }
   ],

@@ -28,7 +28,7 @@ namespace Hapbeat.Editor
         public const string kScenesDir = kSdkRoot + "/Scenes";
         public const string kEventMapsDir = kSdkRoot + "/EventMaps";
 
-        [MenuItem(kMenu, false, 33)]
+        [MenuItem(kMenu, false, 51)]
         private static void CreateMenu()
         {
             EnsureLayout(verbose: true);
