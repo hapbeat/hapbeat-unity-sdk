@@ -55,6 +55,7 @@ Source sites:
 
 - Kenney — <https://kenney.nl/assets> (CC0; multiple SFX packs)
 - 100 CC0 SFX by Rubberduck — <https://opengameart.org/content/100-cc0-sfx> (CC0)
+- 100 CC0 Metal and Wood SFX by Rubberduck — <https://opengameart.org/content/100-cc0-metal-and-wood-sfx> (CC0)
 - 効果音ラボ — <https://soundeffect-lab.info/>
 - 魔王魂 — <https://maou.audio/>
 - 効果音辞典 (小森平) — <https://taira-komori.net/>
