@@ -120,6 +120,14 @@ namespace Hapbeat.Editor
                 Debug.LogWarning($"[Hapbeat] Sample asset missing: {srcPath}");
                 return false;
             }
+            // AssetDatabase.CopyAsset doesn't auto-create the destination's
+            // parent directories — it just fails. Pre-create the parent so
+            // first-time deploys into a fresh HapbeatSDK/SDK_Samples/<name>/
+            // work without the user having to scaffold folders manually.
+            string parentDir = System.IO.Path.GetDirectoryName(dstPath).Replace('\\', '/');
+            if (!string.IsNullOrEmpty(parentDir))
+                EnsureAssetFolder(parentDir);
+
             // Delete any prior copy so AssetDatabase.CopyAsset can proceed
             // without rename collisions. The destination's GUID will be fresh.
             if (AssetDatabase.LoadAssetAtPath<Object>(dstPath) != null)
