@@ -25,6 +25,16 @@ namespace Hapbeat.Editor
     /// referenced as a local (<c>file:</c>) package — Library/PackageCache
     /// copies fetched from a registry are read-only.
     /// </para>
+    ///
+    /// <para>
+    /// Wipe-then-rebuild semantics: <c>Samples~/&lt;sample&gt;/</c> is treated
+    /// as a build artifact, NOT a hand-authored location. The sync deletes
+    /// the destination directory in full before copying, so files that
+    /// existed only in <c>Samples~/</c> (e.g. orphans from a previous schema)
+    /// cannot survive across runs. Author everything under
+    /// <c>Assets/HapbeatSDK/SDK_Samples/&lt;sample&gt;/</c> and let sync
+    /// be the single source of truth into the package.
+    /// </para>
     /// </summary>
     public static class HapbeatMaintainerMenus
     {
@@ -67,9 +77,15 @@ namespace Hapbeat.Editor
         /// Copy <c>Assets/HapbeatSDK/Kits/&lt;kitName&gt;/</c> into
         /// <c>&lt;samplesRoot&gt;/Kit/&lt;kitName&gt;/</c>, preserving <c>.meta</c>
         /// files so the WAV GUIDs in the package match what the bundled
-        /// EventMap references. If the source kit isn't deployed in the
-        /// author's project, the sample-side Kit folder is left untouched
-        /// (existing manifest + .gitkeep stays).
+        /// EventMap references.
+        ///
+        /// <para>
+        /// Called after <see cref="RunDirectorySync"/> has wiped
+        /// <c>Samples~/&lt;sample&gt;/</c>, so the Kit folder is always
+        /// rebuilt from scratch. If the kit hasn't been deployed locally,
+        /// the sample will ship without bundled WAVs — the warning below
+        /// is a strong hint to deploy via Studio first.
+        /// </para>
         /// </summary>
         private static void SyncKitToSample(string samplesRoot, string kitName)
         {
@@ -77,8 +93,9 @@ namespace Hapbeat.Editor
                 $"HapbeatSDK/Kits/{kitName}").Replace('\\', '/');
             if (!Directory.Exists(srcKitAbs))
             {
-                Debug.Log($"[Hapbeat] SyncKitToSample skipped: {srcKitAbs} not found " +
-                          "(deploy the kit via Studio first if the EventMap references its WAVs).");
+                Debug.LogWarning($"[Hapbeat] SyncKitToSample skipped: {srcKitAbs} not found. " +
+                          "Samples~/" + Path.GetFileName(samplesRoot) + "/Kit/ will ship empty — " +
+                          "deploy the kit via Studio first if the EventMap references its WAVs.");
                 return;
             }
 
@@ -156,15 +173,17 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Recursively mirror every file under <paramref name="sdkSrcRoot"/>
-        /// into <paramref name="samplesDstRoot"/>. Includes <c>.meta</c> files
-        /// (which carry the asset's GUID, so end users get a stable reference
-        /// graph after Sample Import).
+        /// Wipe <paramref name="samplesDstRoot"/> in full, then recursively
+        /// mirror every file under <paramref name="sdkSrcRoot"/> into it.
+        /// Includes <c>.meta</c> files (which carry the asset's GUID, so end
+        /// users get a stable reference graph after Sample Import).
         /// <para>
-        /// Add-or-overwrite only — files that exist in the destination but
-        /// not in the source are LEFT alone. This keeps "permanent"
-        /// destination-side content (e.g. Samples~/BasicExample/Kit/) safe
-        /// when the source-side scratch area doesn't carry a copy.
+        /// Wipe-then-rebuild is intentional: <c>Samples~/</c> is treated as
+        /// a build artifact, not a hand-authored location. Anything that
+        /// only exists in the destination is by definition stale (orphan
+        /// from a previous schema, leftover after a rename, etc.) and must
+        /// not survive a sync. The Kit subfolder is repopulated by the
+        /// caller via <see cref="SyncKitToSample"/> after the wipe.
         /// </para>
         /// </summary>
         private static void RunDirectorySync(string sampleName, string sdkSrcRoot, string samplesDstRoot)
@@ -173,23 +192,30 @@ namespace Hapbeat.Editor
             {
                 EditorUtility.DisplayDialog("Maintainer Sync",
                     $"Source folder not found:\n  {sdkSrcRoot}\n\n" +
-                    "Author the sample under that path first (or use " +
-                    "`Hapbeat → Developer → Build Basic Example` to scaffold).",
+                    "Author the sample under that path first.",
                     "OK");
                 return;
             }
 
-            // Confirm with the user.
+            // Confirm with the user. The destination wipe is the load-bearing
+            // bit, so it gets top billing in the prompt.
             if (!EditorUtility.DisplayDialog(
                 "Maintainer Sync",
-                $"Copy {sampleName} from\n  {sdkSrcRoot}/\n" +
+                $"Wipe & rebuild {sampleName} from\n  {sdkSrcRoot}/\n" +
                 $"into\n  {samplesDstRoot}/\n\n" +
-                "All files including .meta are copied recursively.\n" +
-                "Existing files will be overwritten.\n" +
-                "Files that exist only in the destination are LEFT untouched " +
-                "(safe for permanent destination-side content like Kit/).",
-                "Sync", "Cancel"))
+                "The destination directory will be DELETED first, then\n" +
+                "recreated from the source (including .meta files).\n\n" +
+                "Samples~/ is a build artifact — never edit it directly; the\n" +
+                "next sync would wipe your changes.",
+                "Wipe & Sync", "Cancel"))
                 return;
+
+            // Wipe destination so dest-only stale files (orphans, renames,
+            // dropped schemas) cannot survive across syncs.
+            if (Directory.Exists(samplesDstRoot))
+            {
+                Directory.Delete(samplesDstRoot, recursive: true);
+            }
 
             int copied = 0;
             string srcRootNorm = sdkSrcRoot.Replace('\\', '/').TrimEnd('/');
@@ -204,7 +230,8 @@ namespace Hapbeat.Editor
             }
 
             EditorUtility.DisplayDialog("Maintainer Sync",
-                $"Synced {copied} file(s) into Samples~/{sampleName}/.\n" +
+                $"Wiped & rebuilt Samples~/{sampleName}/ ({copied} file(s) copied).\n" +
+                "Kit/ is repopulated separately — check the console for the Kit sync log.\n" +
                 "Review the diff and commit to the repo.",
                 "OK");
         }
