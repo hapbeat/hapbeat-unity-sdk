@@ -68,15 +68,15 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// 「外部からの gain modulator」を受け取って <c>Gain = BaselineGain × modulator</c>
-        /// として適用する単一経路。<see cref="HapbeatTriggerBase.GainMultiplier"/> setter
-        /// (imperative) と <see cref="HapbeatParameterBinding"/> Update (declarative) の
-        /// **両方がここを呼ぶ** ことで、計算式を 1 箇所に集約する。
-        /// modulator の typical range は [0, 1] (= 0..authored)、boost 用に [0, 2] まで許容。
+        /// Apply an external gain modulator as <c>Gain = BaselineGain × modulator</c>.
+        /// Single shared entry point: <see cref="HapbeatTriggerBase.GainMultiplier"/>
+        /// (imperative) and <see cref="HapbeatParameterBinding"/> Update (declarative)
+        /// <b>both call this</b> so the formula lives in one place.
+        /// Typical modulator range is [0, 1] (= 0..authored); up to [0, 2] is allowed for boost.
         /// </summary>
         public void ApplyGainModulation(float modulator)
         {
-            Gain = BaselineGain * modulator;  // Gain setter が clamp する
+            Gain = BaselineGain * modulator;  // Gain setter clamps the result.
         }
 
         /// <summary>

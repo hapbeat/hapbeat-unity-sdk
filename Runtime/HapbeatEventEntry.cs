@@ -187,14 +187,13 @@ namespace Hapbeat
 
         // ---- Latency offset ----
 
-        [Tooltip("この entry 個別の遅延オフセット (秒)。HapbeatConfig.hapticDelaySeconds (global) " +
-                 "に加算される。\n" +
-                 "  ・正値: global より遅らせる (audio の attack peak が遅い素材の補正など)\n" +
-                 "  ・負値: global より早める (合計が 0 未満になる場合は 0 にクランプ)\n\n" +
-                 "用途例:\n" +
-                 "  ・global=0.15 (Bluetooth audio 補正) + 特定の打撃音だけ追加で +0.03 → 0.18\n" +
-                 "  ・特定の音源だけ pre-attack なし → -0.05 で早めに発火\n\n" +
-                 "デフォルト 0 (entry 個別オフセットなし)。")]
+        [Tooltip("Per-entry delay offset (seconds), added to HapbeatConfig.hapticDelaySeconds (global).\n" +
+                 "  Positive: fire later than global (e.g. material whose audio attack is slow).\n" +
+                 "  Negative: fire earlier than global (the sum is clamped to >= 0).\n\n" +
+                 "Examples:\n" +
+                 "  - global=0.15 (Bluetooth audio offset) + a specific hit needs +0.03 more → 0.18\n" +
+                 "  - one clip has no pre-attack → set -0.05 so it fires earlier\n\n" +
+                 "Default 0 (no per-entry offset).")]
         [Range(-0.2f, 0.2f)]
         public float delayOffsetSeconds = 0f;
 
@@ -213,8 +212,8 @@ namespace Hapbeat
         // the global scan. Stored as a TextAsset (Unity imports .json as
         // TextAsset). Editor-only feature; runtime ignores this field
         // (intensity is baked into _cachedManifestIntensity at edit time).
-        [Tooltip("特定の <kit-name>-manifest.json を強制参照したいときにセット。\n" +
-                 "未設定なら HapbeatSDK/Kits/ 全 manifest を自動 scan して clip 一致 → eventId 一致の順に解決します。")]
+        [Tooltip("Force resolution against a specific <kit-name>-manifest.json.\n" +
+                 "Unset = auto-scan every manifest under HapbeatSDK/Kits/ and pick by clip-match, then by eventId-match.")]
         public UnityEngine.TextAsset manifestOverride;
 
         // ---- Manifest intensity cache ----

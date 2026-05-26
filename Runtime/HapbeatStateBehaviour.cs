@@ -120,14 +120,16 @@ namespace Hapbeat
 
             if (!string.IsNullOrEmpty(_requiredPreviousState))
             {
-                // Unity の API には GetPreviousAnimatorStateInfo は無いため、
-                // transition 中であるかを確認した上で、source state を
-                // GetCurrentAnimatorStateInfo (transition 中は source を返す仕様) で取る。
-                // - 通常の遷移 (A → B) の OnStateEnter(B) では IsInTransition = true、
-                //   GetCurrentAnimatorStateInfo = A、GetNextAnimatorStateInfo = B となる。
-                // - シーン開始直後の初期 state 入場 (Entry → Default) では IsInTransition
-                //   = false で source state を取得できない。この場合は Required Previous
-                //   が満たせない扱いとし、fire しない (空文字なら今のブロックに入らない)。
+                // Unity has no GetPreviousAnimatorStateInfo, so we check
+                // whether the animator is in a transition and read the source
+                // state via GetCurrentAnimatorStateInfo (during a transition
+                // it returns the source state).
+                // - Normal transition A → B: OnStateEnter(B) has IsInTransition = true,
+                //   GetCurrentAnimatorStateInfo = A, GetNextAnimatorStateInfo = B.
+                // - Initial state entry at scene start (Entry → Default): IsInTransition
+                //   = false and the source state cannot be read. In that case we
+                //   treat Required Previous as unsatisfied and don't fire (empty
+                //   string skips this whole block).
                 if (!animator.IsInTransition(layerIndex))
                 {
                     if (_verboseLog)

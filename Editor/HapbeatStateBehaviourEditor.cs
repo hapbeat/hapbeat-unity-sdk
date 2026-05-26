@@ -56,7 +56,7 @@ namespace Hapbeat.Editor
             // domain reload で失効した場合に備えて、ここで遅延 init する。
             if (target == null)
             {
-                EditorGUILayout.HelpBox("Target is null (script reload や missing reference)。", MessageType.Warning);
+                EditorGUILayout.HelpBox("Target is null (script reload or missing reference).", MessageType.Warning);
                 return;
             }
             if (_eventMapProp == null) CacheProperties();
@@ -112,12 +112,12 @@ namespace Hapbeat.Editor
         {
             if (eventMap == null)
             {
-                EditorGUILayout.HelpBox("Event Map を設定してください。", MessageType.Info);
+                EditorGUILayout.HelpBox("Assign an Event Map.", MessageType.Info);
                 return;
             }
             if (eventMap.entries.Count == 0)
             {
-                EditorGUILayout.HelpBox("Event Map にエントリがありません。", MessageType.Warning);
+                EditorGUILayout.HelpBox("The Event Map has no entries.", MessageType.Warning);
                 return;
             }
 
@@ -180,8 +180,8 @@ namespace Hapbeat.Editor
             else if (!string.IsNullOrEmpty(idProp.stringValue))
             {
                 EditorGUILayout.HelpBox(
-                    "選択中の entry が EventMap に見つかりません (削除された可能性)。" +
-                    "再度 entry を選択してください。",
+                    "Selected entry not found in the EventMap (may have been deleted). " +
+                    "Please pick an entry again.",
                     MessageType.Warning);
             }
         }
@@ -212,7 +212,7 @@ namespace Hapbeat.Editor
                         "Leave empty to fire on enter regardless of source. " +
                         "Set to a state name to limit fire to specific A→B transitions."));
                 EditorGUILayout.HelpBox(
-                    "親 AnimatorController を解決できませんでした。Required Previous State は手入力で指定してください。",
+                    "Could not resolve the parent AnimatorController. Type the previous state name by hand.",
                     MessageType.Info);
                 return;
             }

@@ -178,9 +178,10 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Per-trigger stereo pan, [-1 (full left), +1 (full right)]. Mono clip では無視される。
-        /// 再生中なら setter で即時 Playback.Pan に push (script-driven pan modulation 用)。
-        /// HapbeatParameterBinding (Output=StreamPan) と対称の役割を持つ imperative API。
+        /// Per-trigger stereo pan, [-1 (full left), +1 (full right)]. Ignored for mono clips.
+        /// While playing, the setter pushes the value to Playback.Pan immediately
+        /// (for script-driven pan modulation).
+        /// Imperative counterpart to HapbeatParameterBinding (Output = StreamPan).
         /// </summary>
         public float Pan
         {
@@ -241,7 +242,7 @@ namespace Hapbeat
         /// per-entry <see cref="HapbeatEventEntry.delayOffsetSeconds"/> and
         /// clamps to >= 0 (no time-travel).
         /// <para>
-        /// Used to compensate audio-output latency (Bluetooth ヘッドホン等) by
+        /// Used to compensate audio-output latency (e.g. Bluetooth headphones) by
         /// holding back the Hapbeat haptic so it aligns with the speakers /
         /// headphones output. See <c>HapbeatConfig.hapticDelaySeconds</c> for
         /// device-specific guidance.

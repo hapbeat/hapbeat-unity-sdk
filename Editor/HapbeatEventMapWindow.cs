@@ -184,10 +184,10 @@ namespace Hapbeat.Editor
 
             string mapPath = AssetDatabase.GetAssetPath(map);
             Debug.Log(
-                $"[Hapbeat] Initial Scene Setup 完了:\n" +
-                $"  - Event Router: {(routerExisted ? "(既存を再利用)" : "新規追加")} {router.name}\n" +
+                $"[Hapbeat] Initial Scene Setup done:\n" +
+                $"  - Event Router: {(routerExisted ? "(reused existing)" : "added")} {router.name}\n" +
                 $"  - EventMap   : {mapPath}\n" +
-                $"  - Hapbeat → Open Event Map ウィンドウを開きました。+ Entry でイベント追加から始められます。");
+                $"  - Opened Hapbeat → Open Event Map. Click + Entry to start adding events.");
         }
 
         /// <summary>
@@ -203,7 +203,7 @@ namespace Hapbeat.Editor
             var map = EnsureSceneEventMapAsset();
             Selection.activeObject = map;
             EditorGUIUtility.PingObject(map);
-            Debug.Log($"[Hapbeat] EventMap を作成しました: {AssetDatabase.GetAssetPath(map)}");
+            Debug.Log($"[Hapbeat] Created EventMap at {AssetDatabase.GetAssetPath(map)}");
         }
 
         /// <summary>
@@ -245,7 +245,7 @@ namespace Hapbeat.Editor
                 router.AddComponent<HapbeatManager>();
 
             Selection.activeGameObject = router;
-            Debug.Log("[Hapbeat] Event Router を作成しました。ここに AnimatorTrigger / UnityEventTrigger を追加してください。");
+            Debug.Log("[Hapbeat] Event Router created. Add AnimatorTrigger / UnityEventTrigger components to it.");
         }
 
         private void OnEnable()
@@ -366,7 +366,7 @@ namespace Hapbeat.Editor
             {
                 EditorGUILayout.HelpBox(
                     Tr("No Event Map found.\nCreate one via Assets > Create > Hapbeat > Event Map.",
-                       "Event Map が見つかりません。\nAssets > Create > Hapbeat > Event Map で作成してください。"),
+                       "No Event Map found.\nCreate one via Assets > Create > Hapbeat > Event Map."),
                     MessageType.Info);
                 return;
             }
@@ -667,8 +667,8 @@ namespace Hapbeat.Editor
                 if (dirty)
                 {
                     var prev = GUI.backgroundColor;
-                    GUI.backgroundColor = new Color(1f, 0.55f, 0.3f); // オレンジ = 未保存
-                    if (GUILayout.Button(new GUIContent("● Save", "未保存の変更があります。クリック or Ctrl+S で disk に保存。"),
+                    GUI.backgroundColor = new Color(1f, 0.55f, 0.3f); // orange = unsaved
+                    if (GUILayout.Button(new GUIContent("● Save", "Unsaved changes. Click or press Ctrl+S to save to disk."),
                         EditorStyles.toolbarButton, GUILayout.Width(70)))
                     {
                         AssetDatabase.SaveAssetIfDirty(_selectedMap);
@@ -679,7 +679,7 @@ namespace Hapbeat.Editor
                 }
                 else
                 {
-                    GUILayout.Label(new GUIContent("✓ Saved", "未保存変更はありません。"),
+                    GUILayout.Label(new GUIContent("✓ Saved", "No unsaved changes."),
                         EditorStyles.toolbarButton, GUILayout.Width(70));
                 }
             }
@@ -1275,11 +1275,10 @@ namespace Hapbeat.Editor
         {
             if (_selectedMap == null) return;
             if (!EditorUtility.DisplayDialog(
-                    Tr("Delete Entries", "エントリを削除"),
-                    Tr($"Delete {indices.Count} selected entries?",
-                       $"選択中の {indices.Count} エントリを削除しますか？"),
-                    Tr("Delete", "削除"),
-                    Tr("Cancel", "キャンセル")))
+                    "Delete Entries",
+                    $"Delete {indices.Count} selected entries?",
+                    "Delete",
+                    "Cancel"))
                 return;
 
             Undo.RecordObject(_selectedMap, "Delete Hapbeat Entries (batch)");
@@ -1302,8 +1301,8 @@ namespace Hapbeat.Editor
                 GUILayout.Label(
                     selCount == 0
                         ? Tr("Tip: click rows with Ctrl/Shift to select multiple for batch editing.",
-                             "ヒント: Ctrl / Shift クリックで複数行選択 → 右クリックで一括編集。")
-                        : Tr($"{selCount} rows selected.", $"{selCount} 行選択中。"),
+                             "Tip: Ctrl / Shift click to select multiple rows, then right-click to bulk-edit.")
+                        : $"{selCount} rows selected.",
                     EditorStyles.miniLabel);
                 GUILayout.FlexibleSpace();
                 if (selCount > 0 && GUILayout.Button("Clear selection", EditorStyles.miniButton, GUILayout.Width(120)))
@@ -1707,12 +1706,12 @@ namespace Hapbeat.Editor
             var delayOffsetProp = entryProp.FindPropertyRelative("delayOffsetSeconds");
             EditorGUILayout.PropertyField(delayOffsetProp,
                 new GUIContent("Delay Offset (s)",
-                    "この entry 個別の遅延オフセット (秒)。HapbeatConfig.hapticDelaySeconds " +
-                    "(global) に加算される。最終値は 0 でクランプ。\n" +
-                    "  ・正値: global より遅らせる (音の attack peak が遅い素材の補正など)\n" +
-                    "  ・負値: global より早める\n" +
-                    "Range -0.2〜+0.2、デフォルト 0。\n\n" +
-                    "Global 側の調整は Hapbeat → Open Settings の「触覚遅延」から。"));
+                    "Per-entry delay offset (seconds). Added on top of " +
+                    "HapbeatConfig.hapticDelaySeconds (global). Final value is clamped at 0.\n" +
+                    "  + : later than global (e.g. compensate for delayed attack peak)\n" +
+                    "  − : earlier than global\n" +
+                    "Range -0.2 to +0.2, default 0.\n\n" +
+                    "Edit the global value at Hapbeat → Open Settings → Haptic Delay."));
 
             // Effective delay readout (global + offset, clamped). Helps the
             // designer see "how late will this fire" without having to switch
@@ -1722,7 +1721,7 @@ namespace Hapbeat.Editor
             float effectiveSec = Mathf.Max(0f, globalDelaySec + entryOffsetSec);
             string offsetSign = entryOffsetSec >= 0f ? "+" : "";
             EditorGUILayout.LabelField(
-                $"   → 実効遅延: {effectiveSec * 1000f:F0}ms  " +
+                $"   → Effective delay: {effectiveSec * 1000f:F0}ms  " +
                 $"(global {globalDelaySec * 1000f:F0}ms {offsetSign}{entryOffsetSec * 1000f:F0}ms)",
                 EditorStyles.miniLabel);
 
@@ -1951,11 +1950,11 @@ namespace Hapbeat.Editor
             // Gain multiplier (always shown — applies to all trigger types).
             GUI.Label(new Rect(cursor, rect.y, gainLabelW, rect.height),
                 new GUIContent("gain",
-                    "Per-trigger gain multiplier。\n" +
-                    "実効値 = entry.gain × この値。\n" +
-                    "デフォルト 1.0 (素通し)。同じ EventMap entry を複数 GameObject で使い回すときに、" +
-                    "objectごとに強度を微調整したい場合に使う。\n" +
-                    "範囲: 0.0 〜 2.0"),
+                    "Per-trigger gain multiplier.\n" +
+                    "Effective gain = entry.gain × this value.\n" +
+                    "Default 1.0 (passthrough). Use when the same EventMap entry is " +
+                    "shared across multiple GameObjects and each needs a different strength.\n" +
+                    "Range: 0.0 – 2.0"),
                 EditorStyles.miniLabel);
             cursor += gainLabelW;
 
@@ -1976,25 +1975,25 @@ namespace Hapbeat.Editor
             if (trigger is HapbeatTickEmitter tick)
             {
                 const string thresholdTip =
-                    "Δ = Tick Threshold (1 tick あたりの変化量)\n" +
+                    "Δ = Tick Threshold (change per tick)\n" +
                     "─────────────────────────\n" +
-                    "入力値がこの量だけ累積で変化するたびに 1 回 fire する。\n" +
-                    "ホイールやダイヤルの \"カチッ\" 感 (detent 触覚) を生む閾値。\n\n" +
-                    "目安:\n" +
-                    "  Slider 0..1   → Δ=0.1   で 10% ごと 1 tick\n" +
-                    "  Slider 0..100 → Δ=5     で 5 ごと 1 tick\n" +
-                    "  ScrollRect    → Δ=0.05  で 5% ごと 1 tick (正規化 0..1)\n\n" +
-                    "小さいほど tick が密、大きいほど疎。\n" +
-                    "0 にすると \"任意の変化で fire\" モード (= 元の cooldown 方式と等価)。";
+                    "Fires once every time the input changes by this much cumulatively.\n" +
+                    "Produces a wheel / dial \"click\" feel (detent haptic).\n\n" +
+                    "Typical values:\n" +
+                    "  Slider 0..1   → Δ=0.1   → 1 tick per 10%\n" +
+                    "  Slider 0..100 → Δ=5     → 1 tick per 5\n" +
+                    "  ScrollRect    → Δ=0.05  → 1 tick per 5% (normalized 0..1)\n\n" +
+                    "Smaller = denser ticks, larger = sparser.\n" +
+                    "0 = \"fire on any change\" (equivalent to the original cooldown mode).";
                 const string axisTip =
-                    "Vector2 入力時の追跡軸\n" +
+                    "Axis to track for Vector2 input\n" +
                     "─────────────────────────\n" +
-                    "ScrollRect / MinMaxSlider のような Vector2 を吐く UI で、" +
-                    "どの軸を tick 計算に使うかを選ぶ。\n\n" +
-                    "  X   横軸 (横スクロール / MinMaxSlider の min ハンドル)\n" +
-                    "  Y   縦軸 (縦スクロール / MinMaxSlider の max ハンドル)\n" +
-                    "  Mag 2軸合成のベクトル長 (斜め移動も含めた総移動量)\n\n" +
-                    "float 入力 (通常の Slider 等) では無視される。";
+                    "Picks which axis to use for tick counting on UIs that emit Vector2 " +
+                    "(ScrollRect / MinMaxSlider, etc.).\n\n" +
+                    "  X   horizontal (horizontal scroll / MinMaxSlider min handle)\n" +
+                    "  Y   vertical (vertical scroll / MinMaxSlider max handle)\n" +
+                    "  Mag 2-axis vector length (total travel including diagonal)\n\n" +
+                    "Ignored for float inputs (regular Slider, etc.).";
 
                 GUI.Label(new Rect(cursor, rect.y, 14f, rect.height),
                     new GUIContent("Δ", thresholdTip), EditorStyles.miniLabel);
@@ -2114,7 +2113,7 @@ namespace Hapbeat.Editor
                 GUI.Label(new Rect(cursor, rect.y, gainLabelW, rect.height),
                     new GUIContent("gain",
                         "Per-state-behaviour gain multiplier.\n" +
-                        "実効値 = entry.gain × manifest.intensity × この値。"),
+                        "Effective gain = entry.gain × manifest.intensity × this value."),
                     EditorStyles.miniLabel);
                 cursor += gainLabelW;
 
@@ -3036,7 +3035,7 @@ namespace Hapbeat.Editor
                 presetIndices: presetIndices,
                 pendingDelete: pendingDelete,
                 allowAdd: true,
-                addTooltip: $"{objectName} に紐付く新しい binding を追加",
+                addTooltip: $"Add a new binding scoped to {objectName}",
                 showAsLink: true);
         }
 
@@ -3051,7 +3050,7 @@ namespace Hapbeat.Editor
                 presetIndices: presetIndices,
                 pendingDelete: pendingDelete,
                 allowAdd: allowAdd,
-                addTooltip: "Wired 全対象に適用される binding を追加",
+                addTooltip: "Add a binding shared across all wired targets",
                 showAsLink: false);
         }
 
@@ -3244,8 +3243,8 @@ namespace Hapbeat.Editor
             var valueRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
 
             EditorGUI.LabelField(labelRect, new GUIContent(" → resolves to",
-                "Source Path がどの GameObject に解決されるか。" +
-                "親グループ (owner) のトリガーオブジェクトを優先。"));
+                "Which GameObject the Source Path resolves to. " +
+                "The owner group's trigger object takes priority."));
 
             if (resolved != null)
             {
@@ -3305,7 +3304,7 @@ namespace Hapbeat.Editor
             var valueRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
 
             EditorGUI.LabelField(labelRect, new GUIContent(" ↳ linked to",
-                "シーン上で この preset にリンクされている HapbeatParameterBinding 一覧。"));
+                "HapbeatParameterBinding components in the scene linked to this preset."));
 
             if (matches.Count == 0)
             {
@@ -3340,7 +3339,7 @@ namespace Hapbeat.Editor
             // below already handles drag/drop/text edits, but this lets the
             // user force a re-scan after editing scene triggers, etc.
             if (bindingsProp.arraySize > 0 &&
-                GUILayout.Button(new GUIContent("Sync Scene", "シーン上のトリガー対象に preset を反映 / link"),
+                GUILayout.Button(new GUIContent("Sync Scene", "Apply / link this preset to trigger targets in the scene"),
                     EditorStyles.miniButton, GUILayout.Width(80)))
             {
                 int idx = _selectedEntryIndex;
@@ -3508,7 +3507,7 @@ namespace Hapbeat.Editor
                 destroyed++;
             }
             if (destroyed > 0)
-                Debug.Log($"[Hapbeat] Preset 削除に伴い scene 上の linked binding component {destroyed} 個を destroy しました (Ctrl+Z で復活可)。");
+                Debug.Log($"[Hapbeat] Removed {destroyed} linked binding component(s) from the scene when the preset was deleted (Ctrl+Z to restore).");
         }
 
         private void UpdateSyncedPathCache(int entryIdx)
@@ -3689,13 +3688,13 @@ namespace Hapbeat.Editor
             var valueRect = new Rect(rect.x + labelW, rect.y, rect.width - labelW, rect.height);
 
             EditorGUI.LabelField(labelRect, new GUIContent(" ↳ linked to",
-                "シーン上で この preset にリンクされている HapbeatParameterBinding。" +
-                "Source Path 設定後に自動アタッチされます。クリックで ping。"));
+                "HapbeatParameterBinding components in the scene linked to this preset. " +
+                "Auto-attached after Source Path is set. Click to ping."));
 
             if (matches.Count == 0)
             {
                 EditorGUI.BeginDisabledGroup(true);
-                EditorGUI.LabelField(valueRect, "(none — Source Path 未解決 / 未同期)", EditorStyles.miniLabel);
+                EditorGUI.LabelField(valueRect, "(none — Source Path unresolved or not synced)", EditorStyles.miniLabel);
                 EditorGUI.EndDisabledGroup();
                 return;
             }
@@ -3809,7 +3808,7 @@ namespace Hapbeat.Editor
                         if (b == null) continue;
                         if (!ReferenceEquals(b.LinkedEventMap, _selectedMap)) continue;
                         if (b.LinkedBindingId != preset.id) continue;
-                        if (validTargets.Contains(b.transform)) continue; // ok、現在の正しい位置
+                        if (validTargets.Contains(b.transform)) continue; // ok — already at the right location
 
                         // 古い位置の link は剥がして component ごと destroy。
                         // (Undo.DestroyObjectImmediate で Ctrl+Z で復活可)
@@ -4123,7 +4122,7 @@ namespace Hapbeat.Editor
                 return kitsRoot;
 
             bool confirmed = EditorUtility.DisplayDialog(
-                Tr("Create HapbeatSDK Folder?", "HapbeatSDK フォルダを作成しますか？"),
+                "Create HapbeatSDK Folder?",
                 Tr(
                     "HapbeatSDK folder not found.\n\n" +
                     "This is the user-owned area where Hapbeat Studio exports Kits and the\n" +
@@ -4133,15 +4132,15 @@ namespace Hapbeat.Editor
                     "You can move or rename the folder afterwards — the marker tracks Kits.\n\n" +
                     "Create it now?",
 
-                    "HapbeatSDK フォルダがまだ見つかりません。\n\n" +
-                    "ここは Hapbeat Studio が Kit を書き出し、SDK がシーン / EventMap を\n" +
-                    "生成するユーザー領域です。\n" +
-                    $"レイアウト: {HapbeatSDKFolderCreator.kSdkRoot}/{{Kits, Scenes, EventMaps}}\n" +
-                    "(Kits/ 内に HapbeatKitsReadme マーカーが置かれます。)\n" +
-                    "後で好きな場所にフォルダごと移動してかまいません — マーカーで追跡します。\n\n" +
-                    "いま作成しますか？"),
-                Tr("Create", "作成する"),
-                Tr("Cancel", "キャンセル"));
+                    "HapbeatSDK folder not found yet.\n\n" +
+                    "This is your project's home for Hapbeat: Studio writes Kits here, and the SDK\n" +
+                    "generates scenes / EventMaps here.\n" +
+                    $"Layout: {HapbeatSDKFolderCreator.kSdkRoot}/{{Kits, Scenes, EventMaps}}\n" +
+                    "(A HapbeatKitsReadme marker is placed inside Kits/.)\n" +
+                    "You can move the folder later — the marker tracks its location.\n\n" +
+                    "Create it now?",
+                "Create",
+                "Cancel");
             if (!confirmed) return null;
 
             HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
@@ -4982,8 +4981,8 @@ namespace Hapbeat.Editor
             // asset 行の右端付近に ● を描画
             var dotRect = new Rect(rect.xMax - 14f, rect.y + 1f, 12f, 14f);
             var prev = GUI.color;
-            GUI.color = new Color(1f, 0.55f, 0.3f); // オレンジ
-            GUI.Label(dotRect, new GUIContent("●", "未保存の変更あり"));
+            GUI.color = new Color(1f, 0.55f, 0.3f); // orange
+            GUI.Label(dotRect, new GUIContent("●", "Unsaved changes."));
             GUI.color = prev;
         }
     }

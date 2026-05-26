@@ -35,7 +35,7 @@ namespace Hapbeat.Editor
             if (eventMap == null || eventMap.entries.Count == 0)
             {
                 EditorGUILayout.HelpBox(
-                    "Event Map を設定し、エントリを追加してください。",
+                    "Assign an Event Map and add at least one entry.",
                     MessageType.Warning);
                 serializedObject.ApplyModifiedProperties();
                 return;
@@ -82,17 +82,17 @@ namespace Hapbeat.Editor
             if (_showUsageGuide)
             {
                 EditorGUILayout.HelpBox(
-                    "Grab / Hold / Release パターンの wire:\n\n" +
-                    "▶ XRGrabInteractable.firstSelectEntered  →  Fire()\n" +
-                    "▶ XRGrabInteractable.lastSelectExited   →  Stop()\n\n" +
-                    "Fire() は On Start の一発ショットを送り、そのまま Loop を開始します。\n" +
-                    "Stop() は Loop を止め、On Stop の一発ショットを送ります。\n\n" +
-                    "使わないフェーズは「(none)」にします。",
+                    "Grab / Hold / Release wiring:\n\n" +
+                    "  XRGrabInteractable.firstSelectEntered  →  Fire()\n" +
+                    "  XRGrabInteractable.lastSelectExited   →  Stop()\n\n" +
+                    "Fire() plays the On Start one-shot, then begins Loop.\n" +
+                    "Stop() ends Loop, then plays the On Stop one-shot.\n\n" +
+                    "Set unused phases to \"(none)\".",
                     MessageType.Info);
 
                 EditorGUILayout.HelpBox(
-                    "Animation Event 等から強度を受け渡したい場合は FireWithStartGain(float) を使えます。\n" +
-                    "On Start の強度だけ上書きされます（Loop はエントリ設定の gain をそのまま使用）。",
+                    "Use FireWithStartGain(float) (e.g. from an Animation Event) to pass strength in.\n" +
+                    "Only the On Start gain is overridden (Loop uses the entry's gain as-is).",
                     MessageType.None);
             }
 
@@ -158,8 +158,8 @@ namespace Hapbeat.Editor
             if (currentEntryIdx < 0 && !string.IsNullOrEmpty(idProp.stringValue))
             {
                 EditorGUILayout.HelpBox(
-                    "選択中の entry が EventMap に見つかりません (削除された可能性)。" +
-                    "再度 entry を選択してください。",
+                    "Selected entry not found in the EventMap (may have been deleted). " +
+                    "Please pick an entry again.",
                     MessageType.Warning);
             }
         }

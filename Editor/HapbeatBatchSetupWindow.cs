@@ -364,17 +364,17 @@ namespace Hapbeat.Editor
             string desc = _triggerType switch
             {
                 TriggerType.UnityEventTrigger =>
-                    "UnityEvent に接続して発火。ボタンクリック等の単発イベント向け。",
+                    "Fires from a UnityEvent. Good for one-shot events like button clicks.",
                 TriggerType.CollisionTrigger =>
-                    "物理衝突/トリガーで発火。投げた物が当たる等の物理接触向け。",
+                    "Fires on physics collision / trigger. Good for thrown-object hits and contact.",
                 TriggerType.SequenceTrigger =>
-                    "Fire()/Stop() の 3 フェーズ (On Start / Loop / On Stop) を 1 つにまとめたトリガー。\n" +
-                    "XR の掴む/ホールド/離す (firstSelectEntered / lastSelectExited) に配線すると、\n" +
-                    "つかむ瞬間 + 保持中のループ + 離す余韻を 1 コンポーネントで扱える。",
+                    "Three-phase trigger (On Start / Loop / On Stop) in one component.\n" +
+                    "Wire to XR grab/hold/release (firstSelectEntered / lastSelectExited) to get\n" +
+                    "grab one-shot + held loop + release tail in a single component.",
                 TriggerType.TickTrigger =>
-                    "連続値 (Slider / ScrollRect / MinMaxSlider 等) の onValueChanged に配線。\n" +
-                    "値が指定 threshold だけ変化するごとに 1 回 fire。スクロールホイールの " +
-                    "ノッチ感のような \"detent 触覚\" を簡潔に実現できる。\n" +
+                    "Wire to onValueChanged of continuous controls (Slider / ScrollRect / MinMaxSlider).\n" +
+                    "Fires once every time the value moves by the given threshold — useful for\n" +
+                    "scroll-wheel-style \"detent\" haptics.\n" +
                     "Wire: onValueChanged(float) → Fire(float) / onValueChanged(Vector2) → Fire(Vector2)",
                 _ => ""
             };
@@ -449,8 +449,8 @@ namespace Hapbeat.Editor
             else
             {
                 EditorGUILayout.HelpBox(
-                    _eventMap == null ? "Event Map を設定してください。"
-                                      : "Event Map にエントリがありません。",
+                    _eventMap == null ? "Assign an Event Map."
+                                      : "The Event Map has no entries.",
                     MessageType.Warning);
             }
 
@@ -472,18 +472,18 @@ namespace Hapbeat.Editor
             {
                 _tickThreshold = EditorGUILayout.FloatField(
                     new GUIContent("Tick Threshold",
-                        "値が累積でこの量だけ変化するたびに 1 回 fire する。\n" +
-                        "Slider なら slider 値の絶対量、ScrollRect の onValueChanged は " +
-                        "0..1 正規化なので 0.05 で 5% ごと 1 tick になる。"),
+                        "Fires once every time the accumulated value change reaches this amount.\n" +
+                        "Slider: absolute value change. ScrollRect onValueChanged is 0..1 normalized,\n" +
+                        "so 0.05 = one tick per 5%."),
                     Mathf.Max(0f, _tickThreshold));
                 _tickAxis = (HapbeatTickEmitter.VectorAxis)EditorGUILayout.EnumPopup(
                     new GUIContent("Vector Axis",
-                        "Vector2 入力 (ScrollRect / MinMaxSlider) でどの軸を見るか。\n" +
-                        "float 入力 (Slider) では無視される。"),
+                        "Which axis to read for Vector2 inputs (ScrollRect / MinMaxSlider).\n" +
+                        "Ignored for float inputs (Slider)."),
                     _tickAxis);
                 _tickEmitOnInitial = EditorGUILayout.ToggleLeft(
                     new GUIContent("Emit On Initial Value",
-                        "最初に値を受け取った時点で 1 回 fire する。通常 OFF。"),
+                        "Fire once when the first value is received. Usually off."),
                     _tickEmitOnInitial);
             }
 
@@ -575,8 +575,8 @@ namespace Hapbeat.Editor
             if (_detectedEvents.Count == 0)
             {
                 EditorGUILayout.LabelField(
-                    _targets.Any(t => t != null) ? "UnityEvent が見つかりませんでした。"
-                                                 : "ターゲットを追加すると自動スキャンします。",
+                    _targets.Any(t => t != null) ? "No UnityEvents found."
+                                                 : "Add targets above to auto-scan.",
                     EditorStyles.miniLabel);
                 return;
             }
@@ -828,8 +828,8 @@ namespace Hapbeat.Editor
 
             EditorGUILayout.LabelField(
                 _replaceExisting
-                    ? "Apply: 既存の Hapbeat トリガーを一度削除してから追加 (重複防止)。  Cleanup: Hapbeat 全除去。"
-                    : "Apply: 同じ種別+Entry は上書き、違えば並列追加。  Cleanup: Hapbeat 全除去。",
+                    ? "Apply: remove existing Hapbeat triggers first, then add (no duplicates).  Cleanup: remove all Hapbeat."
+                    : "Apply: same type + entry is updated; different is added side-by-side.  Cleanup: remove all Hapbeat.",
                 EditorStyles.miniLabel);
         }
 
@@ -1209,16 +1209,15 @@ namespace Hapbeat.Editor
 
         private void CleanupBatch(List<GameObject> targets)
         {
-            if (!EditorUtility.DisplayDialog("⚠ Hapbeat Cleanup",
-                $"⚠ この操作は破壊的です。\n\n" +
-                $"対象: {targets.Count} 個の GameObject\n\n" +
-                "除去されるもの:\n" +
-                "・ HapbeatTriggerBase コンポーネント (UnityEventTrigger, CollisionTrigger 等)\n" +
-                "・ HapbeatParameterBinding\n" +
-                "・ 上記に向けた UnityEvent 接続\n\n" +
-                "価値ある設定を失う可能性があります。\n" +
-                "Ctrl+Z で Undo 可能ですが、確認してから実行してください。",
-                "実行", "キャンセル"))
+            if (!EditorUtility.DisplayDialog("Hapbeat Cleanup",
+                $"This is destructive.\n\n" +
+                $"Targets: {targets.Count} GameObject(s)\n\n" +
+                "Will remove:\n" +
+                "- HapbeatTriggerBase components (UnityEventTrigger, CollisionTrigger, etc.)\n" +
+                "- HapbeatParameterBinding\n" +
+                "- UnityEvent calls pointing at the above\n\n" +
+                "You may lose configured settings. Ctrl+Z can undo, but please confirm first.",
+                "Run", "Cancel"))
                 return;
 
             Undo.SetCurrentGroupName("Hapbeat Cleanup");

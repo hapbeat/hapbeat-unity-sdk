@@ -71,29 +71,29 @@ namespace Hapbeat
             AccumulatedMotion,
         }
 
-        [Tooltip("tick の検出方式。\n" +
-                 "  ・AbsolutePosition (デフォルト): スライダー上に 0, threshold, 2×threshold, ... の\n" +
-                 "    固定メモリがあり、その線を跨ぐたびに 1 tick fire (位置基準)。\n" +
-                 "    例: threshold=0.1, 0.05→0.18 で 1 tick (0.1 を跨ぐ)。逆方向も対称。\n" +
-                 "  ・AccumulatedMotion: 前回発火位置から累積移動 ±threshold 動くたびに 1 tick (相対基準)。\n" +
-                 "    例: threshold=0.1, 0.05→0.15 で 1 tick (anchor が 0.15 に移動)。\n" +
-                 "    細かい往復で累積を増やさない wheel detent 的感触に向く。")]
+        [Tooltip("Tick detection mode.\n" +
+                 "  AbsolutePosition (default): fixed marks on the slider at 0, threshold, 2×threshold, ...\n" +
+                 "    Fires once per mark crossing (position based). Symmetric in both directions.\n" +
+                 "    e.g. threshold=0.1, 0.05 → 0.18 fires 1 tick (crosses 0.1).\n" +
+                 "  AccumulatedMotion: anchor moves ±threshold per tick (relative).\n" +
+                 "    e.g. threshold=0.1, 0.05 → 0.15 fires 1 tick (anchor moves to 0.15).\n" +
+                 "    Good for wheel-detent feel — small wiggles don't accumulate.")]
         [SerializeField]
         private TickMode _tickMode = TickMode.AbsolutePosition;
 
-        [Tooltip("tick の間隔 (入力値の単位)。\n" +
-                 "  AbsolutePosition: 固定メモリの間隔 (0, threshold, 2×threshold, ...)\n" +
-                 "  AccumulatedMotion: anchor が動く累積量\n" +
-                 "0 にすると \"任意の変化で fire\" モード (mode 共通)。")]
+        [Tooltip("Tick interval in input units.\n" +
+                 "  AbsolutePosition: spacing of the fixed marks (0, threshold, 2×threshold, ...)\n" +
+                 "  AccumulatedMotion: how much the anchor moves per tick.\n" +
+                 "Set to 0 for \"fire on any change\" mode (both tick modes).")]
         [SerializeField, Min(0f)]
         private float _tickThreshold = 0.1f;
 
-        [Tooltip("Vector2 入力時にどの軸を追跡するか。float 入力時は無視される。")]
+        [Tooltip("Which axis of a Vector2 input to track. Ignored for float input.")]
         [SerializeField]
         private VectorAxis _axis = VectorAxis.Y;
 
-        [Tooltip("最初に値を受け取った時点で 1 回 fire する。\n" +
-                 "通常は OFF — 初期化や enable 時の値で誤発火を防ぐ。")]
+        [Tooltip("Fire once when the first value is received.\n" +
+                 "Usually off — prevents an accidental fire from the initial / enable-time value.")]
         [SerializeField]
         private bool _emitOnInitialValue = false;
 
@@ -197,7 +197,7 @@ namespace Hapbeat
                     ticksToFire++;
                     _lastValue += Mathf.Sign(delta) * _tickThreshold;
                     delta = v - _lastValue;
-                    if (ticksToFire >= 64) break;  // cap (warn 下で)
+                    if (ticksToFire >= 64) break;  // cap (warn below)
                 }
             }
 

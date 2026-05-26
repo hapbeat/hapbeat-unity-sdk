@@ -32,14 +32,14 @@ namespace Hapbeat
         [SerializeField]
         private HapbeatConfig _config;
 
-        /// <summary>Whether the client is currently ready to send.</summary>
-        /// <summary>UDP socket 接続状態 (= 送信可能か)。device が落ちていても UDP は無接続性のため true のまま。</summary>
+        /// <summary>UDP socket is open and ready to send. UDP has no real
+        /// connection, so this stays true even if the device is powered off.</summary>
         public bool IsConnected => _client != null && _client.IsConnected;
 
         /// <summary>
-        /// 直近 pingInterval × 3 秒以内に PONG を返した device の台数。
-        /// 0 ならどの device からも反応なし (電源 OFF / 通信不通)。
-        /// HUD には「Hapbeat: N connected」のように出すのが推奨。
+        /// Number of devices that returned a PONG within the last pingInterval × 3 seconds.
+        /// 0 = no device has responded (powered off / unreachable). Recommended HUD
+        /// label: "Hapbeat: N connected".
         /// </summary>
         public int AliveDeviceCount
         {
@@ -57,7 +57,7 @@ namespace Hapbeat
             }
         }
 
-        /// <summary>少なくとも 1 台の device が responsive か。</summary>
+        /// <summary>True if at least one device is responsive.</summary>
         public bool IsAlive => AliveDeviceCount > 0;
 
         private float AliveTimeoutSeconds =>
@@ -217,7 +217,7 @@ namespace Hapbeat
                 }
             }
 
-            // Alive 台数の変化検出 → OnConnected / OnDisconnected 発火
+            // Detect alive-count changes → fire OnConnected / OnDisconnected
             int cur = AliveDeviceCount;
             if (cur != _prevAliveCount)
             {
@@ -440,16 +440,16 @@ namespace Hapbeat
         /// </para>
         ///
         /// <para>
-        /// <b>Multi-source mixing (2026-05-18 \u4ee5\u964d):</b> \u8907\u6570\u306e StreamAudioClip
-        /// \u547c\u51fa\u306f SDK \u5185\u3067 float \u5408\u6210\u3055\u308c\u3001\u5358\u4e00\u306e wire stream \u3068\u3057\u3066\u9001\u51fa\u3055\u308c\u308b\u3002
-        /// \u65e2\u5b58\u306e wire protocol (STREAM_BEGIN/DATA/END) \u3068 device firmware \u306f
-        /// \u5909\u66f4\u4e0d\u8981\u3002\u8fd4\u5374\u3055\u308c\u305f <see cref="HapbeatStreamPlayback"/> \u306f source
-        /// \u3054\u3068\u306b\u72ec\u7acb\u3067\u3001<c>.Stop()</c> \u3067\u305d\u306e source \u3060\u3051\u505c\u6b62\u3059\u308b\u3002
+        /// <b>Multi-source mixing:</b> overlapping <c>StreamAudioClip</c> calls
+        /// are float-mixed inside the SDK and sent as a single wire stream. The
+        /// existing wire protocol (STREAM_BEGIN/DATA/END) and device firmware
+        /// don't change. Each returned <see cref="HapbeatStreamPlayback"/> is
+        /// independent; <c>.Stop()</c> ends just that source.
         /// </para>
         /// <para>
-        /// \u5236\u7d04: \u65b0\u898f source \u306e <c>clip.frequency</c> / <c>clip.channels</c> /
-        /// <c>target</c> \u306f active session \u3068\u4e00\u81f4\u3059\u308b\u5fc5\u8981\u304c\u3042\u308b (mismatch \u306f
-        /// warning + null \u8fd4\u5374)\u3002\u6700\u521d\u306e source \u306e\u5024\u304c session \u3092\u6c7a\u5b9a\u3059\u308b\u3002
+        /// Constraint: a new source's <c>clip.frequency</c> / <c>clip.channels</c>
+        /// / <c>target</c> must match the active session (mismatch = warning +
+        /// null return). The first source decides the session format.
         /// </para>
         /// </summary>
         /// <param name="clip">AudioClip to stream (will be read as PCM16).</param>
@@ -509,9 +509,9 @@ namespace Hapbeat
                 _sessionTarget = target;
                 _sessionActive = true;
 
-                // gain=1.0 \u3092\u9001\u3063\u3066 device \u306f passthrough \u306b\u3057\u3001\u5404 source \u306e
-                // gain \u306f SDK \u5074\u3067 sample \u00d7 gain \u3068\u3057\u3066 pre-multiply \u3059\u308b
-                // (device \u306e\u4e8c\u91cd\u9069\u7528\u3092\u907f\u3051\u308b)\u3002totalSamples=0 \u306f "unknown" \u901a\u77e5\u3002
+                // Send gain=1.0 so the device passes through, and pre-multiply
+                // each source's gain in the SDK (sample \u00d7 gain) to avoid the
+                // device applying it twice. totalSamples=0 means "unknown".
                 _client.SendStreamBegin(_sessionSampleRate, _sessionChannels,
                     HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1.0f, target);
                 Log($"\u266a Stream session begin: {_sessionSampleRate}Hz, {_sessionChannels}ch, " +
@@ -553,25 +553,25 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Stop all active stream sources AND force device-side ring buffer flush.
-        /// 通常の <see cref="StopStream"/> は STREAM_END を送るが device 側は
-        /// "let residual frames drain naturally" の方針で ~50-250ms の tail を再生する。
-        /// これだと "release した瞬間に静音にしたい" 用途で遅延を感じる。
+        /// Stop all active stream sources AND force the device ring buffer to flush.
+        /// Normal <see cref="StopStream"/> sends STREAM_END and the device drains
+        /// any residual frames naturally (~50–250 ms tail), which feels laggy when
+        /// you want immediate silence on release.
         ///
-        /// この API は <see cref="StopStream"/> 後に **STREAM_BEGIN + STREAM_END pair を送り**、
-        /// firmware の <c>BEGIN_FLUSH_THRESHOLD</c> (32ms 残量超で <c>ringReset()</c>) を発動させて
-        /// ring buffer を即時 flush する。device は数 ms 以内に静音になる。
-        /// firmware 改修なしで実現できる pragmatic な解決策。
+        /// This API runs <see cref="StopStream"/> then sends a STREAM_BEGIN +
+        /// STREAM_END pair to trigger the firmware's <c>BEGIN_FLUSH_THRESHOLD</c>
+        /// path (ringReset() when residual > 32 ms). The device goes silent within
+        /// a few ms. No firmware change needed.
         ///
-        /// 注意: target を指定しないと broadcast で全 device の ring buffer を flush するので、
-        /// 他 session (例: 別 trigger の stream) の残音も巻き込まれる。
-        /// per-target stop が必要な場合は target を指定すること。
+        /// Note: with no target, this broadcasts and flushes every device — it
+        /// will also kill audio from other sessions (e.g. another trigger's
+        /// stream). Pass a target for per-target stop.
         /// </summary>
         public void StopStreamWithFlush(string target = null)
         {
             StopStream();
             if (_client == null || !_client.IsConnected) return;
-            // 任意 format で OK。residual が >32ms なら ringReset() が走る。
+            // Any format works. If residual > 32 ms, ringReset() runs.
             // sample_rate=16000, channels=1, PCM16, total_samples=0, gain=1.0
             _client.SendStreamBegin(16000, 1, HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1.0f, target);
             _client.SendStreamEnd();
@@ -583,8 +583,9 @@ namespace Hapbeat
 
         /// <summary>
         /// Handle to the FIRST active stream source, or null if nothing is
-        /// streaming. \u5358\u4e00 stream \u6642\u4ee3\u306e API \u4e92\u63db\u306e\u305f\u3081\u6b8b\u7f6e\u3002\u30de\u30eb\u30c1\u30bd\u30fc\u30b9\u6642\u306f
-        /// \u5404 source \u306e handle \u3092 <see cref="StreamAudioClip"/> \u623b\u308a\u5024\u304b\u3089\u4fdd\u6301\u3059\u308b\u3002
+        /// streaming. Kept for compatibility with the single-stream API. For
+        /// multi-source use, hold the per-source handle returned by
+        /// <see cref="StreamAudioClip"/>.
         /// </summary>
         public HapbeatStreamPlayback ActivePlayback =>
             (_sources.Count > 0 && !_sources[0].Playback.IsStopped) ? _sources[0].Playback : null;
@@ -599,7 +600,7 @@ namespace Hapbeat
             public readonly bool Loop;
             public readonly HapbeatStreamPlayback Playback;
             public readonly string Name;
-            public int Cursor; // \u6b21\u306b\u8aad\u3080 sample index (channel \u6df7\u5728\u306e\u30d5\u30e9\u30c3\u30c8\u30a4\u30f3\u30c7\u30c3\u30af\u30b9)
+            public int Cursor; // Next sample index to read (flat index across all channels).
 
             public StreamSource(AudioClip clip, HapbeatStreamPlayback pb, bool loop)
             {
@@ -625,9 +626,10 @@ namespace Hapbeat
         private bool _sessionActive;
 
         /// <summary>
-        /// Multi-source mixer. 全 active source から chunk 分のサンプルを
-        /// float で合成し、PCM16 化して 1 本の wire stream として送出する。
-        /// 全 source が終了したら STREAM_END を送って session を終える。
+        /// Multi-source mixer. Mixes one chunk's worth of samples from every
+        /// active source as float, converts to PCM16, and sends as a single
+        /// wire stream. When all sources finish, sends STREAM_END to close
+        /// the session.
         /// </summary>
         private IEnumerator MixerCoroutine()
         {

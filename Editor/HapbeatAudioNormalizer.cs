@@ -8,21 +8,21 @@ using UnityEngine;
 namespace Hapbeat.Editor
 {
     /// <summary>
-    /// Editor menu utility: 指定フォルダ直下 (再帰可) の WAV を
-    /// **16 kHz / 2ch (stereo) / PCM16** に一括 resample/upmix する。
+    /// Editor menu utility: batch-resample / upmix every WAV in a chosen folder
+    /// (recursive) to <b>16 kHz / 2ch stereo / PCM16</b>.
     ///
-    /// Hapbeat の stream session は単一 format で固定されるため、複数 StreamClip
-    /// が同時 / 連続で再生されるケースで format mismatch (mono/stereo 混在や
-    /// rate 違い) があると後発 clip が SDK で reject される。Studio 経由なら
-    /// 自動 normalize されるが、外部ツール / 手動コピーで取り込んだ WAV に対しては
-    /// このメニューを使って事前統一する。
+    /// A Hapbeat stream session is locked to a single format, so any format
+    /// mismatch (mono/stereo mix or different sample rates) across overlapping
+    /// or back-to-back StreamClips makes later clips get rejected by the SDK.
+    /// Studio normalizes audio automatically; use this menu for WAVs imported
+    /// by hand or via external tools.
     ///
-    /// 仕様:
-    /// - 入力: AudioClip として Unity が load 可能な WAV (.wav)
-    /// - 出力: 同じパスに 16kHz / 2ch / PCM16 で **上書き** (バックアップは作らない)
-    /// - mono → stereo: L = R に複製 (Web Audio / ffmpeg 標準 up-mix と同じ規則)
-    /// - 多 ch (5.1 等) → stereo: 先頭 2ch のみ採用 (簡易ダウンミックス)
-    /// - resample: 線形補間 (haptic 帯域 100-500Hz には十分な品質)
+    /// Spec:
+    /// - Input:  any .wav that Unity can load as an AudioClip
+    /// - Output: 16kHz / 2ch / PCM16, written back to the same path (no backup)
+    /// - mono → stereo: copy L = R (matches Web Audio / ffmpeg upmix)
+    /// - multi-channel (5.1 etc) → stereo: keep first 2 channels (simple downmix)
+    /// - resample: linear interpolation (fine for the 100–500 Hz haptic band)
     /// </summary>
     public static class HapbeatAudioNormalizer
     {
@@ -37,7 +37,7 @@ namespace Hapbeat.Editor
                 Application.dataPath, "");
             if (string.IsNullOrEmpty(folder)) return;
 
-            // Application.dataPath 配下なら相対 path に変換 (AssetDatabase 経由で load 可能に)
+            // Convert to a path relative to the project so AssetDatabase can load it.
             string projectRoot = Directory.GetParent(Application.dataPath).FullName.Replace('\\', '/');
             string folderAbs = folder.Replace('\\', '/');
             bool insideAssets = folderAbs.StartsWith(projectRoot + "/Assets",
@@ -45,7 +45,7 @@ namespace Hapbeat.Editor
             if (!insideAssets)
             {
                 EditorUtility.DisplayDialog("Hapbeat",
-                    "Assets フォルダ配下を指定してください (AssetDatabase で AudioClip を load する都合)。",
+                    "Please pick a folder under Assets (needed to load AudioClips via AssetDatabase).",
                     "OK");
                 return;
             }
@@ -54,15 +54,15 @@ namespace Hapbeat.Editor
             if (wavFiles.Length == 0)
             {
                 EditorUtility.DisplayDialog("Hapbeat",
-                    "指定フォルダに WAV ファイルが見つかりません。", "OK");
+                    "No WAV files found in the selected folder.", "OK");
                 return;
             }
 
             bool ok = EditorUtility.DisplayDialog("Hapbeat — Audio Normalize",
-                $"以下のフォルダ内 {wavFiles.Length} 個の WAV を **16kHz / 2ch / PCM16** に変換します。\n\n" +
+                $"Convert {wavFiles.Length} WAV file(s) under:\n\n" +
                 $"{folderAbs}\n\n" +
-                "ファイルは **上書き** されます (バックアップは作りません)。続行しますか?",
-                "実行", "キャンセル");
+                "to 16kHz / 2ch / PCM16. Files are overwritten in place (no backup). Continue?",
+                "Run", "Cancel");
             if (!ok) return;
 
             int converted = 0, skipped = 0, failed = 0;
@@ -102,23 +102,23 @@ namespace Hapbeat.Editor
                 AssetDatabase.Refresh();
             }
 
-            string summary = $"完了: 変換 {converted} / 既に統一済 (skip) {skipped} / 失敗 {failed}";
+            string summary = $"Done: {converted} converted / {skipped} skipped (already normalized) / {failed} failed";
             if (failures.Count > 0)
             {
-                summary += "\n\n失敗一覧:\n" + string.Join("\n", failures);
+                summary += "\n\nFailures:\n" + string.Join("\n", failures);
             }
             EditorUtility.DisplayDialog("Hapbeat — Audio Normalize", summary, "OK");
             Debug.Log($"[HapbeatNormalize] {summary}");
         }
 
         /// <summary>
-        /// 1 ファイルを normalize。既に 16kHz/2ch ならスキップ。
-        /// 戻り値: 実際に変換したら true、skip なら false。
+        /// Normalize one file. Skip if it is already 16kHz / 2ch.
+        /// Returns true if the file was converted, false if skipped.
         /// </summary>
         private static bool NormalizeOne(string assetPath)
         {
             var clip = AssetDatabase.LoadAssetAtPath<AudioClip>(assetPath);
-            if (clip == null) throw new InvalidOperationException("AudioClip として load できない");
+            if (clip == null) throw new InvalidOperationException("Cannot load file as AudioClip");
 
             // 既に target format なら skip (16kHz / 2ch)。
             // bit-depth は WAV file 側で判定できないので「rate + channels 一致なら skip」に簡略化。
@@ -135,7 +135,7 @@ namespace Hapbeat.Editor
             int srcSamples = clip.samples;  // per-channel sample count
             float[] srcData = new float[srcSamples * srcChannels];
             if (!clip.GetData(srcData, 0))
-                throw new InvalidOperationException("clip.GetData 失敗");
+                throw new InvalidOperationException("clip.GetData failed");
 
             // 1. (多 ch なら) stereo に縮約
             float[] stereoData = ToStereoInterleaved(srcData, srcChannels, srcSamples);
@@ -150,10 +150,10 @@ namespace Hapbeat.Editor
             return true;
         }
 
-        /// <summary>Interleaved 多 ch float → interleaved stereo float に縮約。</summary>
+        /// <summary>Downmix interleaved multi-channel float to interleaved stereo float.</summary>
         private static float[] ToStereoInterleaved(float[] src, int channels, int frames)
         {
-            if (channels == 2) return src;  // そのまま
+            if (channels == 2) return src;  // pass-through
             var dst = new float[frames * 2];
             if (channels == 1)
             {
@@ -177,7 +177,7 @@ namespace Hapbeat.Editor
             return dst;
         }
 
-        /// <summary>Linear interpolation で stereo interleaved を resample。</summary>
+        /// <summary>Resample stereo interleaved samples using linear interpolation.</summary>
         private static float[] LinearResampleStereo(float[] src, int srcRate, int dstRate)
         {
             if (srcRate == dstRate) return src;
@@ -210,7 +210,7 @@ namespace Hapbeat.Editor
             return dst;
         }
 
-        /// <summary>PCM16 interleaved WAV file 書き出し (RIFF/fmt/data 標準形式)。</summary>
+        /// <summary>Write a PCM16 interleaved WAV file (standard RIFF / fmt / data layout).</summary>
         private static void WriteWavPcm16(string path, float[] samples, int sampleRate, int channels, int frames)
         {
             int byteRate = sampleRate * channels * 2;

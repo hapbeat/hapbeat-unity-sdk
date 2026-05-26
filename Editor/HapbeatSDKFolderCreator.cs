@@ -60,12 +60,12 @@ namespace Hapbeat.Editor
 
                 EditorUtility.DisplayDialog(
                     "HapbeatSDK Folder",
-                    "ユーザー領域のフォルダを準備しました:\n\n" +
+                    "User-area folders are ready:\n\n" +
                     $"  Kits      : {kitsRoot}/\n" +
                     $"  Scenes    : {kScenesDir}/\n" +
                     $"  EventMaps : {kEventMapsDir}/\n\n" +
-                    "次に `Hapbeat → Initial Scene Setup` で Event Router + EventMap を一括作成するか、\n" +
-                    "Hapbeat Studio で Kit を Deploy すればこのフォルダに展開されます。",
+                    "Next: run `Hapbeat → Initial Scene Setup` to create an Event Router + EventMap,\n" +
+                    "or deploy a Kit from Hapbeat Studio and it will land in this folder.",
                     "OK");
             }
 

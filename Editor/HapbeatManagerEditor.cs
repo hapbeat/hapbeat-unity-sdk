@@ -101,18 +101,18 @@ namespace Hapbeat.Editor
             }
         }
 
-        // ── 接続状態セクション ────────────────────────────────────────────────
+        // ── Connection status section ─────────────────────────────────────
 
         private void DrawConnectionStatus(HapbeatManager manager)
         {
-            EditorGUILayout.LabelField("接続状態", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Connection", EditorStyles.boldLabel);
 
             bool isPlaying = Application.isPlaying;
             bool isConnected = isPlaying ? manager.IsConnected : _editorConnected;
 
             // Status indicator
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel("ステータス");
+            EditorGUILayout.PrefixLabel("Status");
 
             Color originalColor = GUI.backgroundColor;
             GUI.backgroundColor = isConnected ? Color.green : Color.red;
@@ -121,15 +121,15 @@ namespace Hapbeat.Editor
             if (isPlaying && isConnected)
             {
                 string mode = manager.IsBroadcast ? "broadcast" : "unicast";
-                statusText = $"送信可 ({mode})";
+                statusText = $"Ready ({mode})";
             }
             else if (!isPlaying && isConnected)
             {
-                statusText = "Edit モード接続中";
+                statusText = "Connected (Edit)";
             }
             else
             {
-                statusText = "未接続";
+                statusText = "Not connected";
             }
             GUILayout.Button(statusText, GUILayout.Width(160));
             GUI.backgroundColor = originalColor;
@@ -138,9 +138,9 @@ namespace Hapbeat.Editor
 
             if (isPlaying && isConnected)
             {
-                EditorGUILayout.LabelField("送信モード", manager.IsBroadcast ? "ブロードキャスト" : "ユニキャスト (Bridge)");
-                EditorGUILayout.LabelField("デフォルトグループ", manager.DefaultGroup.ToString());
-                EditorGUILayout.LabelField("時刻オフセット", $"{manager.TimeOffsetUs} μs");
+                EditorGUILayout.LabelField("Mode", manager.IsBroadcast ? "Broadcast" : "Unicast (Bridge)");
+                EditorGUILayout.LabelField("Default group", manager.DefaultGroup.ToString());
+                EditorGUILayout.LabelField("Time offset", $"{manager.TimeOffsetUs} μs");
             }
 
             if (isPlaying)
@@ -148,16 +148,16 @@ namespace Hapbeat.Editor
                 EditorGUILayout.BeginHorizontal();
 
                 EditorGUI.BeginDisabledGroup(isConnected);
-                if (GUILayout.Button("接続"))
+                if (GUILayout.Button("Connect"))
                     manager.Connect();
                 EditorGUI.EndDisabledGroup();
 
                 EditorGUI.BeginDisabledGroup(!isConnected);
-                if (GUILayout.Button("切断"))
+                if (GUILayout.Button("Disconnect"))
                     manager.Disconnect();
                 EditorGUI.EndDisabledGroup();
 
-                if (GUILayout.Button("検出"))
+                if (GUILayout.Button("Discover"))
                     manager.Discover();
 
                 EditorGUILayout.EndHorizontal();
@@ -166,7 +166,7 @@ namespace Hapbeat.Editor
             {
                 EditorGUILayout.BeginHorizontal();
 
-                if (GUILayout.Button(_editorConnected ? "切断" : "接続 (Edit)"))
+                if (GUILayout.Button(_editorConnected ? "Disconnect" : "Connect (Edit)"))
                 {
                     if (_editorConnected)
                         EditorDisconnect();
@@ -174,7 +174,7 @@ namespace Hapbeat.Editor
                         EditorConnect(manager);
                 }
 
-                if (GUILayout.Button("検出 (Edit)"))
+                if (GUILayout.Button("Discover (Edit)"))
                     EditorDiscover(manager);
 
                 if (_editorConnected && GUILayout.Button("Ping"))
@@ -187,11 +187,11 @@ namespace Hapbeat.Editor
             }
         }
 
-        // ── デバイス一覧セクション ─────────────────────────────────────────
+        // ── Device list section ─────────────────────────────────────────
 
         private void DrawDeviceList(HapbeatManager manager)
         {
-            _showDeviceSection = EditorGUILayout.Foldout(_showDeviceSection, "検出デバイス", true);
+            _showDeviceSection = EditorGUILayout.Foldout(_showDeviceSection, "Discovered devices", true);
             if (!_showDeviceSection) return;
 
             EditorGUI.indentLevel++;
@@ -202,7 +202,7 @@ namespace Hapbeat.Editor
 
             if (devices.Count == 0)
             {
-                EditorGUILayout.HelpBox("デバイス未検出。「検出」ボタンを押してください。", MessageType.Info);
+                EditorGUILayout.HelpBox("No devices found. Press \"Discover\" to scan.", MessageType.Info);
             }
             else
             {
@@ -211,7 +211,7 @@ namespace Hapbeat.Editor
                     EditorGUILayout.BeginVertical("box");
                     EditorGUILayout.LabelField(device.name, EditorStyles.boldLabel);
                     EditorGUILayout.LabelField("IP", device.ipAddress);
-                    EditorGUILayout.LabelField("グループ", device.group.ToString());
+                    EditorGUILayout.LabelField("Group", device.group.ToString());
                     if (!string.IsNullOrEmpty(device.firmwareVersion))
                         EditorGUILayout.LabelField("FW", device.firmwareVersion);
                     EditorGUILayout.EndVertical();
@@ -221,11 +221,11 @@ namespace Hapbeat.Editor
             EditorGUI.indentLevel--;
         }
 
-        // ── テスト操作セクション (EventMap-style) ─────────────────────────
+        // ── Test controls section (EventMap-style) ────────────────────────
 
         private void DrawTestControls(HapbeatManager manager)
         {
-            _showTestSection = EditorGUILayout.Foldout(_showTestSection, "テスト操作", true);
+            _showTestSection = EditorGUILayout.Foldout(_showTestSection, "Test", true);
             if (!_showTestSection) return;
 
             bool canTestRuntime = Application.isPlaying && manager.IsConnected;
@@ -309,7 +309,7 @@ namespace Hapbeat.Editor
             if (!canTest)
             {
                 EditorGUILayout.HelpBox(
-                    "テスト操作には接続が必要です。上部の「接続 (Edit)」または プレイモードで接続してください。",
+                    "Test requires a connection. Use \"Connect (Edit)\" above or enter Play mode.",
                     MessageType.Info);
             }
 
@@ -327,8 +327,8 @@ namespace Hapbeat.Editor
 
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.PrefixLabel(new GUIContent("From Kit",
-                "Kit manifest の events bucket から Command イベントを選択。\n" +
-                "選択すると Event ID と Gain (manifest intensity) が自動で埋まる。"));
+                "Pick a Command event from a deployed kit manifest.\n" +
+                "Selecting fills Event ID and shows the manifest intensity."));
 
             string buttonLabel;
             if (events.Count == 0)
@@ -518,9 +518,9 @@ namespace Hapbeat.Editor
 
             _testGain = EditorGUILayout.Slider(
                 new GUIContent("Gain" + suffix,
-                    "Authored intensity の倍率 (EventMap entry.gain と同じ semantics)。\n" +
-                    "1.0 = manifest intensity そのまま。0.5 = 半分。2.0 = ブースト。\n" +
-                    "実際に送信される値 = Gain × manifest.intensity (intensity が無ければ Gain そのまま)。"),
+                    "Multiplier on the authored intensity (same as EventMap entry.gain).\n" +
+                    "1.0 = use manifest intensity as-is. 0.5 = half. 2.0 = boost.\n" +
+                    "Sent value = Gain × manifest.intensity (or just Gain if no manifest match)."),
                 _testGain, 0f, 2f);
         }
 
@@ -711,7 +711,7 @@ namespace Hapbeat.Editor
             _editorClient = new HapbeatClient();
             _editorClient.OnPong += (rttUs, serverTimeUs) =>
             {
-                _editorPingResult = $"Ping 成功: RTT = {rttUs} μs ({rttUs / 1000.0:F1} ms)";
+                _editorPingResult = $"Ping ok: RTT = {rttUs} μs ({rttUs / 1000.0:F1} ms)";
                 Repaint();
             };
             _editorClient.OnConnectionStateChanged += (connected) =>
@@ -747,7 +747,7 @@ namespace Hapbeat.Editor
         {
             if (_editorClient == null || !_editorClient.IsConnected) return;
             _editorClient.SendPing();
-            _editorPingResult = "Ping 送信中...";
+            _editorPingResult = "Pinging...";
         }
 
         private void EditorDiscover(HapbeatManager manager)

@@ -14,18 +14,18 @@ using Hapbeat.Editor;
 namespace Hapbeat.Samples.Editor
 {
     /// <summary>
-    /// BasicExample シーンを自動生成する Editor スクリプト。
+    /// Editor script that auto-builds the BasicExample scene.
     /// Menu: Hapbeat > Developer > Build Basic Example  (Local/Embedded install only)
     ///
-    /// 構成:
+    /// Layout:
     ///   - HapbeatManager           (singleton)
-    ///   - HapbeatActionHelper      (Stop / StopStream / Ping を UnityEvent から呼ぶための wrapper)
-    ///   - HapbeatUnityEventTrigger × 3 (oneshot stream / loop stream / command の各 entry に bind)
-    ///   - HapbeatKeyDispatcher     (Space / R / F / S / C を上記 Trigger / Helper に UnityEvent wiring)
-    ///   - HapbeatStatusOverlay            (Status と Log の表示専用)
+    ///   - HapbeatActionHelper      (wrapper for calling Stop / StopStream / Ping from UnityEvents)
+    ///   - HapbeatUnityEventTrigger × 3 (bound to the one-shot stream / loop stream / command entries)
+    ///   - HapbeatKeyDispatcher     (wires Space / R / F / S / C to the Triggers / Helper via UnityEvent)
+    ///   - HapbeatStatusOverlay     (renders Status and Log)
     ///
-    /// 生成物の配置 (ユーザー領域):
-    ///   Assets/HapbeatSDK/Kits/basic-exam-kit/{install-clips, stream-clips}/   (Studio 共通の kit root)
+    /// Output paths (user area):
+    ///   Assets/HapbeatSDK/Kits/basic-exam-kit/{install-clips, stream-clips}/   (shared Studio kit root)
     ///   Assets/HapbeatSDK/SDK_Samples/BasicExample/EventMaps/BasicExampleEventMap.asset
     ///   Assets/HapbeatSDK/SDK_Samples/BasicExample/Scenes/BasicExample.unity
     /// </summary>
@@ -60,8 +60,8 @@ namespace Hapbeat.Samples.Editor
             string sampleRoot = FindSampleRoot();
             if (sampleRoot == null)
             {
-                EditorUtility.DisplayDialog("エラー",
-                    "Basic Example サンプルのフォルダが見つかりません。\nPackage Manager から Basic Example を Import してください。",
+                EditorUtility.DisplayDialog("Error",
+                    "Basic Example sample folder not found.\nImport Basic Example from the Package Manager first.",
                     "OK");
                 return;
             }
@@ -106,13 +106,13 @@ namespace Hapbeat.Samples.Editor
             string dstMap   = $"{dstMaps}/{kEventMapName}.asset";
 
             if (!EditorUtility.DisplayDialog(
-                "BasicExample を展開",
-                "サンプル同梱の BasicExample 資産を Assets/HapbeatSDK/ 配下にコピーします。\n" +
+                "Deploy BasicExample",
+                "Copy the bundled BasicExample assets into Assets/HapbeatSDK/.\n" +
                 $"  - {kitDir}/ (Kit, manifest + wav)\n" +
                 $"  - {dstMap}\n" +
                 $"  - {dstScene}\n\n" +
-                "既存のコピーは上書きされます。",
-                "展開する", "キャンセル"))
+                "Existing copies will be overwritten.",
+                "Deploy", "Cancel"))
                 return;
 
             // 1. Kit (raw file copy: WAVs get fresh GUIDs in HapbeatSDK).
@@ -144,12 +144,12 @@ namespace Hapbeat.Samples.Editor
             if (!string.IsNullOrEmpty(result.primaryScenePath))
                 EditorSceneManager.OpenScene(result.primaryScenePath, OpenSceneMode.Single);
 
-            EditorUtility.DisplayDialog("完了",
-                "BasicExample を展開しました:\n" +
+            EditorUtility.DisplayDialog("Done",
+                "BasicExample deployed:\n" +
                 $"  Kit       : {kitDir}/\n" +
                 $"  EventMap  : {dstMap}\n" +
                 $"  Scene     : {dstScene}\n\n" +
-                "Play で Space / R / F / S / C を試してみてください。",
+                "Enter Play mode and try Space / R / F / S / C.",
                 "OK");
         }
 
@@ -218,14 +218,15 @@ namespace Hapbeat.Samples.Editor
             HapbeatSampleDeployment.EnsureAssetFolder(eventMapDir);
 
             if (!EditorUtility.DisplayDialog(
-                "BasicExample を scaffold",
-                "サンプルに同梱されている BasicExample Scene / EventMap が見つからないため、Assets/HapbeatSDK/ 配下に初期生成します。\n" +
-                "(通常は SDK 開発者がコミット前の bootstrap として 1 回だけ実行する操作)\n\n" +
+                "Scaffold BasicExample",
+                "The bundled BasicExample Scene / EventMap was not found. " +
+                "Generate them under Assets/HapbeatSDK/.\n" +
+                "(Usually run once by an SDK developer to bootstrap before the initial commit.)\n\n" +
                 $"  - {kitDir}/ (Kit, manifest + wav)\n" +
                 $"  - {scenePath}\n" +
                 $"  - {mapPath}\n\n" +
-                "Play で動作確認した後、Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (BasicExample) を実行してください。",
-                "生成する", "キャンセル"))
+                "After verifying in Play mode, run Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (BasicExample).",
+                "Generate", "Cancel"))
                 return;
 
             // Kit (raw file copy, fresh GUIDs). Must come before EventMap
@@ -315,12 +316,12 @@ namespace Hapbeat.Samples.Editor
             AssetDatabase.SaveAssets();
             Debug.Log($"[Hapbeat] BasicExample scene scaffolded: {scenePath}");
 
-            EditorUtility.DisplayDialog("完了",
-                "BasicExample を Assets/HapbeatSDK/ に scaffold しました:\n" +
+            EditorUtility.DisplayDialog("Done",
+                "BasicExample scaffolded under Assets/HapbeatSDK/:\n" +
                 $"  Kit      : {kitDir}/\n" +
                 $"  EventMap : {mapPath}\n" +
                 $"  Scene    : {scenePath}\n\n" +
-                "Play で動作確認した後、Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (BasicExample) を実行して repo にコミットしてください。",
+                "After verifying in Play mode, run Hapbeat → Maintainers → Sync HapbeatSDK → Samples~ (BasicExample) and commit to the repo.",
                 "OK");
         }
 

@@ -46,24 +46,24 @@ namespace Hapbeat.Editor
 
         private void DrawHeader()
         {
-            EditorGUILayout.LabelField("Hapbeat SDK 設定", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Hapbeat SDK Settings", EditorStyles.boldLabel);
             EditorGUILayout.HelpBox(
-                "Hapbeat デバイスへの接続設定を行います。\n" +
-                "標準は Wi-Fi UDP でデバイスを自動検出して接続します。",
+                "Configure the Hapbeat device connection.\n" +
+                "Default: Wi-Fi UDP with device auto-discovery.",
                 MessageType.Info);
         }
 
         private void DrawConfigSection()
         {
-            EditorGUILayout.LabelField("接続設定", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Connection", EditorStyles.boldLabel);
 
             if (_config == null)
             {
                 EditorGUILayout.HelpBox(
-                    "HapbeatConfig アセットが見つかりません。新規作成してください。",
+                    "HapbeatConfig asset not found. Create one to continue.",
                     MessageType.Warning);
 
-                if (GUILayout.Button("HapbeatConfig を作成"))
+                if (GUILayout.Button("Create HapbeatConfig"))
                 {
                     CreateConfigAsset();
                 }
@@ -77,82 +77,84 @@ namespace Hapbeat.Editor
 
             _serializedConfig.Update();
 
-            // ── 基本設定 ──────────────────────────────────────────────
+            // ── Network ──────────────────────────────────────────────
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("port"),
-                new GUIContent("UDP ポート", "通信用 UDP ポート番号"));
+                new GUIContent("UDP Port", "Port for UDP packets."));
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("group"),
-                new GUIContent("グループ ID", "送信先グループ。0 = 全デバイス、1-254 = 特定グループ（マルチプレイヤー時）"));
+                new GUIContent("Group ID",
+                    "Target group. 0 = all devices, 1–254 = specific group (multiplayer)."));
 
             EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("アプリ情報", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("App Info", EditorStyles.boldLabel);
 
             var appNameProp = _serializedConfig.FindProperty("appName");
             EditorGUILayout.PropertyField(appNameProp,
-                new GUIContent("アプリ名",
-                    "Hapbeat デバイスのディスプレイに表示されるクライアントアプリ名。\n" +
-                    $"Max {HapbeatConfig.MaxAppNameLength} 文字 (display grid 幅)。デフォルトの app_name 要素 (8x1) では先頭 8 文字のみ表示。\n" +
-                    "空欄の場合は Application.productName が自動使用される。"));
+                new GUIContent("App Name",
+                    "Shown on the Hapbeat device display. " +
+                    $"Max {HapbeatConfig.MaxAppNameLength} chars; the default app_name " +
+                    "element (8x1) shows the first 8. Empty = use Application.productName."));
             // Char-count indicator (right-aligned, mini style).
             int len = appNameProp.stringValue?.Length ?? 0;
             EditorGUILayout.LabelField(
-                $"   {len} / {HapbeatConfig.MaxAppNameLength} 文字" +
-                (len == 0 ? "  (空欄: Application.productName を使用)" : ""),
+                $"   {len} / {HapbeatConfig.MaxAppNameLength} chars" +
+                (len == 0 ? "  (empty: uses Application.productName)" : ""),
                 EditorStyles.miniLabel);
 
             EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("検出設定", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Discovery", EditorStyles.boldLabel);
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("discoveryTimeoutMs"),
-                new GUIContent("検出タイムアウト (ms)", "デバイス検出のタイムアウト"));
+                new GUIContent("Discovery Timeout (ms)", "Device discovery timeout."));
 
             EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("動作設定", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Behavior", EditorStyles.boldLabel);
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("pingInterval"),
-                new GUIContent("Ping 間隔 (秒)", "キープアライブ Ping の送信間隔"));
+                new GUIContent("Ping Interval (s)", "Keep-alive ping interval."));
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("streamSendAheadSeconds"),
                 new GUIContent(
-                    "Stream バッファ (秒)",
-                    "StreamClip 送信時にホスト側で先送りするバッファ長。\n" +
-                    "短い: Stop の応答が速い、ジッタで途切れやすい\n" +
-                    "長い: 安定、Stop 後に短い残響あり\n" +
-                    "Range 10–200ms / Default 50ms。詳しくは docs/streaming"));
+                    "Stream Buffer (s)",
+                    "Host-side send-ahead buffer for StreamClip.\n" +
+                    "Short: faster Stop response, more jitter risk.\n" +
+                    "Long: stable, small tail after Stop.\n" +
+                    "Range 10–200 ms, default 50 ms."));
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("enableLogging"),
-                new GUIContent("ログ出力", "詳細ログをコンソールに出力"));
+                new GUIContent("Verbose Log", "Print verbose log to the console."));
 
-            // ── レイテンシ補正 ────────────────────────────────────────
-            // Audio 出力デバイス (Bluetooth 等) との遅延差を吸収する全体オフセット。
-            // 個別 entry 単位の追加調整は EventMap Window 側 (delayOffsetSeconds)。
+            // ── Latency compensation ─────────────────────────────────
+            // Global offset to align haptic with the (often slower) audio output
+            // path (Bluetooth, etc.). Per-entry fine tuning lives on each
+            // EventMap entry's Delay Offset.
             EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("レイテンシ補正", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Latency Compensation", EditorStyles.boldLabel);
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("hapticDelaySeconds"),
                 new GUIContent(
-                    "触覚遅延 (秒)",
-                    "Audio 出力デバイス (Bluetooth 等) の latency に合わせて、全 Play / StreamClip\n" +
-                    "に加算するグローバル遅延。Hapbeat 触覚は UDP 直送で非常に低遅延 (~10ms) なので、\n" +
-                    "speakers / headphones が遅い環境では触覚が先に来てしまう。これを補正する offset。\n\n" +
-                    "目安:\n" +
-                    "  ・有線 / USB DAC      → 0.00\n" +
-                    "  ・内蔵スピーカー       → 0.02〜0.05\n" +
-                    "  ・Bluetooth (aptX LL) → 0.03〜0.05\n" +
-                    "  ・Bluetooth (SBC/AAC) → 0.15〜0.20\n\n" +
-                    "各 EventMap entry の Delay Offset でさらに ±0.2 秒の個別調整も可能。"));
+                    "Haptic Delay (s)",
+                    "Global delay applied to every Play / StreamClip to align with the audio\n" +
+                    "output device. Hapbeat is UDP-direct (~10 ms), so when speakers /\n" +
+                    "headphones are slower the haptic arrives first — this offset compensates.\n\n" +
+                    "Typical values:\n" +
+                    "  Wired / USB DAC      → 0.00\n" +
+                    "  Built-in speakers    → 0.02–0.05\n" +
+                    "  Bluetooth (aptX LL)  → 0.03–0.05\n" +
+                    "  Bluetooth (SBC/AAC)  → 0.15–0.20\n\n" +
+                    "Per-entry Delay Offset can add ±0.2 s on top."));
 
             EditorGUILayout.Space(5);
 
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.ObjectField("Config アセット", _config, typeof(HapbeatConfig), false);
+            EditorGUILayout.ObjectField("Config Asset", _config, typeof(HapbeatConfig), false);
             EditorGUILayout.EndHorizontal();
 
             // ── Advanced: Bridge (ESP-NOW) ───────────────────────────
@@ -166,17 +168,17 @@ namespace Hapbeat.Editor
                 using (new EditorGUI.IndentLevelScope())
                 {
                     EditorGUILayout.HelpBox(
-                        "ESP-NOW で複数 Hapbeat に同報する用途向け。通常の Wi-Fi UDP で\n" +
-                        "事足りる場合は触る必要ありません。",
+                        "For ESP-NOW multicast to many devices. Skip this when plain\n" +
+                        "Wi-Fi UDP is enough.",
                         MessageType.None);
                     EditorGUILayout.PropertyField(
                         _serializedConfig.FindProperty("useBridge"),
-                        new GUIContent("Bridge を使用", "ESP-NOW 経由の多デバイス送信時に有効化"));
+                        new GUIContent("Use Bridge", "Enable for ESP-NOW multi-device send."));
 
                     EditorGUI.BeginDisabledGroup(!_config.useBridge);
                     EditorGUILayout.PropertyField(
                         _serializedConfig.FindProperty("bridgeHost"),
-                        new GUIContent("Bridge ホスト", "Bridge のホスト名または IP アドレス"));
+                        new GUIContent("Bridge Host", "Bridge hostname or IP address."));
                     EditorGUI.EndDisabledGroup();
                 }
             }
@@ -186,34 +188,34 @@ namespace Hapbeat.Editor
 
         private void DrawConnectionSection()
         {
-            EditorGUILayout.LabelField("接続状態", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Connection Status", EditorStyles.boldLabel);
 
             bool isPlaying = Application.isPlaying;
             bool isConnected = isPlaying && HapbeatManager.Instance != null &&
                                HapbeatManager.Instance.IsConnected;
 
             EditorGUI.BeginDisabledGroup(true);
-            EditorGUILayout.Toggle("プレイモード", isPlaying);
-            EditorGUILayout.Toggle("接続中", isConnected);
+            EditorGUILayout.Toggle("Play Mode", isPlaying);
+            EditorGUILayout.Toggle("Connected", isConnected);
             EditorGUI.EndDisabledGroup();
 
             if (!isPlaying)
             {
                 EditorGUILayout.HelpBox(
-                    "接続テストを行うには、プレイモードで実行してください。",
+                    "Enter Play mode to test the connection.",
                     MessageType.Info);
             }
         }
 
         private void DrawTestSection()
         {
-            EditorGUILayout.LabelField("接続テスト", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Test", EditorStyles.boldLabel);
 
             bool canTest = Application.isPlaying && HapbeatManager.Instance != null;
 
             EditorGUI.BeginDisabledGroup(!canTest || _isPinging);
 
-            if (GUILayout.Button("Ping テスト"))
+            if (GUILayout.Button("Ping"))
             {
                 PerformPingTest();
             }
@@ -232,7 +234,7 @@ namespace Hapbeat.Editor
                 return;
 
             _isPinging = true;
-            _pingResult = "Ping 送信中...";
+            _pingResult = "Pinging...";
 
             if (!HapbeatManager.Instance.IsConnected)
             {
@@ -248,7 +250,7 @@ namespace Hapbeat.Editor
                 if (_isPinging)
                 {
                     _isPinging = false;
-                    _pingResult = "Ping タイムアウト - デバイスが応答しません。";
+                    _pingResult = "Ping timeout — no response from device.";
                     HapbeatManager.Instance.OnPong -= OnPingResponse;
                     Repaint();
                 }
@@ -258,7 +260,7 @@ namespace Hapbeat.Editor
         private void OnPingResponse(long rttUs)
         {
             _isPinging = false;
-            _pingResult = $"Ping 成功: RTT = {rttUs} μs ({rttUs / 1000.0:F1} ms)";
+            _pingResult = $"Ping OK: RTT = {rttUs} μs ({rttUs / 1000.0:F1} ms)";
 
             if (HapbeatManager.Instance != null)
             {
@@ -303,7 +305,7 @@ namespace Hapbeat.Editor
             EditorUtility.FocusProjectWindow();
             Selection.activeObject = _config;
 
-            Debug.Log($"[Hapbeat] HapbeatConfig を作成しました: {path}");
+            Debug.Log($"[Hapbeat] Created HapbeatConfig at {path}");
         }
     }
 }

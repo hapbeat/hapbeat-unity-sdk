@@ -6,13 +6,13 @@ using UnityEngine;
 namespace Hapbeat.Editor
 {
     /// <summary>
-    /// HapbeatEventMap を AI / 人間に読みやすい Markdown summary として書き出す。
-    /// Unity の .asset YAML は m_FileID / GUID / enum 整数等で冗長なため、
-    /// 構造化テキストに整形して別ファイルへ出力する。
+    /// Export a HapbeatEventMap as a Markdown summary that is easy for AI and
+    /// humans to read. Unity's .asset YAML is verbose (m_FileID / GUID / enum
+    /// integers), so this produces structured text in a sibling file.
     ///
-    /// 出力先: 同 EventMap asset の同フォルダ <c>{MapName}.md</c>
+    /// Output: <c>{MapName}.md</c> in the same folder as the EventMap asset.
     ///
-    /// メニュー: Hapbeat / Event Map / Export Markdown summary
+    /// Menu: Hapbeat / Event Map / Export Markdown summary
     /// </summary>
     public static class HapbeatEventMapMarkdownExport
     {
@@ -22,8 +22,8 @@ namespace Hapbeat.Editor
             var map = Selection.activeObject as HapbeatEventMap;
             if (map == null)
             {
-                EditorUtility.DisplayDialog("EventMap 未選択",
-                    "Project ウィンドウで HapbeatEventMap (.asset) を選択してから実行してください。",
+                EditorUtility.DisplayDialog("No EventMap selected",
+                    "Select a HapbeatEventMap (.asset) in the Project window first.",
                     "OK");
                 return;
             }
@@ -41,7 +41,7 @@ namespace Hapbeat.Editor
                 var map = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(path);
                 if (map != null) { ExportToMarkdown(map); n++; }
             }
-            EditorUtility.DisplayDialog("Export 完了", $"{n} 個の EventMap を Markdown 出力しました。", "OK");
+            EditorUtility.DisplayDialog("Export done", $"Exported {n} EventMap(s) to Markdown.", "OK");
         }
 
         public static void ExportToMarkdown(HapbeatEventMap map)
@@ -55,7 +55,7 @@ namespace Hapbeat.Editor
             sb.AppendLine($"# {map.name}");
             sb.AppendLine();
             sb.AppendLine($"_Auto-generated from `{assetPath}` (Hapbeat → Export Event Map). " +
-                          "編集は Unity の EventMap window 経由を推奨。手動編集はこの md ではなく .asset 側を変更してください。_");
+                          "Edit via the EventMap window — change the `.asset`, not this file._");
             sb.AppendLine();
             sb.AppendLine($"**Entry count**: {map.entries.Count}");
             sb.AppendLine();

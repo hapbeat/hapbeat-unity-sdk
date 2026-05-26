@@ -18,9 +18,7 @@ namespace Hapbeat
         public int group = -1;
 
         [Header("App Info")]
-        [Tooltip("Hapbeat デバイスのディスプレイに表示されるクライアントアプリ名。\n" +
-                 "Max 16 文字 (display grid 幅)。デフォルトの app_name 要素 (8x1) では先頭 8 文字のみ表示。\n" +
-                 "空欄の場合は Application.productName を自動使用。")]
+        [Tooltip("Shown on the Hapbeat device display. Max 16 chars; the default app_name element (8x1) shows the first 8. Empty = use Application.productName.")]
         [Delayed]
         public string appName = "";
 
@@ -54,16 +52,16 @@ namespace Hapbeat
         public float streamSendAheadSeconds = 0.05f;
 
         [Header("Latency Compensation")]
-        [Tooltip("Audio 出力デバイス (Bluetooth 等) の latency に合わせて、全 Play / StreamClip 呼び出しに " +
-                 "加算するグローバル遅延 (秒)。Hapbeat 触覚は UDP 直送で非常に低遅延 (~10ms) なので、" +
-                 "speakers / headphones が遅い環境では触覚が先に来てしまう。これを補正するための offset。\n\n" +
-                 "目安:\n" +
-                 "  ・有線 / USB DAC      → 0.00 (補正不要)\n" +
-                 "  ・内蔵スピーカー       → 0.02〜0.05\n" +
-                 "  ・Bluetooth (aptX LL) → 0.03〜0.05\n" +
-                 "  ・Bluetooth (SBC/AAC) → 0.15〜0.20\n\n" +
-                 "各 EventMap entry の delayOffsetSeconds でさらに ±0.2 秒の個別調整も可能。\n" +
-                 "デフォルト 0 (遅延なし)。")]
+        [Tooltip("Global delay (seconds) added to every Play / StreamClip call to match the audio output latency " +
+                 "(e.g. Bluetooth headphones). Hapbeat haptics go out over UDP with very low latency (~10 ms), " +
+                 "so on slow audio paths the haptic arrives before the sound. Use this offset to align them.\n\n" +
+                 "Rule of thumb:\n" +
+                 "  - Wired / USB DAC     → 0.00 (no compensation needed)\n" +
+                 "  - Built-in speakers   → 0.02 – 0.05\n" +
+                 "  - Bluetooth (aptX LL) → 0.03 – 0.05\n" +
+                 "  - Bluetooth (SBC/AAC) → 0.15 – 0.20\n\n" +
+                 "Each EventMap entry can add a ±0.2 s per-entry offset via delayOffsetSeconds.\n" +
+                 "Default 0 (no delay).")]
         [Range(0f, 0.5f)]
         public float hapticDelaySeconds = 0f;
 

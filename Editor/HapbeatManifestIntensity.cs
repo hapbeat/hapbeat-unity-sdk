@@ -234,9 +234,9 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// (eventId × mode) tuple exact match. schema 2.0.0 では同 eventId が
-        /// command / stream_clip 両 bucket に並存しうるので、entry の mode と
-        /// 一致するもののみを返す。
+        /// Exact (eventId × mode) tuple match. In schema 2.0.0 the same eventId
+        /// can live in both the command and stream_clip buckets, so we only
+        /// return matches whose mode equals the entry's mode.
         /// </summary>
         private static bool TryMatchByEventIdAndMode(
             List<KitManifestEvent> all, string eventId, string expectedMode,
@@ -383,14 +383,15 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Kit manifest schema 2.0.0 parser. Reads <c>events</c> (command bucket)
-        /// と <c>stream_events</c> (stream_clip bucket) を別々に走査し、bucket 名から
-        /// mode を確定する (旧 <c>"mode"</c> field は廃止)。<c>clip</c> は bare filename
-        /// で書かれ、bucket に応じて <c>install-clips/</c> / <c>stream-clips/</c> を自動 prefix する。
+        /// Kit manifest schema 2.0.0 parser. Scans the <c>events</c> (command)
+        /// and <c>stream_events</c> (stream_clip) buckets separately and derives
+        /// the mode from the bucket name (the old per-event <c>"mode"</c> field
+        /// is gone). <c>clip</c> is written as a bare filename and is auto-prefixed
+        /// with <c>install-clips/</c> or <c>stream-clips/</c> depending on bucket.
         /// <para>
-        /// 同じ eventId が両 bucket に存在することは <b>valid</b> (Studio の BOTH モード相当)。
-        /// (eventId × mode) tuple で intensity lookup を区別するため、両 entry が独立に
-        /// output に積まれる。
+        /// The same eventId can <b>validly</b> appear in both buckets (Studio's
+        /// BOTH mode). Lookups are keyed by (eventId × mode), so both entries
+        /// are pushed to the output independently.
         /// </para>
         /// </summary>
         private static void ParseEvents(string json, string kitAssetPath, List<KitManifestEvent> output)

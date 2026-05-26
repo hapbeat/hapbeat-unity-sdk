@@ -2,7 +2,6 @@
 using System.IO;
 using UnityEditor;
 using UnityEngine;
-using static Hapbeat.Editor.HapbeatLocalization;
 
 namespace Hapbeat.Editor
 {
@@ -36,8 +35,7 @@ namespace Hapbeat.Editor
             {
                 Debug.LogWarning(
                     "[Hapbeat] Multiple HapbeatKitsReadme assets found — using the first one.\n" +
-                    "複数の HapbeatKitsReadme が見つかりました。先頭を使用します。\n" +
-                    "Remove extra markers / 不要なマーカーは削除してください:\n" +
+                    "Remove extra markers:\n" +
                     string.Join("\n", System.Array.ConvertAll(guids, AssetDatabase.GUIDToAssetPath)));
             }
             string assetPath = AssetDatabase.GUIDToAssetPath(guids[0]);
@@ -105,8 +103,7 @@ namespace Hapbeat.Editor
             GUILayout.Label("Hapbeat Kits", _h1);
             GUILayout.Space(2);
             GUILayout.Label(
-                Tr("Haptic content authored in Hapbeat Studio, consumed by Unity at runtime.",
-                   "Hapbeat Studio で制作した触覚コンテンツを Unity ランタイムが消費します。"),
+                "Haptic content authored in Hapbeat Studio, consumed by Unity at runtime.",
                 new GUIStyle(EditorStyles.miniLabel) { alignment = TextAnchor.MiddleCenter });
             GUILayout.Space(6);
             DrawSeparator();
@@ -117,96 +114,64 @@ namespace Hapbeat.Editor
             EnsureStyles();
             var readme = (HapbeatKitsReadme)target;
 
-            // ── Language toggle ──────────────────────────────────────────────
-            DrawLangToggle();
-            GUILayout.Space(2);
-
             // ── Primary actions ──────────────────────────────────────────────
             GUILayout.Space(4);
             using (new GUILayout.HorizontalScope())
             {
-                if (GUILayout.Button(Tr("Open Hapbeat Studio", "Hapbeat Studio を開く"), GUILayout.Height(30)))
+                if (GUILayout.Button("Open Hapbeat Studio", GUILayout.Height(30)))
                     Application.OpenURL(kStudioUrl);
                 if (GUILayout.Button("hapbeat.com", GUILayout.Height(30), GUILayout.Width(120)))
                     Application.OpenURL(kSiteUrl);
             }
 
             // ── What is this folder ──────────────────────────────────────────
-            GUILayout.Label(Tr("What is this folder?", "このフォルダとは？"), _h2);
+            GUILayout.Label("What is this folder?", _h2);
             GUILayout.Label(
-                Tr(
-                    "This folder holds Hapbeat <b>Kits</b> — haptic content (manifest.json + " +
-                    "audio files) authored with Hapbeat Studio in the browser. Unity reads " +
-                    "these files directly; the SDK locates this folder via the <i>" +
-                    nameof(HapbeatKitsReadme) + "</i> asset, so you can move or rename it freely.",
-
-                    "このフォルダは Hapbeat <b>Kit</b>（ブラウザ上の Hapbeat Studio で制作した " +
-                    "manifest.json + 音声ファイル）を格納します。Unity はこれらを直接参照します。" +
-                    "SDK は <i>" + nameof(HapbeatKitsReadme) + "</i> マーカーアセットでフォルダを追跡するため、" +
-                    "フォルダを自由に移動・リネームできます。"),
+                "This folder holds Hapbeat <b>Kits</b> — haptic content (manifest.json + " +
+                "audio files) authored with Hapbeat Studio in the browser. Unity reads " +
+                "these files directly; the SDK locates this folder via the <i>" +
+                nameof(HapbeatKitsReadme) + "</i> asset, so you can move or rename it freely.",
                 _body);
 
             // ── Setup steps ──────────────────────────────────────────────────
-            GUILayout.Label(Tr("Getting started", "はじめ方"), _h2);
-            DrawStep("1", Tr(
-                "Open Studio (button above) in a Chromium-based browser.",
-                "上のボタンから Studio を Chromium 系ブラウザで開きます。"));
-            DrawStep("2", Tr(
-                "In Studio, set <b>Working Directory</b> to this folder.",
-                "Studio の <b>作業ディレクトリ</b> をこのフォルダに設定します。"));
-            DrawStep("3", Tr(
-                "Studio auto-scaffolds <i>&lt;kit-id&gt;/manifest.json</i> + clip folders.",
-                "Studio が <i>&lt;kit-id&gt;/manifest.json</i> とクリップフォルダを自動生成します。"));
-            DrawStep("4", Tr(
-                "Create an EventMap (<i>Create &gt; Hapbeat &gt; Event Map</i>) and pick Kit events from the \"From Kit ▾\" dropdown.",
-                "EventMap を作成し（<i>Create &gt; Hapbeat &gt; Event Map</i>）、\"From Kit ▾\" ドロップダウンから Kit イベントを選びます。"));
+            GUILayout.Label("Getting started", _h2);
+            DrawStep("1", "Open Studio (button above) in a Chromium-based browser.");
+            DrawStep("2", "In Studio, set <b>Working Directory</b> to this folder.");
+            DrawStep("3", "Studio auto-scaffolds <i>&lt;kit-id&gt;/manifest.json</i> + clip folders.");
+            DrawStep("4", "Create an EventMap (<i>Create &gt; Hapbeat &gt; Event Map</i>) and pick Kit events from the \"From Kit ▾\" dropdown.");
 
             // ── Event modes ──────────────────────────────────────────────────
-            GUILayout.Label(Tr("Event modes", "イベントモード"), _h2);
+            GUILayout.Label("Event modes", _h2);
             using (new GUILayout.VerticalScope(EditorStyles.helpBox))
             {
                 DrawModeRow("FIRE", "(command)",
-                    Tr("Device plays pre-flashed Kit clip (Event ID → UDP)",
-                       "デバイス内フラッシュ済みの Kit クリップを再生（Event ID → UDP）"),
+                    "Device plays a pre-flashed Kit clip (Event ID → UDP)",
                     "install-clips/");
                 DrawModeRow("CLIP", "(stream_clip)",
-                    Tr("SDK streams a Kit WAV over UDP as PCM16",
-                       "SDK が Kit の WAV を UDP でストリーム（PCM16）"),
+                    "SDK streams a Kit WAV over UDP as PCM16",
                     "stream-clips/");
             }
 
             // ── Strength model ───────────────────────────────────────────────
-            GUILayout.Label(Tr("Strength model", "強度モデル"), _h2);
+            GUILayout.Label("Strength model", _h2);
             GUILayout.Label(
-                Tr("<b>Final output = WAV amplitude × intensity × SDK_gain × device volume</b>",
-                   "<b>最終出力 = WAV振幅 × intensity × SDK_gain × デバイス音量</b>"),
+                "<b>Final output = WAV amplitude × intensity × SDK_gain × device volume</b>",
                 _body);
             GUILayout.Label(
-                Tr(
-                    "intensity — authored in Studio by the content creator (0.0 – 1.0).\n" +
-                    "SDK_gain — controlled on the Unity side (entry.gain × binding, 0.0 – 2.0, default 1.0).",
-                    "intensity は Studio で制作者が決める基準値 (0.0 – 1.0)。\n" +
-                    "SDK_gain は Unity 側 (entry.gain × binding) で可変 (0.0 – 2.0, 既定 1.0)。"),
+                "intensity — set by the content creator in Studio (0.0 – 1.0).\n" +
+                "SDK_gain — set on the Unity side (entry.gain × binding, 0.0 – 2.0, default 1.0).",
                 _muted);
 
             // ── Troubleshooting ──────────────────────────────────────────────
-            GUILayout.Label(Tr("Troubleshooting", "トラブルシューティング"), _h2);
-            DrawBullet(Tr(
-                "Studio doesn't detect audio → use PCM WAV in install-clips/ or stream-clips/",
-                "音源を Studio が認識しない → PCM WAV を install-clips/ または stream-clips/ に置く"));
-            DrawBullet(Tr(
-                "Device doesn't vibrate → flash the Kit from Manager, and check that event mode is <b>FIRE (command)</b>",
-                "デバイスが鳴らない → Manager から Kit をフラッシュ、かつ event mode が <b>FIRE (command)</b> か確認"));
-            DrawBullet(Tr(
-                "Changes not reflected in Unity → right-click this folder → <b>Reimport</b>",
-                "Unity に反映されない → このフォルダを右クリック → <b>Reimport</b>"));
+            GUILayout.Label("Troubleshooting", _h2);
+            DrawBullet("Studio doesn't detect audio → use PCM WAV in install-clips/ or stream-clips/");
+            DrawBullet("Device doesn't vibrate → flash the Kit from Manager, and check that event mode is <b>FIRE (command)</b>");
+            DrawBullet("Changes not reflected in Unity → right-click this folder → <b>Reimport</b>");
 
             // ── Version control ──────────────────────────────────────────────
-            GUILayout.Label(Tr("Version control", "バージョン管理"), _h2);
+            GUILayout.Label("Version control", _h2);
             GUILayout.Label(
-                Tr(
-                    "To keep large WAV files out of git, add the following to <i>.gitignore</i>:",
-                    "大きな WAV を git 外で管理したい場合、<i>.gitignore</i> に以下を追加:"),
+                "To keep large WAV files out of git, add the following to <i>.gitignore</i>:",
                 _body);
             using (new GUILayout.VerticalScope(EditorStyles.helpBox))
             {

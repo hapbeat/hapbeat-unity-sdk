@@ -79,12 +79,12 @@ namespace Hapbeat.Editor
         {
             if (eventMap == null)
             {
-                EditorGUILayout.HelpBox("Event Map を設定してください。", MessageType.Warning);
+                EditorGUILayout.HelpBox("Assign an Event Map.", MessageType.Warning);
                 return;
             }
             if (eventMap.entries.Count == 0)
             {
-                EditorGUILayout.HelpBox("Event Map にエントリがありません。", MessageType.Warning);
+                EditorGUILayout.HelpBox("The Event Map has no entries.", MessageType.Warning);
                 return;
             }
 
@@ -115,8 +115,8 @@ namespace Hapbeat.Editor
             if (currentIndex < 0 && idProp != null && !string.IsNullOrEmpty(idProp.stringValue))
             {
                 EditorGUILayout.HelpBox(
-                    "選択中の entry が EventMap に見つかりません (削除された可能性)。" +
-                    "再度 entry を選択してください。",
+                    "Selected entry not found in the EventMap (may have been deleted). " +
+                    "Please pick an entry again.",
                     MessageType.Warning);
             }
         }

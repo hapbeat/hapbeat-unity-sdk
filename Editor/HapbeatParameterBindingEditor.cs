@@ -62,8 +62,8 @@ namespace Hapbeat.Editor
             // ---- Source (always editable — scene-local, not a tuning value) ----
             EditorGUILayout.LabelField("Source", EditorStyles.boldLabel);
 
-            // Property の表示: linked 時は preset 側の値を read-only 表示
-            // (= runtime が実際に使う値)。Standalone 時は local field を編集可。
+            // When linked, show the preset's Property read-only (that's what
+            // runtime uses). When standalone, allow editing the local field.
             BindingSourceProperty srcPropSelected;
             if (isLinked && preset != null)
             {
@@ -71,7 +71,7 @@ namespace Hapbeat.Editor
                 {
                     EditorGUILayout.EnumPopup(
                         new GUIContent("Property (linked)",
-                            "Linked preset の値。Runtime はこれを使う。編集は EventMap window で。"),
+                            "Value from the linked preset (what runtime uses). Edit it in the EventMap window."),
                         preset.sourceProperty);
                 }
                 srcPropSelected = preset.sourceProperty;
@@ -80,30 +80,30 @@ namespace Hapbeat.Editor
             {
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("_sourceProperty"),
                     new GUIContent("Property",
-                        "読む値の種類。Transform 系 (LocalPosition*, Velocity* 等) は Source Transform を、" +
-                        "SliderValue は Source Slider を、External は SetValue(float) push を使う。"));
+                        "Which value to read. Transform-based (LocalPosition*, Velocity*, ...) uses " +
+                        "Source Transform; SliderValue uses Source Slider; External uses SetValue(float)."));
                 srcPropSelected = (BindingSourceProperty)serializedObject.FindProperty("_sourceProperty").enumValueIndex;
             }
 
-            // Source Property の選択に応じて適切な source object field を出す
+            // Show the source object field that matches the selected Source Property.
             switch (srcPropSelected)
             {
                 case BindingSourceProperty.SliderValue:
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("_sourceSlider"),
                         new GUIContent("Source Slider",
-                            "Slider.value (input) を読み取る対象。Slider component を持つ GameObject をドラッグ。"));
+                            "Slider whose .value to read. Drag in a GameObject with a Slider component."));
                     break;
                 case BindingSourceProperty.External:
                     EditorGUILayout.HelpBox(
-                        "External: 外部 script から SetValue(float) を呼ぶ。\n" +
-                        "Inspector で wiring したい場合は、source の UnityEvent<float> " +
-                        "(例: Slider.onValueChanged) を SetValue(dynamic float) にバインドする。",
+                        "External: call SetValue(float) from your own script.\n" +
+                        "To wire from the Inspector, bind a UnityEvent<float> (e.g. Slider.onValueChanged) " +
+                        "to SetValue(dynamic float).",
                         MessageType.Info);
                     break;
                 default:
                     EditorGUILayout.PropertyField(serializedObject.FindProperty("_sourceTransform"),
                         new GUIContent("Source Transform",
-                            "値を読み取る Transform。Velocity* は同 GO の Rigidbody を内部参照。"));
+                            "Transform to read from. Velocity* uses the Rigidbody on the same GameObject."));
                     if (srcPropSelected == BindingSourceProperty.VelocityMagnitude ||
                         srcPropSelected == BindingSourceProperty.AngularVelocityMagnitude)
                     {
@@ -189,14 +189,14 @@ namespace Hapbeat.Editor
                 }
             }
 
-            // ---- Live preview (Play mode + Edit mode 両対応) ----
-            // Edit mode では Update() が走らないので EvaluateNow() を呼んで Current* を refresh する。
-            // (EvaluateNow は副作用で CurrentInput/Normalized/Output を更新する)
-            // これにより scene を編集しながら slider / transform 値の binding 出力が live で確認できる。
+            // ---- Live preview (works in both Play mode and Edit mode) ----
+            // In Edit mode Update() doesn't run, so call EvaluateNow() to refresh Current*.
+            // (EvaluateNow also writes back CurrentInput / Normalized / Output as a side effect.)
+            // This lets the user see live binding output while editing the scene.
             {
                 if (!Application.isPlaying)
                 {
-                    try { binding.EvaluateNow(); } catch { /* uninitialized state は無視 */ }
+                    try { binding.EvaluateNow(); } catch { /* ignore uninitialized state */ }
                 }
 
                 EditorGUILayout.Space(4);
@@ -249,13 +249,13 @@ namespace Hapbeat.Editor
             if (!isLinked)
             {
                 EditorGUILayout.HelpBox(
-                    "Standalone binding \u2014 tuning values are read from the SerializedFields " +
-                    "below. EventMap \u306e preset \u3068 link \u3059\u308c\u3070\u5024\u304c EventMap \u306b\u96c6\u7d04\u3055\u308c\u307e\u3059\u3002",
+                    "Standalone binding \u2014 tuning values are read from the SerializedFields below. " +
+                    "Link to an EventMap preset to centralize them in the EventMap.",
                     MessageType.None);
                 EditorGUILayout.PropertyField(linkedMapProp,
-                    new GUIContent("Linked Event Map", "preset \u3092 link \u3059\u308b EventMap asset \u3092\u9078\u629e\u3002"));
+                    new GUIContent("Linked Event Map", "EventMap asset to link a preset from."));
 
-                // Linked Event Map \u304c\u30bb\u30c3\u30c8\u3055\u308c\u305f\u3089\u3001preset \u3092\u9078\u3076 dropdown \u3092\u51fa\u3059
+                // Once Linked Event Map is set, show the preset picker dropdown.
                 var pickedMap = linkedMapProp.objectReferenceValue as HapbeatEventMap;
                 if (pickedMap != null)
                 {
@@ -429,7 +429,7 @@ namespace Hapbeat.Editor
 
             int newIdx = EditorGUILayout.Popup(
                 new GUIContent("Link Preset",
-                    "EventMap の entry / preset を選択して link 確立。'+ new preset' で空 preset を作成し link。"),
+                    "Pick an EventMap entry / preset to link. Choose '+ new preset' to create an empty preset and link to it."),
                 currentIdx, labels.ToArray());
 
             if (newIdx != currentIdx && newIdx > 0)
@@ -487,8 +487,8 @@ namespace Hapbeat.Editor
                         EditorUtility.SetDirty(map);
                         AssetDatabase.SaveAssetIfDirty(map);
                         linkedIdProp.stringValue = newPreset.id;
-                        Debug.Log($"[Hapbeat] 新規 preset を entry '{entry.displayName}' に作成し link 確立 " +
-                                  $"(sourceTransformPath='{newPreset.sourceTransformPath}')。");
+                        Debug.Log($"[Hapbeat] Created and linked new preset on entry '{entry.displayName}' " +
+                                  $"(sourceTransformPath='{newPreset.sourceTransformPath}').");
                     }
                 }
                 else

@@ -96,19 +96,19 @@ namespace Hapbeat.Editor
             if (pkg == null)
             {
                 EditorUtility.DisplayDialog("Maintainer Sync",
-                    "Hapbeat SDK パッケージ情報を解決できませんでした。\n" +
-                    "プロジェクトが SDK を UPM 経由で参照していることを確認してください。",
+                    "Could not resolve the Hapbeat SDK package.\n" +
+                    "Check that the project references the SDK via UPM.",
                     "OK");
                 return false;
             }
             if (pkg.source != PackageSource.Local && pkg.source != PackageSource.Embedded)
             {
                 EditorUtility.DisplayDialog("Maintainer Sync",
-                    "このメニューは SDK を `file:` の local パッケージとして\n" +
-                    "参照している場合にのみ使用できます。\n\n" +
-                    $"現在の source: {pkg.source}\n" +
-                    $"resolvedPath : {pkg.resolvedPath}\n\n" +
-                    "Library/PackageCache 配下の read-only コピーには書き戻せません。",
+                    "This menu only works when the SDK is referenced as a\n" +
+                    "local (`file:`) package.\n\n" +
+                    $"Current source: {pkg.source}\n" +
+                    $"resolvedPath:  {pkg.resolvedPath}\n\n" +
+                    "Read-only copies under Library/PackageCache can't be written to.",
                     "OK");
                 return false;
             }
@@ -129,9 +129,9 @@ namespace Hapbeat.Editor
             if (missing.Count > 0)
             {
                 EditorUtility.DisplayDialog("Maintainer Sync",
-                    $"{sampleName} の sync 元ファイルが見つかりません:\n\n  " +
+                    $"Sync source files for {sampleName} are missing:\n\n  " +
                     string.Join("\n  ", missing) + "\n\n" +
-                    "`Hapbeat → Developer → Build Basic Example` で先に scaffold を実行してください。",
+                    "Run `Hapbeat → Developer → Build Basic Example` first to scaffold them.",
                     "OK");
                 return;
             }
@@ -142,11 +142,11 @@ namespace Hapbeat.Editor
                 lines.Add($"  {p.src}\n    → {p.dst}");
             if (!EditorUtility.DisplayDialog(
                 "Maintainer Sync",
-                $"{sampleName} 用 authored 資産を Samples~ にコピーします。\n" +
-                "(.meta も同時にコピーして GUID を保全します)\n\n" +
+                $"Copy authored {sampleName} assets into Samples~.\n" +
+                "(.meta files are copied too, preserving GUIDs.)\n\n" +
                 string.Join("\n", lines) + "\n\n" +
-                "既存のファイルは上書きされます。",
-                "同期する", "キャンセル"))
+                "Existing files will be overwritten.",
+                "Sync", "Cancel"))
                 return;
 
             int copied = 0;
@@ -157,8 +157,8 @@ namespace Hapbeat.Editor
             }
 
             EditorUtility.DisplayDialog("Maintainer Sync",
-                $"{copied} 個の asset を Samples~/{sampleName}/ に同期しました。\n" +
-                "差分を確認したら repo に commit してください。",
+                $"Synced {copied} asset(s) into Samples~/{sampleName}/.\n" +
+                "Review the diff and commit to the repo.",
                 "OK");
         }
 

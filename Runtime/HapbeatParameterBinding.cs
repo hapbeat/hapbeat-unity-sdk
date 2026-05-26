@@ -4,8 +4,8 @@ using UnityEngine.UI;
 namespace Hapbeat
 {
     /// <summary>
-    /// 入力 source の種類。Transform / Rigidbody / UI Slider / external script float
-    /// を統一的に扱う。Inspector で選択 → 該当 source field が表示される。
+    /// Input source kind. Unified handling for Transform / Rigidbody / UI Slider
+    /// / external script float. Picking one in the Inspector shows the matching source field.
     /// </summary>
     public enum BindingSourceProperty
     {
@@ -28,15 +28,15 @@ namespace Hapbeat
         /// </summary>
         PositionDeltaMagnitude,
         /// <summary>
-        /// UI Slider.value を読む。Inspector の <c>_sourceSlider</c> field に
-        /// Slider component を割り当てる。Slider が null なら 0 が読まれる。
+        /// Reads UI Slider.value. Assign a Slider component to the
+        /// <c>_sourceSlider</c> field in the Inspector. Returns 0 when null.
         /// </summary>
         SliderValue,
         /// <summary>
-        /// 任意の script から <see cref="HapbeatParameterBinding.SetValue"/> で
-        /// push された値を読む。UnityEvent&lt;float&gt; を Inspector で
-        /// SetValue メソッドに wire するのが標準。
-        /// 例: 自作 MonoBehaviour の Update で逐次 binding.SetValue(x) を呼ぶ。
+        /// Reads a value pushed from any script via
+        /// <see cref="HapbeatParameterBinding.SetValue"/>. The typical setup is
+        /// to wire a UnityEvent&lt;float&gt; to the SetValue method in the Inspector.
+        /// e.g. call binding.SetValue(x) every Update from a custom MonoBehaviour.
         /// </summary>
         External,
     }
@@ -106,11 +106,11 @@ namespace Hapbeat
     public class HapbeatParameterBinding : MonoBehaviour
     {
         [Header("Source")]
-        [Tooltip("Transform/Rigidbody source 系 SourceProperty (LocalPosition*, Velocity* 等) で読む対象。")]
+        [Tooltip("Target for Transform/Rigidbody source properties (LocalPosition*, Velocity*, etc.).")]
         [SerializeField]
         private Transform _sourceTransform;
 
-        [Tooltip("SourceProperty = SliderValue の時に値を読む UI Slider。")]
+        [Tooltip("UI Slider to read when SourceProperty = SliderValue.")]
         [SerializeField]
         private Slider _sourceSlider;
 
@@ -351,7 +351,7 @@ namespace Hapbeat
         {
             if (!_initialized) Initialize();
 
-            // Source 種類ごとに必要な参照を check (足りなければ警告して skip)。
+            // Check that the source reference required by srcProp is set (warn and skip if not).
             var presetForSrc = ResolveLinkedPreset();
             var srcPropEarly = EffectiveSourceProperty(presetForSrc);
             if (!IsSourceReady(srcPropEarly))
@@ -359,8 +359,8 @@ namespace Hapbeat
                 if (!_warnedNoSource)
                 {
                     Debug.LogWarning(
-                        $"[HapbeatBinding] Source ({srcPropEarly}) の参照が未設定 on {name}. " +
-                        "Inspector で対応する source field (Transform / Slider) を割当ててください。", this);
+                        $"[HapbeatBinding] Source ({srcPropEarly}) is not set on {name}. " +
+                        "Assign the matching source field (Transform / Slider) in the Inspector.", this);
                     _warnedNoSource = true;
                 }
                 return;
@@ -439,8 +439,9 @@ namespace Hapbeat
                         // strength, 0 = silent. Can exceed 1 to boost past
                         // authored; ApplyGainModulation clamps Gain to [0, 2].
                         //
-                        // imperative path (HapbeatTriggerBase.GainMultiplier setter)
-                        // と同じ entry point を呼び出すことで計算式を集約。
+                        // Calls the same entry point as the imperative path
+                        // (HapbeatTriggerBase.GainMultiplier setter) so the
+                        // computation lives in one place.
                         playback.ApplyGainModulation(output);
                         break;
                     case BindingOutputParameter.StreamPan:
@@ -667,8 +668,8 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// 指定 srcProp が要求する source 参照が揃っているかチェック。
-        /// External は常に true (push value は存在不要)。
+        /// Whether the source reference required by <paramref name="srcProp"/> is set.
+        /// External always returns true (no source reference needed for pushed values).
         /// </summary>
         private bool IsSourceReady(BindingSourceProperty srcProp)
         {
@@ -689,13 +690,13 @@ namespace Hapbeat
         private float _externalValue;
 
         /// <summary>
-        /// 外部 source (script / UnityEvent) から binding に float 値を push する。
-        /// SourceProperty が <see cref="BindingSourceProperty.External"/> の場合のみ
-        /// 実際に runtime で使われる。
+        /// Push a float value into this binding from an external source
+        /// (script / UnityEvent). Only used at runtime when SourceProperty is
+        /// <see cref="BindingSourceProperty.External"/>.
         ///
-        /// UnityEvent&lt;float&gt; から Inspector で wire 可能:
-        /// 例) Slider.onValueChanged → binding.SetValue (dynamic float)
-        /// 例) Custom MonoBehaviour の field update で binding.SetValue(myFloat)
+        /// Can be wired from a UnityEvent&lt;float&gt; in the Inspector:
+        ///   e.g. Slider.onValueChanged → binding.SetValue (dynamic float)
+        ///   e.g. call binding.SetValue(myFloat) from a custom MonoBehaviour.
         /// </summary>
         public void SetValue(float v)
         {
@@ -729,11 +730,11 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// MonoBehaviour.Reset — Component を attach した瞬間に 1 度だけ呼ばれる。
-        /// 「attach した GO 自身を source として使う」典型ケースの初期値を埋める:
+        /// MonoBehaviour.Reset — called once when the component is attached.
+        /// Pre-fills the common "use the host GameObject as the source" case:
         ///   - _sourceTransform = self
-        ///   - _sourceSlider    = self の Slider component (あれば)
-        /// ユーザーが手動で別 GO に変えたい場合は Inspector で上書き可能。
+        ///   - _sourceSlider    = Slider on self (if any)
+        /// The user can override either in the Inspector.
         /// </summary>
         private void Reset()
         {
@@ -785,7 +786,7 @@ namespace Hapbeat
             {
                 if (b == null) continue;
                 if (ReferenceEquals(b.LinkedEventMap, map) && b.LinkedBindingId == presetId)
-                    return; // まだ使われている → preset 残す
+                    return; // still in use → keep the preset
             }
 
             // 居なくなった → preset を map から除去
@@ -803,8 +804,8 @@ namespace Hapbeat
                         UnityEditor.AssetDatabase.SaveAssetIfDirty(map);
                         string shortId = presetId.Length > 8 ? presetId.Substring(0, 8) + "…" : presetId;
                         UnityEngine.Debug.Log(
-                            $"[Hapbeat] Component 削除に伴い EventMap '{map.name}' から " +
-                            $"orphan preset (id={shortId}) を削除しました (Ctrl+Z で復活可)。");
+                            $"[Hapbeat] Removed orphan preset (id={shortId}) from " +
+                            $"EventMap '{map.name}' after its component was deleted (Ctrl+Z to undo).");
                         return;
                     }
                 }
