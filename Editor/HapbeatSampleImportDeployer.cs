@@ -39,38 +39,58 @@ namespace Hapbeat.Editor
         public static void DeployImportedSample()
         {
             var samples = DiscoverImportedSamples();
+            Debug.Log($"[Hapbeat] Deploy Imported Sample: discovered {samples.Count} sample(s) under {kSamplesRoot}/");
+
             if (samples.Count == 0)
             {
                 EditorUtility.DisplayDialog(
                     "Deploy Imported Sample",
-                    "No imported Hapbeat samples found.\n\n" +
+                    $"No imported Hapbeat samples found under {kSamplesRoot}/.\n\n" +
                     "Open Package Manager, select Hapbeat SDK, and import a sample first " +
                     "(e.g. Showcase).",
                     "OK");
                 return;
             }
 
-            // Single sample → ask for confirmation directly.
-            if (samples.Count == 1)
-            {
-                Deploy(samples[0]);
-                return;
-            }
-
-            // Multiple → show a picker.
-            var menu = new GenericMenu();
+            // Walk samples one by one with a per-sample dialog. Avoids the
+            // GenericMenu.ShowAsContext() pitfall — that popup needs an active
+            // GUI mouse event to anchor itself and often appears off-screen (or
+            // not at all) when fired from a [MenuItem] callback.
+            //
+            // Buttons:
+            //   Deploy → run Deploy(sample) for this one, continue to next
+            //   Skip   → skip this sample, continue to next
+            //   Cancel → abort the whole loop
+            int deployed = 0, skipped = 0;
             foreach (var s in samples)
             {
-                var captured = s;
-                menu.AddItem(new GUIContent($"Deploy {captured.Name}"), false,
-                    () => Deploy(captured));
+                int choice = EditorUtility.DisplayDialogComplex(
+                    $"Deploy {s.Name}?",
+                    BuildSampleSummary(s),
+                    "Deploy", "Cancel", "Skip");
+                if (choice == 1) break; // Cancel — stop iterating
+                if (choice == 2) { skipped++; continue; }
+                if (Deploy(s)) deployed++;
             }
-            menu.AddSeparator("");
-            menu.AddItem(new GUIContent("Deploy All"), false, () =>
-            {
-                foreach (var s in samples) Deploy(s);
-            });
-            menu.ShowAsContext();
+
+            Debug.Log($"[Hapbeat] Deploy Imported Sample done: deployed={deployed}, skipped={skipped}, total={samples.Count}.");
+        }
+
+        /// <summary>
+        /// Per-sample summary shown in the confirmation dialog. Short enough
+        /// to fit the OS modal — the deploy logic runs only if the user
+        /// confirms with the Deploy button.
+        /// </summary>
+        private static string BuildSampleSummary(SampleInfo s)
+        {
+            string destRoot = $"{HapbeatSDKFolderCreator.kSdkRoot}/SDK_Samples/{s.Name}";
+            return
+                $"Copy from\n  {s.SourceRoot}/\ninto\n  {destRoot}/\n\n" +
+                "Scenes / EventMaps / Animation are copied; Kit/ subfolders go to " +
+                $"{HapbeatSDKFolderCreator.kKitsDir}/.\n" +
+                "Audio / Scripts / Models stay in the imported folder " +
+                "(the EventMap keeps pointing at them — don't delete the imported " +
+                "sample folder while the deployed EventMap references those clips).";
         }
 
         // ── Discovery ─────────────────────────────────────────────────────
@@ -117,7 +137,14 @@ namespace Hapbeat.Editor
 
         // ── Deployment ────────────────────────────────────────────────────
 
-        private static void Deploy(SampleInfo s)
+        /// <summary>
+        /// Perform the actual deploy. Returns true if at least one asset was
+        /// copied; false if the sample contained no deployable files.
+        /// Caller has already confirmed via the top-level
+        /// <c>DeployImportedSample</c> menu dialog, so this method does not
+        /// show its own pre-deploy confirmation.
+        /// </summary>
+        private static bool Deploy(SampleInfo s)
         {
             HapbeatSDKFolderCreator.EnsureLayout(verbose: false);
             string destRoot = $"{HapbeatSDKFolderCreator.kSdkRoot}/SDK_Samples/{s.Name}";
@@ -129,54 +156,28 @@ namespace Hapbeat.Editor
             string kitSrc = $"{s.SourceRoot}/Kit";
             bool hasKit  = AssetDatabase.IsValidFolder(kitSrc);
 
-            // Preview to the user.
-            var preview = new List<string>();
-            foreach (var c in scenes) preview.Add($"  {c.sourcePath} → {c.destPath}");
-            foreach (var c in maps)   preview.Add($"  {c.sourcePath} → {c.destPath}");
-            foreach (var c in anims)  preview.Add($"  {c.sourcePath} → {c.destPath}");
-            if (hasKit)
-            {
-                foreach (string kitDir in AssetDatabase.GetSubFolders(kitSrc))
-                {
-                    string kitName = Path.GetFileName(kitDir);
-                    preview.Add($"  {kitDir} → {HapbeatSDKFolderCreator.kKitsDir}/{kitName}");
-                }
-            }
-
-            if (preview.Count == 0)
+            int totalItems = scenes.Count + maps.Count + anims.Count
+                           + (hasKit ? AssetDatabase.GetSubFolders(kitSrc).Length : 0);
+            if (totalItems == 0)
             {
                 EditorUtility.DisplayDialog($"Deploy {s.Name}",
                     $"No deployable assets found under {s.SourceRoot}.\n" +
                     "Expected at least one of Scenes/, EventMaps/, Animation/, Kit/.",
                     "OK");
-                return;
+                return false;
             }
 
-            string previewBody = string.Join("\n", preview);
-            if (previewBody.Length > 1200) // Truncate for the dialog
-                previewBody = previewBody.Substring(0, 1200) + "\n  ...";
+            Debug.Log($"[Hapbeat] Deploying {s.Name}: {scenes.Count} scene(s), " +
+                      $"{maps.Count} EventMap(s), {anims.Count} controller(s), " +
+                      $"{(hasKit ? AssetDatabase.GetSubFolders(kitSrc).Length : 0)} kit folder(s)");
 
-            if (!EditorUtility.DisplayDialog(
-                $"Deploy {s.Name} to HapbeatSDK",
-                $"Copy {s.Name} from\n  {s.SourceRoot}/\n" +
-                $"into\n  {destRoot}/ (Scenes / EventMaps / Animation)\n" +
-                $"  {HapbeatSDKFolderCreator.kKitsDir}/ (Kit subfolders)\n\n" +
-                "Existing destination files are overwritten.\n" +
-                "Audio / Scripts / Models stay in the imported folder — the\n" +
-                "EventMap will keep pointing at them. Don't delete the\n" +
-                "imported sample folder while the EventMap references those clips.\n\n" +
-                "Items to copy:\n" + previewBody,
-                "Deploy", "Cancel"))
-                return;
-
-            // 1. Run the standard scene + EventMap + AnimatorController copy
-            //    with reference rebake (HapbeatSampleDeployment does the heavy lifting).
+            // 1. Scene + EventMap + AnimatorController copy with reference rebake.
             var result = HapbeatSampleDeployment.DeployScene(
                 scenes:              scenes,
                 eventMaps:           maps,
                 animatorControllers: anims);
 
-            // 2. Copy Kit subfolders to HapbeatSDK/Kits/<kit-name>/.
+            // 2. Kit subfolders → HapbeatSDK/Kits/<kit-name>/.
             int kitsCopied = 0;
             if (hasKit)
             {
@@ -192,13 +193,8 @@ namespace Hapbeat.Editor
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
 
-            // 3. Surface result + open the primary scene if one was deployed.
-            EditorUtility.DisplayDialog(
-                $"Deploy {s.Name}",
-                $"Deployed {s.Name} to {destRoot}/\n" +
-                (kitsCopied > 0 ? $"Copied {kitsCopied} Kit folder(s) to {HapbeatSDKFolderCreator.kKitsDir}/.\n" : "") +
-                "Scene references have been rewired to the copied EventMap / AnimatorController.",
-                "OK");
+            Debug.Log($"[Hapbeat] {s.Name} deployed to {destRoot}/" +
+                      (kitsCopied > 0 ? $" (+ {kitsCopied} kit folder(s) at {HapbeatSDKFolderCreator.kKitsDir}/)" : ""));
 
             if (!string.IsNullOrEmpty(result.primaryScenePath))
             {
@@ -209,6 +205,7 @@ namespace Hapbeat.Editor
                     EditorGUIUtility.PingObject(sceneAsset);
                 }
             }
+            return true;
         }
 
         /// <summary>
