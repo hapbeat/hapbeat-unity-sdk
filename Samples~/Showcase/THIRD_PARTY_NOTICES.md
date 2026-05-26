@@ -48,11 +48,13 @@ Poly Haven is CC0 by site policy).
 ## Audio (`Audio/`, `Kit/`)
 
 `Audio/*` and `Kit/install-clips/*` / `Kit/stream-clips/*` WAVs are derived
-from royalty-free sound-effect sites, then resampled / trimmed / gain-adjusted
-for haptic playback.
+from royalty-free / CC0 sound-effect sources, then resampled / trimmed /
+gain-adjusted for haptic playback.
 
-Possible source sites (matches the credits in the SDK root `README.md`):
+Source sites:
 
+- Kenney — <https://kenney.nl/assets> (CC0; multiple SFX packs)
+- 100 CC0 SFX by Rubberduck — <https://opengameart.org/content/100-cc0-sfx> (CC0)
 - 効果音ラボ — <https://soundeffect-lab.info/>
 - 魔王魂 — <https://maou.audio/>
 - 効果音辞典 (小森平) — <https://taira-komori.net/>
@@ -60,7 +62,9 @@ Possible source sites (matches the credits in the SDK root `README.md`):
 - 音人 — <https://on-jin.com/>
 
 Files have been processed for haptic use and metadata (author / copyright tags)
-removed. If you are the rights holder and need an entry corrected, removed, or
+removed. The Japanese SE sites above distribute under their own free-use terms
+(generally royalty-free for non-resale use). Kenney and OpenGameArt sources are
+CC0. If you are the rights holder and need an entry corrected, removed, or
 relicensed, please open a GitHub issue.
 
 ---
