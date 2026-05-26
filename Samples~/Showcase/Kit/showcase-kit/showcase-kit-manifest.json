@@ -1,0 +1,358 @@
+{
+  "schema_version": "2.0.0",
+  "version": "1.0.0",
+  "name": "showcase-kit",
+  "description": "Hapbeat Unity SDK の Tutorial サンプル用 Kit。各 event の intensity 既定値を提供する。Tutorial は StreamClip ファースト設計なので install-clips/ は初期空 (任意で Command モード化したい場合に WAV を入れる)、stream-clips/ も同様。StreamClip 実体は Audio/ から参照される。",
+  "author": "",
+  "created_at": "2026-05-24T08:07:18.839Z",
+  "target_device": {
+    "firmware_version_min": "0.0.2",
+    "volume_level": 5,
+    "volume_wiper": 70,
+    "volume_steps": 10
+  },
+  "events": {
+    "showcase-kit.z1_pin_hit": {
+      "clip": "z1_pin_hit.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.25,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z5_tar_hit_heavy": {
+      "clip": "z5_tar_hit_heavy.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.4,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z4_slider_tick": {
+      "clip": "z4_slider_tick.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z3_hook_start": {
+      "clip": "z3_hook_start.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.6,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z5_shot_heavy": {
+      "clip": "z5_shot_heavy.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.4,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z5_shot_light": {
+      "clip": "z5_shot_light.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z3_hook_release": {
+      "clip": "z3_hook_release.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.55,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z5_tar_hit_light": {
+      "clip": "z5_tar_hit_light.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.45,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z5_charge_thd": {
+      "clip": "z5_charge_thd.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z2_door_unlock": {
+      "clip": "z2_door_unlock.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z2_door_lock": {
+      "clip": "z2_door_lock.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false
+      }
+    },
+    "showcase-kit.z2_door_rattle": {
+      "clip": "z2_door_rattle.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.25,
+        "loop": false,
+        "device_wiper": 70
+      }
+    },
+    "showcase-kit.z2_door_slam": {
+      "clip": "z2_door_slam.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.25,
+        "loop": false,
+        "device_wiper": 70
+      }
+    }
+  },
+  "stream_events": {
+    "showcase-kit.z1_pin_hit": {
+      "clip": "z1_pin_hit.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.25,
+        "loop": false
+      }
+    },
+    "showcase-kit.z5_tar_hit_heavy": {
+      "clip": "z5_tar_hit_heavy.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.4,
+        "loop": false
+      }
+    },
+    "showcase-kit.z4_slider_tick": {
+      "clip": "z4_slider_tick.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false
+      }
+    },
+    "showcase-kit.z3_hook_start": {
+      "clip": "z3_hook_start.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.6,
+        "loop": false
+      }
+    },
+    "showcase-kit.z5_shot_heavy": {
+      "clip": "z5_shot_heavy.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.4,
+        "loop": false
+      }
+    },
+    "showcase-kit.z5_shot_light": {
+      "clip": "z5_shot_light.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false
+      }
+    },
+    "showcase-kit.z3_hook_release": {
+      "clip": "z3_hook_release.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.55,
+        "loop": false
+      }
+    },
+    "showcase-kit.z5_tar_hit_light": {
+      "clip": "z5_tar_hit_light.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.45,
+        "loop": false
+      }
+    },
+    "showcase-kit.z5_charge_thd": {
+      "clip": "z5_charge_thd.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false
+      }
+    },
+    "showcase-kit.z2_door_unlock": {
+      "clip": "z2_door_unlock.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false
+      }
+    },
+    "showcase-kit.z2_door_lock": {
+      "clip": "z2_door_lock.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false
+      }
+    },
+    "showcase-kit.z2_door_rattle": {
+      "clip": "z2_door_rattle.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.25,
+        "loop": false
+      }
+    },
+    "showcase-kit.z2_door_slam": {
+      "clip": "z2_door_slam.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.25,
+        "loop": false
+      }
+    },
+    "showcase-kit.z3_hook_loop": {
+      "clip": "z3_hook_loop.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.5,
+        "loop": false
+      }
+    },
+    "showcase-kit.z4_stream_loop": {
+      "clip": "z4_stream_loop.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.5,
+        "loop": false
+      }
+    },
+    "showcase-kit.z2_door_close": {
+      "clip": "z2_door_close.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.2,
+        "loop": false
+      }
+    },
+    "showcase-kit.z2_door_open": {
+      "clip": "z2_door_open.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3,
+        "loop": false
+      }
+    },
+    "showcase-kit.z5_charge_loop": {
+      "clip": "z5_charge_loop.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.14,
+        "loop": false
+      }
+    }
+  },
+  "install_clips": {
+    "z1_pin_hit.wav": {
+      "duration_ms": 50,
+      "sample_rate": 16000,
+      "channels": 1,
+      "format": "pcm_s16le"
+    },
+    "z5_tar_hit_heavy.wav": {
+      "duration_ms": 844,
+      "sample_rate": 16000,
+      "channels": 2,
+      "format": "pcm_s16le"
+    },
+    "z4_slider_tick.wav": {
+      "duration_ms": 11.13,
+      "sample_rate": 16000,
+      "channels": 2,
+      "format": "pcm_s16le"
+    },
+    "z3_hook_start.wav": {
+      "duration_ms": 300,
+      "sample_rate": 16000,
+      "channels": 2,
+      "format": "pcm_s16le"
+    },
+    "z5_shot_heavy.wav": {
+      "duration_ms": 470.88,
+      "sample_rate": 16000,
+      "channels": 1,
+      "format": "pcm_s16le"
+    },
+    "z5_shot_light.wav": {
+      "duration_ms": 93.88,
+      "sample_rate": 16000,
+      "channels": 1,
+      "format": "pcm_s16le"
+    },
+    "z3_hook_release.wav": {
+      "duration_ms": 300,
+      "sample_rate": 16000,
+      "channels": 2,
+      "format": "pcm_s16le"
+    },
+    "z5_tar_hit_light.wav": {
+      "duration_ms": 50,
+      "sample_rate": 16000,
+      "channels": 1,
+      "format": "pcm_s16le"
+    },
+    "z5_charge_thd.wav": {
+      "duration_ms": 200,
+      "sample_rate": 16000,
+      "channels": 1,
+      "format": "pcm_s16le"
+    },
+    "z2_door_unlock.wav": {
+      "duration_ms": 479.19,
+      "sample_rate": 16000,
+      "channels": 2,
+      "format": "pcm_s16le"
+    },
+    "z2_door_lock.wav": {
+      "duration_ms": 237.38,
+      "sample_rate": 16000,
+      "channels": 2,
+      "format": "pcm_s16le"
+    },
+    "z2_door_rattle.wav": {
+      "duration_ms": 544.5,
+      "sample_rate": 16000,
+      "channels": 2,
+      "format": "pcm_s16le"
+    },
+    "z2_door_slam.wav": {
+      "duration_ms": 746.44,
+      "sample_rate": 16000,
+      "channels": 1,
+      "format": "pcm_s16le"
+    }
+  }
+}
