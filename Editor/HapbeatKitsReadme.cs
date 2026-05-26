@@ -54,7 +54,7 @@ namespace Hapbeat.Editor
     internal class HapbeatKitsReadmeEditor : UnityEditor.Editor
     {
         private const string kStudioUrl = "https://devtools.hapbeat.com/studio/";
-        private const string kSiteUrl = "https://hapbeat.com/";
+        private const string kDocsUrl = "https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/getting-started/";
 
         private GUIStyle _h1;
         private GUIStyle _h2;
@@ -120,8 +120,8 @@ namespace Hapbeat.Editor
             {
                 if (GUILayout.Button("Open Hapbeat Studio", GUILayout.Height(30)))
                     Application.OpenURL(kStudioUrl);
-                if (GUILayout.Button("hapbeat.com", GUILayout.Height(30), GUILayout.Width(120)))
-                    Application.OpenURL(kSiteUrl);
+                if (GUILayout.Button("Getting Started", GUILayout.Height(30), GUILayout.Width(120)))
+                    Application.OpenURL(kDocsUrl);
             }
 
             // ── What is this folder ──────────────────────────────────────────
@@ -137,7 +137,7 @@ namespace Hapbeat.Editor
             GUILayout.Label("Getting started", _h2);
             DrawStep("1", "Open Studio (button above) in a Chromium-based browser.");
             DrawStep("2", "In Studio, set <b>Working Directory</b> to this folder.");
-            DrawStep("3", "Studio auto-scaffolds <i>&lt;kit-id&gt;/manifest.json</i> + clip folders.");
+            DrawStep("3", "Studio auto-scaffolds <i>&lt;kit-name&gt;/&lt;kit-name&gt;-manifest.json</i> + clip folders.");
             DrawStep("4", "Create an EventMap (<i>Create &gt; Hapbeat &gt; Event Map</i>) and pick Kit events from the \"From Kit ▾\" dropdown.");
 
             // ── Event modes ──────────────────────────────────────────────────

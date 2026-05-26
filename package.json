@@ -7,7 +7,7 @@
   "keywords": ["haptics", "hapbeat", "esp-now"],
   "samples": [
     {
-      "displayName": "Basic Example",
+      "displayName": "BasicExample",
       "description": "Smallest possible Hapbeat scene — keyboard input fires a few events. Use to confirm the device connection works.",
       "path": "Samples~/BasicExample"
     },
