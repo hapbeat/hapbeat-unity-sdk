@@ -1,4 +1,0 @@
-# StreamClip 用 WAV の任意配置場所。Showcase 同梱では空。
-# Runtime の StreamClip 再生は EventMap が Audio/ を直接参照するため、
-# このフォルダは intensity lookup の eventId fallback のみが使われます。
-# WAV を入れる場合は manifest.json の "clip" フィールドのパスと一致させてください。

@@ -60,7 +60,7 @@ namespace Hapbeat.Editor
                 samplesDstRoot: samplesRoot);
             // Same Kit-sync rationale as Showcase (see SyncShowcaseToSamples).
             // If the BasicExample Kit isn't deployed locally this is a no-op.
-            SyncKitToSample(samplesRoot, "basic-example-kit");
+            SyncKitToSample(samplesRoot, "basic-exam-kit");
         }
 
         /// <summary>
