@@ -365,8 +365,7 @@ namespace Hapbeat.Editor
             if (_selectedMap == null)
             {
                 EditorGUILayout.HelpBox(
-                    Tr("No Event Map found.\nCreate one via Assets > Create > Hapbeat > Event Map.",
-                       "No Event Map found.\nCreate one via Assets > Create > Hapbeat > Event Map."),
+                    "No Event Map found.\nCreate one via Assets > Create > Hapbeat > Event Map.",
                     MessageType.Info);
                 return;
             }
@@ -1300,8 +1299,7 @@ namespace Hapbeat.Editor
             {
                 GUILayout.Label(
                     selCount == 0
-                        ? Tr("Tip: click rows with Ctrl/Shift to select multiple for batch editing.",
-                             "Tip: Ctrl / Shift click to select multiple rows, then right-click to bulk-edit.")
+                        ? "Tip: Ctrl / Shift click to select multiple rows, then right-click to bulk-edit."
                         : $"{selCount} rows selected.",
                     EditorStyles.miniLabel);
                 GUILayout.FlexibleSpace();
@@ -4123,22 +4121,13 @@ namespace Hapbeat.Editor
 
             bool confirmed = EditorUtility.DisplayDialog(
                 "Create HapbeatSDK Folder?",
-                Tr(
-                    "HapbeatSDK folder not found.\n\n" +
-                    "This is the user-owned area where Hapbeat Studio exports Kits and the\n" +
-                    "SDK generates Scenes / EventMaps for sample builds.\n" +
-                    $"Layout: {HapbeatSDKFolderCreator.kSdkRoot}/{{Kits, Scenes, EventMaps}}\n" +
-                    "(A HapbeatKitsReadme marker is placed inside Kits/.)\n" +
-                    "You can move or rename the folder afterwards — the marker tracks Kits.\n\n" +
-                    "Create it now?",
-
-                    "HapbeatSDK folder not found yet.\n\n" +
-                    "This is your project's home for Hapbeat: Studio writes Kits here, and the SDK\n" +
-                    "generates scenes / EventMaps here.\n" +
-                    $"Layout: {HapbeatSDKFolderCreator.kSdkRoot}/{{Kits, Scenes, EventMaps}}\n" +
-                    "(A HapbeatKitsReadme marker is placed inside Kits/.)\n" +
-                    "You can move the folder later — the marker tracks its location.\n\n" +
-                    "Create it now?",
+                "HapbeatSDK folder not found.\n\n" +
+                "This is the user-owned area where Hapbeat Studio writes Kits and the\n" +
+                "SDK generates scenes / EventMaps.\n" +
+                $"Layout: {HapbeatSDKFolderCreator.kSdkRoot}/{{Kits, Scenes, EventMaps}}\n" +
+                "(A HapbeatKitsReadme marker is placed inside Kits/.)\n" +
+                "You can move the folder later — the marker tracks its location.\n\n" +
+                "Create it now?",
                 "Create",
                 "Cancel");
             if (!confirmed) return null;
