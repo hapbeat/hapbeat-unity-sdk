@@ -27,15 +27,9 @@ No attribution required, listed for provenance.
 | `Models/Z2_Door/Door.fbx` | Door | Quaternius | <https://poly.pizza/m/a948jjnuaL> |
 | `Models/Z3_Fishing/FishingRod_Lvl5.obj` | Fishing Rod | Quaternius | <https://poly.pizza/m/0YAR0Lg58p> |
 | `Models/Z3_Fishing/Shark.obj` | (Cute Fish pack) | Quaternius | <https://quaternius.com/packs/cutefish.html> |
-
-### Source not yet documented
-
-The following models are bundled but their source / license has not been
-recorded yet. To be confirmed and added above:
-
-- `Models/Z5_ChargeShot/blaster-g.fbx`
-- `Models/Z5_ChargeShot/bullet-foam-tip-thick.fbx`
-- `Models/Z5_ChargeShot/target-large.fbx`
+| `Models/Z5_ChargeShot/blaster-g.fbx` | Blaster | Kenney | <https://kenney.nl/assets> |
+| `Models/Z5_ChargeShot/bullet-foam-tip-thick.fbx` | Foam bullet | Kenney | <https://kenney.nl/assets> |
+| `Models/Z5_ChargeShot/target-large.fbx` | Target | Kenney | <https://kenney.nl/assets> |
 
 ---
 
