@@ -80,19 +80,26 @@ namespace Hapbeat.Editor
 
             sb.AppendLine($"- **id**: `{e.id}`");
             sb.AppendLine($"- **mode**: {e.mode}{(e.loop ? " (loop)" : "")}");
-            if (e.mode == HapticMode.Command)
-            {
-                if (!string.IsNullOrEmpty(e.eventId))
-                    sb.AppendLine($"- **eventId**: `{e.eventId}`");
-            }
-            else if (e.mode == HapticMode.StreamClip)
-            {
-                if (e.streamClip != null)
-                    sb.AppendLine($"- **streamClip**: `{AssetDatabase.GetAssetPath(e.streamClip)}` " +
-                                  $"({e.streamClip.frequency} Hz, {e.streamClip.channels}ch, {e.streamClip.length:F2}s)");
-                else
-                    sb.AppendLine($"- **streamClip**: (not assigned)");
-            }
+
+            // Both Command (eventId via category/eventName) and StreamClip
+            // (AudioClip) fields live independently on the entry — toggling
+            // mode does NOT clear the inactive field. Dump both when present
+            // so the markdown is a faithful snapshot of the asset state.
+            // The active mode is marked with ←, inactive with (inactive).
+            bool isCommand = e.mode == HapticMode.Command;
+
+            string cmdMarker = isCommand ? " ←" : " (inactive)";
+            if (!string.IsNullOrEmpty(e.eventId))
+                sb.AppendLine($"- **eventId**{cmdMarker}: `{e.eventId}`");
+            else if (isCommand)
+                sb.AppendLine($"- **eventId**{cmdMarker}: (empty)");
+
+            string clipMarker = isCommand ? " (inactive)" : " ←";
+            if (e.streamClip != null)
+                sb.AppendLine($"- **streamClip**{clipMarker}: `{AssetDatabase.GetAssetPath(e.streamClip)}` " +
+                              $"({e.streamClip.frequency} Hz, {e.streamClip.channels}ch, {e.streamClip.length:F2}s)");
+            else if (!isCommand)
+                sb.AppendLine($"- **streamClip**{clipMarker}: (not assigned)");
             sb.AppendLine($"- **gain (authored)**: {e.gain:F2}");
             float intensity = e.CachedManifestIntensity;
             sb.AppendLine($"- **manifest intensity (cached)**: {(intensity < 0f ? "(not resolved)" : intensity.ToString("F2"))}");

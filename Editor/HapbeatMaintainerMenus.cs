@@ -1,5 +1,4 @@
 #if UNITY_EDITOR
-using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
@@ -37,20 +36,9 @@ namespace Hapbeat.Editor
         public static void SyncShowcaseToSamples()
         {
             if (!TryResolveSamplesRoot("Showcase", out string samplesRoot)) return;
-
-            const string sdkRoot = "Assets/HapbeatSDK/SDK_Samples/Showcase";
-            var pairs = new List<(string src, string dst)>
-            {
-                ($"{sdkRoot}/Scenes/Showcase.unity",
-                 $"{samplesRoot}/Scenes/Showcase.unity"),
-                ($"{sdkRoot}/Scenes/Showcase_Plain.unity",
-                 $"{samplesRoot}/Scenes/Showcase_Plain.unity"),
-                ($"{sdkRoot}/EventMaps/ShowcaseEventMap.asset",
-                 $"{samplesRoot}/EventMaps/ShowcaseEventMap.asset"),
-                ($"{sdkRoot}/Animation/DoorAnimator.controller",
-                 $"{samplesRoot}/Animation/DoorAnimator.controller"),
-            };
-            RunSync("Showcase", pairs);
+            RunDirectorySync("Showcase",
+                sdkSrcRoot: "Assets/HapbeatSDK/SDK_Samples/Showcase",
+                samplesDstRoot: samplesRoot);
         }
 
         // ----------------------------------------------------------------
@@ -61,19 +49,12 @@ namespace Hapbeat.Editor
         public static void SyncBasicExampleToSamples()
         {
             if (!TryResolveSamplesRoot("BasicExample", out string samplesRoot)) return;
-
-            const string sdkRoot = "Assets/HapbeatSDK/SDK_Samples/BasicExample";
-            var pairs = new List<(string src, string dst)>
-            {
-                ($"{sdkRoot}/Scenes/BasicExample.unity",
-                 $"{samplesRoot}/Scenes/BasicExample.unity"),
-                ($"{sdkRoot}/EventMaps/BasicExampleEventMap.asset",
-                 $"{samplesRoot}/EventMaps/BasicExampleEventMap.asset"),
-                // Note: Kit (manifest.json + WAVs) is NOT synced — it lives
-                // permanently in Samples~/BasicExample/Kit/ and is authored
-                // there directly. Deploy mode copies it to HapbeatSDK/Kits/.
-            };
-            RunSync("BasicExample", pairs);
+            // Note: Kit (manifest.json + WAVs) is authored directly under
+            // Samples~/BasicExample/Kit/ — if the SDK_Samples copy doesn't
+            // contain a Kit/ subfolder, that destination remains untouched.
+            RunDirectorySync("BasicExample",
+                sdkSrcRoot: "Assets/HapbeatSDK/SDK_Samples/BasicExample",
+                samplesDstRoot: samplesRoot);
         }
 
         // ----------------------------------------------------------------
@@ -117,66 +98,58 @@ namespace Hapbeat.Editor
             return true;
         }
 
-        private static void RunSync(string sampleName, List<(string src, string dst)> pairs)
+        /// <summary>
+        /// Recursively mirror every file under <paramref name="sdkSrcRoot"/>
+        /// into <paramref name="samplesDstRoot"/>. Includes <c>.meta</c> files
+        /// (which carry the asset's GUID, so end users get a stable reference
+        /// graph after Sample Import).
+        /// <para>
+        /// Add-or-overwrite only — files that exist in the destination but
+        /// not in the source are LEFT alone. This keeps "permanent"
+        /// destination-side content (e.g. Samples~/BasicExample/Kit/) safe
+        /// when the source-side scratch area doesn't carry a copy.
+        /// </para>
+        /// </summary>
+        private static void RunDirectorySync(string sampleName, string sdkSrcRoot, string samplesDstRoot)
         {
-            // Validate sources first so we don't half-copy.
-            var missing = new List<string>();
-            foreach (var p in pairs)
-            {
-                if (!File.Exists(p.src))
-                    missing.Add(p.src);
-            }
-            if (missing.Count > 0)
+            if (!Directory.Exists(sdkSrcRoot))
             {
                 EditorUtility.DisplayDialog("Maintainer Sync",
-                    $"Sync source files for {sampleName} are missing:\n\n  " +
-                    string.Join("\n  ", missing) + "\n\n" +
-                    "Run `Hapbeat → Developer → Build Basic Example` first to scaffold them.",
+                    $"Source folder not found:\n  {sdkSrcRoot}\n\n" +
+                    "Author the sample under that path first (or use " +
+                    "`Hapbeat → Developer → Build Basic Example` to scaffold).",
                     "OK");
                 return;
             }
 
-            // Build the user-facing preview.
-            var lines = new List<string>();
-            foreach (var p in pairs)
-                lines.Add($"  {p.src}\n    → {p.dst}");
+            // Confirm with the user.
             if (!EditorUtility.DisplayDialog(
                 "Maintainer Sync",
-                $"Copy authored {sampleName} assets into Samples~.\n" +
-                "(.meta files are copied too, preserving GUIDs.)\n\n" +
-                string.Join("\n", lines) + "\n\n" +
-                "Existing files will be overwritten.",
+                $"Copy {sampleName} from\n  {sdkSrcRoot}/\n" +
+                $"into\n  {samplesDstRoot}/\n\n" +
+                "All files including .meta are copied recursively.\n" +
+                "Existing files will be overwritten.\n" +
+                "Files that exist only in the destination are LEFT untouched " +
+                "(safe for permanent destination-side content like Kit/).",
                 "Sync", "Cancel"))
                 return;
 
             int copied = 0;
-            foreach (var p in pairs)
+            string srcRootNorm = sdkSrcRoot.Replace('\\', '/').TrimEnd('/');
+            foreach (var srcFile in Directory.GetFiles(srcRootNorm, "*", SearchOption.AllDirectories))
             {
-                CopyWithMeta(p.src, p.dst);
+                string srcNorm = srcFile.Replace('\\', '/');
+                string rel = srcNorm.Substring(srcRootNorm.Length).TrimStart('/');
+                string dstFile = $"{samplesDstRoot.TrimEnd('/')}/{rel}";
+                Directory.CreateDirectory(Path.GetDirectoryName(dstFile));
+                File.Copy(srcFile, dstFile, overwrite: true);
                 copied++;
             }
 
             EditorUtility.DisplayDialog("Maintainer Sync",
-                $"Synced {copied} asset(s) into Samples~/{sampleName}/.\n" +
+                $"Synced {copied} file(s) into Samples~/{sampleName}/.\n" +
                 "Review the diff and commit to the repo.",
                 "OK");
-        }
-
-        /// <summary>
-        /// File.Copy <paramref name="src"/> → <paramref name="dst"/>, then copy
-        /// <paramref name="src"/>.meta → <paramref name="dst"/>.meta if it
-        /// exists. The .meta carries the asset's GUID so end users get a
-        /// stable reference graph after Sample Import.
-        /// </summary>
-        private static void CopyWithMeta(string src, string dst)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(dst));
-            File.Copy(src, dst, overwrite: true);
-
-            string srcMeta = src + ".meta";
-            string dstMeta = dst + ".meta";
-            if (File.Exists(srcMeta))
-                File.Copy(srcMeta, dstMeta, overwrite: true);
         }
     }
 }
