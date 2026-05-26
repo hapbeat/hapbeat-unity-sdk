@@ -7,6 +7,101 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.2.0] - 2026-05-26
+
+v0.1.0 以降に蓄積した API 整理・サンプル再編・遅延補正・Editor UX 改修をまとめたリリース。
+**Pre-1.0 のため Breaking change を含みます** — 詳細は下記を参照。
+
+### Breaking changes
+
+- **`HapbeatAnimatorTrigger` を廃止し `HapbeatStateBehaviour` に置換**
+  Animator state に直接 attach する StateMachineBehaviour 方式に変更。
+  State Enter/Exit に別 entry を bind 可能、`Required Previous State` で A→B 限定発火、
+  Looping StreamClip は OnStateExit で自動 Stop。**旧 trigger は移行コードなしで削除**。
+- **`HapbeatEvent` + `StandardCategories` 削除**
+  v0.1 期に obsolete 化していた legacy component と category 列挙を完全削除。
+- **`_entryIndex` legacy fallback 全廃**
+  Trigger → EventMap 参照は **stable GUID (`entry.id`) only** に統一。
+  古い `_entryIndex` ベースのシリアライズデータは再 pick が必要。
+- **`HapbeatBridge` subclass パターンの非推奨化**
+  Trigger-first / EventMap-first 設計を標準とし、Bridge subclass は optional に。
+  抽象クラス自体は API 互換のため残置。
+- **サンプル再編: `Tutorial` → `Showcase` rename**
+  UPM Sample import の表示名・フォルダ名が変わります。
+  旧 `Tutorial` を import 済みのプロジェクトは、新規に `Showcase` を import し直してください。
+
+### Added
+
+**Latency compensation**
+- `HapbeatConfig.hapticDelaySeconds` — グローバル遅延補正 (映像/音声に対して触覚を遅延発火)。
+- `HapbeatEventEntry.delayOffsetSeconds` — エントリ単位の追加オフセット (Inspector で編集)。
+- Play-mode 中の `hapticDelaySeconds` 変更で **pending coroutine を自動 flush** (即時反映)。
+- `HapbeatStateBehaviour` 経由の発火も含む全 fire 経路で delay を honor。
+
+**Trigger 機能拡張**
+- `HapbeatSequenceTrigger._stopShotDelay` — On Stop one-shot を loop stop から遅延発火 (default 0.05s)。
+  loop→shot の packet burst を抑制し、shot 強度を安定化。
+- `HapbeatTickEmitter` dual mode —
+  `AbsolutePosition` (位置基準) / `AccumulatedMotion` (累積移動量基準) を選択可能。
+- Trigger の **binding pre-seed が child / parent GameObject 上の binding も検出** (旧: Self のみ)。
+
+**EventMap Window**
+- Wiring セクションに **HapbeatStateBehaviour (Animator state)** を表示。
+- Wiring に **script-driven 参照** を表示 (`SerializeField` の string heuristic + `[HideInInspector]` field も拾う)。
+- Script Wiring scan が `entry.id` (stable GUID) 検出にも対応。
+- **Verbose Log 一括 off メニュー** 追加。
+
+**Manifest schema 2.0.0**
+- 2-bucket layout (`events` + `stream_events`) の reader を実装。
+- bare filename + mode-aware lookup により、Studio 側 multi-mode 出力と整合。
+
+**Stream**
+- ステレオ pan のデフォルトを **passthrough** (equal-power → linear balance) に変更。
+  中央 (pan=0) で √½ 減衰していた問題を解消。
+- `HapbeatStreamPlayback.GainMultiplier` / `Pan` を再生中にリアルタイム push 可能に。
+- gain modulation 計算式を `ApplyGainModulation(float)` に集約。
+
+**Editor / Menu**
+- メニューを 4 セクション構成 (**Window / Create / Tools / Developer**) に再編。flat 構成。
+- Window 系メニューを `Open ...` prefix で統一 (Event Map → Batch Setup → Settings の順)。
+- `Hapbeat → Create → Initial Scene Setup` を新設 (Manager + Config + EventMap の最小セットを自動生成)。
+- `HapbeatManager` Inspector の Test 操作を EventMap-style に刷新 (Gain semantics を EventMap と揃える)。
+- **Maintainer Sync の wipe-then-rebuild 化** — `Samples~/<sample>/` を build artifact として全消し再構築。
+  dest-only orphan が次回 sync 時に必ず消えるよう保証。
+
+**Samples**
+- **`Showcase` サンプル新設** (旧 Tutorial の後継) — Z1 Bowling / Z2 Door / Z3 Pickup / Z4 Stream Console / Z5 Charge Shot の 5 ゾーンで SDK 全機能を体験。WAV を `Kit/showcase-kit/` に同梱 (Sample import 直後に EventMap が解決)。
+- `BasicExample` をフラット構成に再編。`BasicExample.unity` + `BasicExampleEventMap.asset` + `Kit/basic-exam-kit/` のみ。
+- 3rd-party 資産の credits を per-file 化 (`Samples~/Showcase/THIRD_PARTY_NOTICES.md`)。CC0 / CC BY 3.0 を分離記載。
+- XR helpers サンプルは引き続き opt-in (`Samples~/XriHelpers/`)。
+
+### Changed
+
+- **UI 文字列を英語に統一** — Tooltip / Label / Dialog / HelpBox / Debug.Log の user-facing 文字列を全 23 ファイルで英語化。日本語は portal docs に集約。
+- ドキュメントを **portal (devtools.hapbeat.com) に一本化** — `docs~/` を削除し各サブ repo の docs は portal が一元参照。
+
+### Fixed
+
+- `HapbeatUnityEventTrigger.FireWithGain` が `_entryIndex` 参照のままになっていた問題を `ResolveEntry()` 経由に修正。
+- Manifest schema 2.0.0 環境で send-ahead lead が指定値を超過するケースを `WaitForSecondsRealtime` で固定。
+- Sample deploy 時に destination の親フォルダが未生成だと `AssetDatabase.CopyAsset` が silent fail する問題に対し、事前に `EnsureAssetFolder` を実行。
+
+### Removed
+
+- `Editor/HapbeatSampleDeployment.cs` — dead code (旧 `BasicExampleSceneBuilder` と `HapbeatSampleImportDeployer` 削除により呼び出し元なし)。
+- `Editor/HapbeatSampleImportDeployer.cs` — 「Deploy Imported Sample」メニュー (非標準 UX)。Sample import 後はユーザー自身が `Assets/` 配下に手動コピー。
+- `docs~/` ディレクトリ — portal 集約に伴い撤去。
+
+### Migration notes
+
+- **`HapbeatAnimatorTrigger` を使っていた場合**: Animator Controller の対象 state を選択 → Add Behaviour → `HapbeatStateBehaviour` を attach → EventMap entry を pick。
+- **Tutorial サンプルを編集していた場合**: 編集内容は `Assets/` 配下にコピー済みのはず。再 import で Showcase が降ってくるが、旧 Tutorial 編集物は上書きされません (UPM の Sample import は新規パスに展開するため)。
+- **古い EventMap entry の参照が外れた場合**: Trigger 側で entry を pick し直してください (`_entryIndex` 廃止のため)。
+
+[0.2.0]: https://github.com/Hapbeat/hapbeat-unity-sdk/releases/tag/v0.2.0
+
+---
+
 ## [0.1.0] - 2026-05-11
 
 Initial public release.
