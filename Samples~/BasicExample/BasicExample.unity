@@ -151,10 +151,10 @@ RectTransform:
   m_Children: []
   m_Father: {fileID: 879979556}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMin: {x: 1, y: 0}
   m_AnchorMax: {x: 1, y: 0.5}
-  m_AnchoredPosition: {x: 106, y: 93}
-  m_SizeDelta: {x: -1012.94995, y: -40}
+  m_AnchoredPosition: {x: -449.41, y: 100.15001}
+  m_SizeDelta: {x: 7, y: -25.700008}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &181764278
 MonoBehaviour:
@@ -686,6 +686,56 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1019677574}
   m_CullTransparentMesh: 1
+--- !u!1 &1085945416
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1085945418}
+  - component: {fileID: 1085945417}
+  m_Layer: 0
+  m_Name: Event_FIRE
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1085945417
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1085945416}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf86876cf7f5a4749a8d3693f9a68bbc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatUnityEventTrigger
+  _eventMap: {fileID: 11400000, guid: 3595a21b612e9484da14bbc306d66770, type: 2}
+  _entryId: 20647f3889ec411da0e96184805866ec
+  _triggerEnabled: 1
+  _cooldown: 0
+  _gainMultiplier: 1
+  _verboseLog: 0
+--- !u!4 &1085945418
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1085945416}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}
+  m_LocalPosition: {x: 0, y: 3, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1510880349}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1510880341
 GameObject:
   m_ObjectHideFlags: 0
@@ -697,9 +747,6 @@ GameObject:
   - component: {fileID: 1510880349}
   - component: {fileID: 1510880348}
   - component: {fileID: 1510880347}
-  - component: {fileID: 1510880346}
-  - component: {fileID: 1510880345}
-  - component: {fileID: 1510880344}
   - component: {fileID: 1510880343}
   - component: {fileID: 1510880342}
   m_Layer: 0
@@ -727,13 +774,13 @@ MonoBehaviour:
     onPressed:
       m_PersistentCalls:
         m_Calls:
-        - m_Target: {fileID: 1510880346}
+        - m_Target: {fileID: 1772903629}
           m_TargetAssemblyTypeName: Hapbeat.HapbeatUnityEventTrigger, Hapbeat.Runtime
           m_MethodName: Fire
-          m_Mode: 0
+          m_Mode: 1
           m_Arguments:
             m_ObjectArgument: {fileID: 0}
-            m_ObjectArgumentAssemblyTypeName: 
+            m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
             m_IntArgument: 0
             m_FloatArgument: 0
             m_StringArgument: 
@@ -756,13 +803,13 @@ MonoBehaviour:
     onPressed:
       m_PersistentCalls:
         m_Calls:
-        - m_Target: {fileID: 1510880345}
+        - m_Target: {fileID: 1963742921}
           m_TargetAssemblyTypeName: Hapbeat.HapbeatUnityEventTrigger, Hapbeat.Runtime
           m_MethodName: Fire
-          m_Mode: 0
+          m_Mode: 1
           m_Arguments:
             m_ObjectArgument: {fileID: 0}
-            m_ObjectArgumentAssemblyTypeName: 
+            m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
             m_IntArgument: 0
             m_FloatArgument: 0
             m_StringArgument: 
@@ -785,13 +832,13 @@ MonoBehaviour:
     onPressed:
       m_PersistentCalls:
         m_Calls:
-        - m_Target: {fileID: 1510880344}
+        - m_Target: {fileID: 1085945417}
           m_TargetAssemblyTypeName: Hapbeat.HapbeatUnityEventTrigger, Hapbeat.Runtime
           m_MethodName: Fire
-          m_Mode: 0
+          m_Mode: 1
           m_Arguments:
             m_ObjectArgument: {fileID: 0}
-            m_ObjectArgumentAssemblyTypeName: 
+            m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
             m_IntArgument: 0
             m_FloatArgument: 0
             m_StringArgument: 
@@ -882,63 +929,6 @@ MonoBehaviour:
   _statusText: {fileID: 326791764}
   _logText: {fileID: 181764278}
   _maxLogLines: 8
---- !u!114 &1510880344
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1510880341}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: bf86876cf7f5a4749a8d3693f9a68bbc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatUnityEventTrigger
-  _eventMap: {fileID: 11400000, guid: 3595a21b612e9484da14bbc306d66770, type: 2}
-  _entryId: 20647f3889ec411da0e96184805866ec
-  _entryIndex: 2
-  _triggerEnabled: 1
-  _cooldown: 0
-  _gainMultiplier: 1
-  _verboseLog: 0
---- !u!114 &1510880345
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1510880341}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: bf86876cf7f5a4749a8d3693f9a68bbc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatUnityEventTrigger
-  _eventMap: {fileID: 11400000, guid: 3595a21b612e9484da14bbc306d66770, type: 2}
-  _entryId: b880742391a44ad697b41357a3029666
-  _entryIndex: 1
-  _triggerEnabled: 1
-  _cooldown: 0
-  _gainMultiplier: 1
-  _verboseLog: 0
---- !u!114 &1510880346
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1510880341}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: bf86876cf7f5a4749a8d3693f9a68bbc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatUnityEventTrigger
-  _eventMap: {fileID: 11400000, guid: 3595a21b612e9484da14bbc306d66770, type: 2}
-  _entryId: 2f4bdfd4ec4742798b750687bfeca05d
-  _entryIndex: 0
-  _triggerEnabled: 1
-  _cooldown: 0
-  _gainMultiplier: 1
-  _verboseLog: 0
 --- !u!114 &1510880347
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -977,7 +967,10 @@ Transform:
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 1772903630}
+  - {fileID: 1963742922}
+  - {fileID: 1085945418}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1586601897
@@ -990,6 +983,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1586601899}
   - component: {fileID: 1586601898}
+  - component: {fileID: 1586601900}
   m_Layer: 0
   m_Name: Directional Light
   m_TagString: Untagged
@@ -1077,6 +1071,35 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 50, y: -30, z: 0}
+--- !u!114 &1586601900
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1586601897}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalLightData
+  m_UsePipelineSettings: 1
+  m_AdditionalLightsShadowResolutionTier: 2
+  m_CustomShadowLayers: 0
+  m_LightCookieSize: {x: 1, y: 1}
+  m_LightCookieOffset: {x: 0, y: 0}
+  m_SoftShadowQuality: 0
+  m_RenderingLayersMask:
+    serializedVersion: 0
+    m_Bits: 1
+  m_ShadowRenderingLayersMask:
+    serializedVersion: 0
+    m_Bits: 1
+  m_Version: 4
+  m_LightLayerMask: 1
+  m_ShadowLayerMask: 1
+  m_RenderingLayers: 1
+  m_ShadowRenderingLayers: 1
 --- !u!1 &1695633298
 GameObject:
   m_ObjectHideFlags: 0
@@ -1157,6 +1180,106 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1695633298}
   m_CullTransparentMesh: 1
+--- !u!1 &1772903628
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1772903630}
+  - component: {fileID: 1772903629}
+  m_Layer: 0
+  m_Name: Event_CLIP_1-shot
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1772903629
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1772903628}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf86876cf7f5a4749a8d3693f9a68bbc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatUnityEventTrigger
+  _eventMap: {fileID: 11400000, guid: 3595a21b612e9484da14bbc306d66770, type: 2}
+  _entryId: 2f4bdfd4ec4742798b750687bfeca05d
+  _triggerEnabled: 1
+  _cooldown: 0
+  _gainMultiplier: 1
+  _verboseLog: 0
+--- !u!4 &1772903630
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1772903628}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}
+  m_LocalPosition: {x: 0, y: 3, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1510880349}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1963742920
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1963742922}
+  - component: {fileID: 1963742921}
+  m_Layer: 0
+  m_Name: Event_CLIP_loop
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1963742921
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1963742920}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf86876cf7f5a4749a8d3693f9a68bbc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatUnityEventTrigger
+  _eventMap: {fileID: 11400000, guid: 3595a21b612e9484da14bbc306d66770, type: 2}
+  _entryId: b880742391a44ad697b41357a3029666
+  _triggerEnabled: 1
+  _cooldown: 0
+  _gainMultiplier: 1
+  _verboseLog: 0
+--- !u!4 &1963742922
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1963742920}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}
+  m_LocalPosition: {x: 0, y: 3, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1510880349}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &2079608689
 GameObject:
   m_ObjectHideFlags: 0

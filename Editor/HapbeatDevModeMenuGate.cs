@@ -56,9 +56,6 @@ namespace Hapbeat.Editor
         /// </summary>
         private static readonly string[] kDevOnlyMenuPaths = new[]
         {
-            // Build — scaffolds SDK-shipped samples into Assets/HapbeatSDK/SDK_Samples/.
-            // End users open imported sample scenes directly from Assets/Samples/.../ instead.
-            "Hapbeat/Developer/Build Basic Example",
             // Sync — writes back into the package's Samples~/ folder, requires
             // Local/Embedded source to be useful at all.
             "Hapbeat/Developer/Sync HapbeatSDK → Samples~ (Showcase)",

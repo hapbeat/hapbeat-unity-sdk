@@ -229,7 +229,7 @@ MonoBehaviour:
     displayName: Z4_slider_tick
     category: showcase-kit
     eventName: z4_slider_tick
-    streamClip: {fileID: 8300000, guid: 10c7a07f91e6d354186dfcae12d6c7be, type: 3}
+    streamClip: {fileID: 8300000, guid: 07197b138de27714aae07c00f3e31783, type: 3}
     loop: 0
     bindings: []
     gain: 1

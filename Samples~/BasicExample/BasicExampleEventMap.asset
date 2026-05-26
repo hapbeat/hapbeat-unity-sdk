@@ -18,7 +18,7 @@ MonoBehaviour:
     displayName: demo_stream_sine_100hz
     category: basic-exam-kit
     eventName: sine_100hz_1s
-    streamClip: {fileID: 8300000, guid: 1ee021f82fc06d24a82a6a8c9b20cf9e, type: 3}
+    streamClip: {fileID: 8300000, guid: 2d750fd581b299e45842094bf548a79f, type: 3}
     loop: 0
     bindings: []
     gain: 1
@@ -32,7 +32,7 @@ MonoBehaviour:
     displayName: demo_stream_loop_100hz
     category: basic-exam-kit
     eventName: sine_100hz_1s_loop
-    streamClip: {fileID: 8300000, guid: 1ee021f82fc06d24a82a6a8c9b20cf9e, type: 3}
+    streamClip: {fileID: 8300000, guid: 2d750fd581b299e45842094bf548a79f, type: 3}
     loop: 1
     bindings: []
     gain: 1
@@ -40,7 +40,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
-    _cachedManifestIntensity: -1
+    _cachedManifestIntensity: 0.5
   - _id: 20647f3889ec411da0e96184805866ec
     mode: 0
     displayName: demo_command_sine_200hz
