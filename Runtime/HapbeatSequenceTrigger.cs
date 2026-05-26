@@ -49,8 +49,9 @@ namespace Hapbeat
         private float _startShotDelay = -1f;
 
         [Tooltip("Delay (seconds) between the Loop stop and the On Stop one-shot.\n" +
-                 " 0 = no delay (default; fire immediately).\n" +
-                 " >0 = custom delay in seconds (50-100ms typical).\n\n" +
+                 " 0     = no delay (fire immediately, may collide with loop's flush burst).\n" +
+                 " 0.05  = default — safe margin for device to process ring-flush packets.\n" +
+                 " 0.10  = extra-safe for Wi-Fi networks under load.\n\n" +
                  "Symmetric to Start Shot Delay, for the end of the sequence:\n" +
                  "after Loop stop the device receives STREAM_END + STREAM_BEGIN + STREAM_END\n" +
                  "(ring-flush pair) in rapid succession. Firing the On Stop one-shot\n" +
@@ -58,9 +59,10 @@ namespace Hapbeat
                  "while the device is still processing those packets, causing:\n" +
                  "  - StreamClip: shot mixed with loop residual → strength varies per trial\n" +
                  "  - Command:    PLAY occasionally dropped → shot silently missing\n\n" +
-                 "Bump this to 0.05–0.10 if the On Stop shot feels unstable or sporadic.")]
+                 "0.05 default chosen empirically as a sweet spot — barely perceptible as a\n" +
+                 "gap (≈1 audio chunk) but sufficient to fully isolate the two packet bursts.")]
         [SerializeField, Range(0f, 0.5f)]
-        private float _stopShotDelay = 0f;
+        private float _stopShotDelay = 0.05f;
 
         [Tooltip("Ignore duplicate Fire()/Stop() calls that arrive while the sequence " +
                  "is already in the matching state.\n\n" +
