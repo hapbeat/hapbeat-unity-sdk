@@ -37,16 +37,25 @@ Files land at `Assets/Samples/Hapbeat SDK/<version>/Showcase/`:
 - `Kit/showcase-kit/` (manifest + clips, schema 2.0.0)
 - `Audio/`, `Scripts/`, `Models/`, `Textures/`, `Materials/`, `Prefabs/`
 
-### 2. Deploy into the user-owned area (optional but recommended)
+### 2. Deploy into the user-owned area (recommended)
 
-The Sample folder is read-only-ish (re-importing the sample resets it).
-To author your own changes safely, deploy into `Assets/HapbeatSDK/` once:
+The Sample folder is reset on re-import. To author your own changes safely,
+run **`Hapbeat → Deploy Imported Sample`** once. The command:
 
-1. Open Hapbeat Studio (or the Hapbeat Helper) and connect the device.
-2. Deploy the `showcase-kit` so `Assets/HapbeatSDK/Kits/showcase-kit/` is populated.
-3. Copy `Scenes/`, `EventMaps/`, `Animation/` into
-   `Assets/HapbeatSDK/SDK_Samples/Showcase/` so edits aren't lost on next
-   sample re-import.
+- Copies `Scenes/`, `EventMaps/`, `Animation/` into
+  `Assets/HapbeatSDK/SDK_Samples/Showcase/`
+- Copies `Kit/showcase-kit/` into `Assets/HapbeatSDK/Kits/showcase-kit/`
+  (the Studio convention kit root)
+- Rewires scene-side references so the deployed scene points at the deployed
+  EventMap / AnimatorController (the original sample copy can stay where it is)
+
+`Audio/`, `Scripts/`, `Models/`, etc. are **not** copied — the EventMap keeps
+pointing at them inside `Assets/Samples/.../Showcase/`. Don't delete the
+imported sample folder while the deployed EventMap still references those
+clips.
+
+If you also want to use the device-side Kit (Command mode events), open Hapbeat
+Studio or the Hapbeat Helper and deploy the `showcase-kit` to the device.
 
 ### 3. Play
 
