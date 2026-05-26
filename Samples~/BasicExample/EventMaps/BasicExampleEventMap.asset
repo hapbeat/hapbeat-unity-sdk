@@ -23,11 +23,10 @@ MonoBehaviour:
     bindings: []
     gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
     _cachedManifestIntensity: 0.5
-    _eventId: basic-exam-kit.sine_100hz_1s
   - _id: b880742391a44ad697b41357a3029666
     mode: 1
     displayName: demo_stream_loop_100hz
@@ -38,11 +37,10 @@ MonoBehaviour:
     bindings: []
     gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
-    _cachedManifestIntensity: 0.5
-    _eventId: basic-exam-kit.sine_100hz_1s_loop
+    _cachedManifestIntensity: -1
   - _id: 20647f3889ec411da0e96184805866ec
     mode: 0
     displayName: demo_command_sine_200hz
@@ -53,9 +51,8 @@ MonoBehaviour:
     bindings: []
     gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
     _cachedManifestIntensity: 0.5
-    _eventId: basic-exam-kit.sine_200hz_1s
   revertPlayModeChanges: 0

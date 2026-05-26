@@ -1,10 +1,10 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace Hapbeat.Samples.Showcase
+namespace Hapbeat.Samples.Tutorial
 {
     /// <summary>
-    /// Minimal keyboard / mouse FPS controller for the Showcase sample.
+    /// Minimal keyboard / mouse FPS controller for the Tutorial sample.
     /// WASD or arrow keys to move, mouse look (right-click to toggle look mode
     /// so left-click stays available for interactions like ball launch / pickup),
     /// Space to jump (optional). Uses Unity Input System (Keyboard.current /
@@ -49,14 +49,39 @@ namespace Hapbeat.Samples.Showcase
 
         private void Update()
         {
+            HandleEscape();
             HandleLook();
             HandleMove();
+        }
+
+        private void HandleEscape()
+        {
+            var kb = Keyboard.current;
+            if (kb == null) return;
+            // Tab でカーソルロック/解放をトグル (Esc は Editor が奪うため不可)。
+            if (kb.tabKey.wasPressedThisFrame)
+            {
+                bool wasLocked = Cursor.lockState == CursorLockMode.Locked;
+                Cursor.lockState = wasLocked ? CursorLockMode.None : CursorLockMode.Locked;
+                Cursor.visible = wasLocked;
+            }
+        }
+
+        /// <summary>カメラ pitch をリセット (Zone 切替時に水平に戻す)。</summary>
+        public void ResetLook()
+        {
+            _pitch = 0f;
+            if (_cameraPivot != null)
+                _cameraPivot.localRotation = Quaternion.identity;
+            _velocity = Vector3.zero;
         }
 
         private void HandleLook()
         {
             var mouse = Mouse.current;
             if (mouse == null) return;
+            // カーソルが解放されている間は look 無効 (UI 操作のため)。
+            if (Cursor.lockState != CursorLockMode.Locked) return;
             bool active = _alwaysLook || mouse.rightButton.isPressed;
             if (!active) return;
 
@@ -72,6 +97,11 @@ namespace Hapbeat.Samples.Showcase
 
         private void HandleMove()
         {
+            // Cursor unlocked = UI mode (Z4 等)。WASD は player 移動ではなく
+            // UI 操作 (slider navigation 等) に使われ得るため、player 自体は
+            // 動かさない。HandleLook と挙動を揃える。
+            if (Cursor.lockState != CursorLockMode.Locked) return;
+
             var kb = Keyboard.current;
             float h = 0f, v = 0f;
             if (kb != null)

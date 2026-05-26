@@ -15,173 +15,175 @@ MonoBehaviour:
   entries:
   - _id: 1260162361b5486bb433bb2c1779cb59
     mode: 1
-    displayName: pin_hit
+    displayName: Z1_pin_hit
     category: showcase-kit
-    eventName: pin_hit
-    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
+    eventName: z1_pin_hit
+    streamClip: {fileID: 8300000, guid: 8951f79a6f3a3f94b994470bd1a085fa, type: 3}
     loop: 0
     bindings: []
-    gain: 1.407
+    gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 1
-    _eventId: showcase-kit.pin_hit
+    _cachedManifestIntensity: 0.25
   - _id: 097c5c77c643422290a4cc15e5da789e
     mode: 1
-    displayName: door_open
-    category: showcase-kit
-    eventName: door_open
-    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
+    displayName: Z2_door_open
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 2e52769d42099c949be8c5ba3868c961, type: 3}
     loop: 0
     bindings: []
     gain: 1
     target: 
-    group: -1
-    notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 0.7
-    _eventId: showcase-kit.door_open
-  - _id: 3ec09f14e87b40b0a2120de59f283c7d
-    mode: 1
-    displayName: door_close
-    category: showcase-kit
-    eventName: door_close
-    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
-    loop: 0
-    bindings: []
-    gain: 1
-    target: 
-    group: -1
-    notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 0.7
-    _eventId: showcase-kit.door_close
-  - _id: a81f3af1b37e40bba0a9e7f2a421e259
-    mode: 1
-    displayName: grab_start
-    category: showcase-kit
-    eventName: grab_start
-    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
-    loop: 0
-    bindings: []
-    gain: 1
-    target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.8
-    _eventId: showcase-kit.grab_start
+    _cachedManifestIntensity: 0.3
+  - _id: 3ec09f14e87b40b0a2120de59f283c7d
+    mode: 1
+    displayName: Z2_door_close
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 313cbc947b7963540949a073e238b662, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.2
+  - _id: 13c5585a0719421ba8b5b6e8bcf681bb
+    mode: 1
+    displayName: Z2_door_slam
+    category: showcase-kit
+    eventName: z2_door_slam
+    streamClip: {fileID: 8300000, guid: 90a24c1b0e01fad4cb0222d3e3db0fc9, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.25
+  - _id: 548dbbe23170484082274dcf288398ed
+    mode: 1
+    displayName: Z2_door_lock
+    category: showcase-kit
+    eventName: z2_door_lock
+    streamClip: {fileID: 8300000, guid: 7316db9c62487104d95df54b48a108f9, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.3
+  - _id: 17f736b6c7664d74a9478c06bdbf8fd9
+    mode: 1
+    displayName: Z2_door_unlock
+    category: showcase-kit
+    eventName: z2_door_unlock
+    streamClip: {fileID: 8300000, guid: 500c735533d75724187bc8eb88e239ed, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.3
+  - _id: 96508c38734348408e681396f0f6dd89
+    mode: 1
+    displayName: Z2_door_rattle
+    category: showcase-kit
+    eventName: z2_door_rattle
+    streamClip: {fileID: 8300000, guid: cfdede8470571b44dac9d87526c06976, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.25
+  - _id: a81f3af1b37e40bba0a9e7f2a421e259
+    mode: 1
+    displayName: Z3_hook_start
+    category: showcase-kit
+    eventName: z3_hook_start
+    streamClip: {fileID: 8300000, guid: 03253a060edafa94aa9caea45824e074, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.6
   - _id: a7a19cd41ce042f7977118c65f0ff078
     mode: 1
-    displayName: grab_loop
-    category: showcase-kit
-    eventName: grab_loop
-    streamClip: {fileID: 8300000, guid: 1ee021f82fc06d24a82a6a8c9b20cf9e, type: 3}
+    displayName: Z3_hook_loop
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: c82ab2dac07aeb34b8f2d868c05841ce, type: 3}
     loop: 1
     bindings:
-    - _id: 16ebe603c6b74028a7ea8767a89ada5c
-      ownerObjectName: PickupBox
-      sourceTransformPath: 
-      sourceProperty: 8
+    - _id: 50c6e8ce97904ba5a95f8dfcd486aa59
+      ownerObjectName: Z3_Fishing
+      sourceTransformPath: FishingObject
+      sourceProperty: 6
       inputMin: 0
-      inputMax: 0.5
-      curveType: 2
+      inputMax: 3
+      curveType: 0
       customCurve:
         serializedVersion: 2
-        m_Curve:
-        - serializedVersion: 3
-          time: 0
-          value: 0
-          inSlope: 0
-          outSlope: 1
-          tangentMode: 0
-          weightedMode: 0
-          inWeight: 0
-          outWeight: 0
-        - serializedVersion: 3
-          time: 1
-          value: 1
-          inSlope: 1
-          outSlope: 0
-          tangentMode: 0
-          weightedMode: 0
-          inWeight: 0
-          outWeight: 0
-        m_PreInfinity: 2
-        m_PostInfinity: 2
-        m_RotationOrder: 4
+        m_Curve: []
+        m_PreInfinity: 0
+        m_PostInfinity: 0
+        m_RotationOrder: 0
       outputParameter: 0
-      outputMin: 0.2
+      outputMin: 0
       outputMax: 1.5
       debugLog: 0
       debugLogInterval: 0.1
       debugLogChangeThreshold: 0.02
-    gain: 1.19
-    target: 
-    group: -1
-    notes: 
-    manifestOverride: {fileID: 4900000, guid: d2476a20415c7f4468325634534f00fa, type: 3}
-    _cachedManifestIntensity: 0.5
-    _eventId: showcase-kit.grab_loop
-  - _id: 9c20ef5e159e44028435aef426257938
-    mode: 1
-    displayName: grab_release
-    category: showcase-kit
-    eventName: grab_release
-    streamClip: {fileID: 8300000, guid: 97187563ca7689a448a34a3611bb4614, type: 3}
-    loop: 0
-    bindings: []
     gain: 1
     target: 
-    group: -1
-    notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 0.6
-    _eventId: showcase-kit.grab_release
-  - _id: 9a75447994fe4046a1f4ce20a03069e3
-    mode: 1
-    displayName: stream_demo
-    category: showcase-kit
-    eventName: stream_demo
-    streamClip: {fileID: 8300000, guid: 9cc70d462ff4f154597e2d618f94a52f, type: 3}
-    loop: 0
-    bindings: []
-    gain: 0.21
-    target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 1
-    _eventId: showcase-kit.stream_demo
-  - _id: 699d0b5d6fa84f3c9ec316feb65be7d3
+    _cachedManifestIntensity: 0.5
+  - _id: 9c20ef5e159e44028435aef426257938
     mode: 1
-    displayName: slider_tick
+    displayName: Z3_hook_release
     category: showcase-kit
-    eventName: slider_tick
-    streamClip: {fileID: 8300000, guid: 6d67b5972efd865449c0e0b3896b47b3, type: 3}
+    eventName: z3_hook_release
+    streamClip: {fileID: 8300000, guid: 09ce259acb63ad04cbf991c64b4444c9, type: 3}
     loop: 0
     bindings: []
     gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 0.5
-    _eventId: showcase-kit.slider_tick
-  - _id: 17df415ff7784c9baf207ee84ba64b13
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.55
+  - _id: 9a75447994fe4046a1f4ce20a03069e3
     mode: 1
-    displayName: charge_release
-    category: showcase-kit
-    eventName: charge_release
-    streamClip: {fileID: 8300000, guid: 31e02ee7b4756384b9c78070acd570f9, type: 3}
-    loop: 0
+    displayName: Z4_stream_loop
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 8c0340dd5c6edfb42b10d3a36b89a86c, type: 3}
+    loop: 1
     bindings:
-    - _id: 03873c7e37cc47789d83b6d93e6f8613
-      ownerObjectName: 
-      sourceTransformPath: 
-      sourceProperty: 1
+    - _id: 7075e3bd5ded46288a425c8d66d3e9ab
+      ownerObjectName: StreamPanelHud
+      sourceTransformPath: GainSlider
+      sourceProperty: 9
       inputMin: 0
       inputMax: 1
       curveType: 0
@@ -197,56 +199,127 @@ MonoBehaviour:
       debugLog: 0
       debugLogInterval: 0.1
       debugLogChangeThreshold: 0.02
+    - _id: b2525272aab14423b20586d8f9b0f091
+      ownerObjectName: StreamPanelHud
+      sourceTransformPath: PanSlider
+      sourceProperty: 9
+      inputMin: -1
+      inputMax: 1
+      curveType: 0
+      customCurve:
+        serializedVersion: 2
+        m_Curve: []
+        m_PreInfinity: 0
+        m_PostInfinity: 0
+        m_RotationOrder: 0
+      outputParameter: 1
+      outputMin: -1
+      outputMax: 1
+      debugLog: 0
+      debugLogInterval: 0.1
+      debugLogChangeThreshold: 0.02
     gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 1
-    _eventId: showcase-kit.charge_release
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.5
+  - _id: 699d0b5d6fa84f3c9ec316feb65be7d3
+    mode: 1
+    displayName: Z4_slider_tick
+    category: showcase-kit
+    eventName: z4_slider_tick
+    streamClip: {fileID: 8300000, guid: 10c7a07f91e6d354186dfcae12d6c7be, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.3
   - _id: c840e0dda57242409e8783ef15fc7eda
     mode: 1
-    displayName: target_hit
+    displayName: Z5_tar_hit_light
     category: showcase-kit
-    eventName: target_hit
-    streamClip: {fileID: 8300000, guid: f8a32897e240ad346a685a6870e31ed6, type: 3}
+    eventName: z5_tar_hit_light
+    streamClip: {fileID: 8300000, guid: ced5ba077c64e254cbbf4adac98ed5bf, type: 3}
     loop: 0
     bindings: []
-    gain: 0.41
+    gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 0.9
-    _eventId: showcase-kit.target_hit
-  - _id: f27817a737e94f55ad54b52040d0d188
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.45
+  - _id: 74313ca4328146ad8bbfe9b9a4459d95
     mode: 1
-    displayName: manual_fire
+    displayName: Z5_tar_hit_heavy
     category: showcase-kit
-    eventName: manual_fire
-    streamClip: {fileID: 8300000, guid: fcd23a07395e8554da7292d3548b2dcc, type: 3}
+    eventName: z5_tar_hit_heavy
+    streamClip: {fileID: 8300000, guid: 95a00682f405bc546a563fe6266c3720, type: 3}
     loop: 0
     bindings: []
-    gain: 0.63
+    gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 0.8
-    _eventId: showcase-kit.manual_fire
-  - _id: 586a3042bef64ddbafb4a7a5a668a172
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.4
+  - _id: 93ea5314391546d5b9264fb3b6c1928a
     mode: 1
-    displayName: burst
+    displayName: Z5_charge_loop
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 8b41294fc64708a4e8ba8676697d9b53, type: 3}
+    loop: 1
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.14
+  - _id: 17df415ff7784c9baf207ee84ba64b13
+    mode: 1
+    displayName: Z5_shot_light
     category: showcase-kit
-    eventName: burst
-    streamClip: {fileID: 8300000, guid: 4a6030a95e5564445ba149d20b6ee747, type: 3}
+    eventName: z5_shot_light
+    streamClip: {fileID: 8300000, guid: c6987ce16787e8c4394fac24fd052b3b, type: 3}
     loop: 0
     bindings: []
-    gain: 0.612
+    gain: 1
     target: 
-    group: -1
+    delayOffsetSeconds: 0
     notes: 
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: 1
-    _eventId: showcase-kit.burst
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.3
+  - _id: 36b35d42d61847558df415c1766187ac
+    mode: 1
+    displayName: Z5_shot_heavy
+    category: showcase-kit
+    eventName: z5_shot_heavy
+    streamClip: {fileID: 8300000, guid: 24599031594e372418d145fd5039895a, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.4
+  - _id: 41db498a8b3942bea009e11cae943771
+    mode: 1
+    displayName: Z5_charge_thd
+    category: showcase-kit
+    eventName: z5_charge_thd
+    streamClip: {fileID: 8300000, guid: 657ccd37b4bd9df46b1e2fa221f5f557, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
+    _cachedManifestIntensity: 0.3
   revertPlayModeChanges: 0

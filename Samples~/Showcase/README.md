@@ -1,134 +1,111 @@
-# Hapbeat Unity SDK — Showcase Sample
+# Hapbeat Unity SDK — Tutorial Sample
 
-A keyboard-and-mouse walkthrough of every major Hapbeat SDK feature.
-No XR device required.
+キーマウス操作だけで Hapbeat SDK の全機能を体験するチュートリアル。XR デバイス不要。
 
-## What you can learn
+## このサンプルで学べること
 
-| Zone | What you do | SDK feature on display |
+| ゾーン | 内容 | 学ぶ SDK 要素 |
 |---|---|---|
-| **Z1 Bowling** | Left-click to launch a ball into pins | `HapbeatCollisionTrigger` (VelocityScaled), Batch Setup |
-| **Z2 Door** | Press F to open / close the door | `HapbeatStateBehaviour` on Animator states (Open / Closed / Locked) |
-| **Z3 Fishing** | Left-click to grab / hold / release the hook | `HapbeatSequenceTrigger` (Fire → Loop → Stop) + `HapbeatParameterBinding` (velocity → gain modulation) |
-| **Z4 Stream Console** | Drag the slider, press Space to start the stream | `HapbeatTickEmitter` on a UI Slider + dynamic `HapbeatStreamPlayback.Gain` / `Pan` |
-| **Z5 Target Range** | Hold left mouse to charge, release to fire | `ChargeShooter` (script directly calling `HapbeatManager.StreamAudioClip` with loop / shot delays) + `HapbeatUnityEventTrigger` on target hits |
+| Z1 Bowling Lane | 左クリックで球を発射、ピンに衝突 | `HapbeatCollisionTrigger` (VelocityScaled) を BatchSetup で一括追加 |
+| Z2 Swing Door | F キーで Animator state Open/Close | `HapbeatAnimatorTrigger` を Inspector 手動追加 |
+| Z3 Pickup Box | 左クリックで持ち上げ → 動かす → 離す | `HapbeatSequenceTrigger` (Fire→Loop→Stop) + `HapbeatParameterBinding` (移動量で gain modulation) |
+| Z4 Stream Console | Space で stream 再生、Slider で gain/pan を動的更新 | `HapbeatManager.StreamAudioClip` + `HapbeatStreamPlayback.Gain/Pan` 動的更新, `HapbeatTickEmitter` (Slider に BatchSetup) |
+| Z5 Target Range | 左ボタン長押しでチャージ → 離して発射 → 命中 | スクリプト経由 `Bridge.PlayWithCurve` + `HapbeatUnityEventTrigger` (UnityEvent wiring) |
 
-Scene-wide hotkeys (`GlobalHotkeys.cs`):
+ホットキー (シーン全体で有効):
+- **Q**: `Bridge.Play("manual_fire")` 単発発火
+- **1〜5**: `Bridge.PlayScaled("burst", ...)` で gain スケール可変発火
+- **P**: `HapbeatManager.Ping()` で接続確認 (応答時間表示)
 
-- **Q** — fire `manual_fire`
-- **1–5** — fire `burst` with scaled gain
-- **P** — `HapbeatManager.Ping()` (shows round-trip)
+シーン上部の **Target Picker** (Both / Neck / Arm) で Z4・Z5・ホットキーの送信先を動的切替できます。Z1〜Z3 は EventMap entry に target を固定しており、Picker 操作の影響を受けません — 「event 設計時点で target を決める」 vs 「runtime で target を上書きする」両方の設計パターンを比較できます。
 
-The **Target Picker** UI at the top of the scene (Both / Neck / Arm) switches
-the runtime target for Z4 / Z5 / hotkey events. Z1–Z3 keep their target fixed
-on the EventMap entry — a side-by-side comparison of "design-time target" vs
-"runtime-overridden target".
+## 使い方
 
-## Getting started
+### 1. サンプルを Import
 
-### 1. Import the sample
+Package Manager の Hapbeat SDK パッケージから **Tutorial** サンプルを Import します。
+`Assets/Samples/Hapbeat SDK/<version>/Tutorial/` 配下に以下が展開されます (authored 版・SDK リポジトリで配布されています):
 
-In Package Manager, open the Hapbeat SDK package and import **Showcase**.
-Files land at `Assets/Samples/Hapbeat SDK/<version>/Showcase/`:
+- `Scenes/Tutorial.unity` — 「触覚適用済み (With) 版」
+- `Scenes/Tutorial_Plain.unity` — 「触覚なし (Without) 版」・walkthrough 起点
+- `EventMaps/TutorialEventMap.asset` — 12 entry リンク済み
+- `Animation/DoorAnimator.controller` — Z2 Door の IsOpen パラメータ
+- `Audio/`, `Scripts/`
 
-- `Scenes/Showcase.unity`
-- `EventMaps/ShowcaseEventMap.asset` (~18 entries)
-- `Animation/DoorAnimator.controller`
-- `Kit/showcase-kit/` (manifest + clips, schema 2.0.0)
-- `Audio/`, `Scripts/`, `Models/`, `Textures/`, `Materials/`, `Prefabs/`
+### 2. ユーザー領域に展開
 
-### 2. Deploy into the user-owned area (recommended)
+Editor メニューから:
 
-The Sample folder is reset on re-import. To author your own changes safely,
-run **`Hapbeat → Deploy Imported Sample`** once. The command:
+```
+Hapbeat → Build Samples → 2. Tutorial (full scene)
+```
 
-- Copies `Scenes/`, `EventMaps/`, `Animation/` into
-  `Assets/HapbeatSDK/SDK_Samples/Showcase/`
-- Copies `Kit/showcase-kit/` into `Assets/HapbeatSDK/Kits/showcase-kit/`
-  (the Studio convention kit root)
-- Rewires scene-side references so the deployed scene points at the deployed
-  EventMap / AnimatorController (the original sample copy can stay where it is)
+を実行すると、以下にコピー + 参照リンクの再配線が行われます:
 
-`Audio/`, `Scripts/`, `Models/`, etc. are **not** copied — the EventMap keeps
-pointing at them inside `Assets/Samples/.../Showcase/`. Don't delete the
-imported sample folder while the deployed EventMap still references those
-clips.
+- **`Assets/HapbeatSDK/SDK_Samples/Tutorial/{Scenes,EventMaps,Animation}/`** ← Scene / EventMap / AnimatorController
+- **`Assets/HapbeatSDK/Kits/tutorial-kit/`** ← Kit (manifest + 空の install-clips/stream-clips)
 
-If you also want to use the device-side Kit (Command mode events), open Hapbeat
-Studio or the Hapbeat Helper and deploy the `showcase-kit` to the device.
+以後はそちらを編集・Play してください (Kenney モデル差し替えやレイアウト調整も HapbeatSDK 側で行うと、再 Import で上書きされません)。
 
-### 3. Play
+`Assets/HapbeatSDK/SDK_Samples/` 配下が **SDK が追加したもの** の専有領域です。Studio が管理するユーザー Kit / Scene / EventMap は `Assets/HapbeatSDK/{Kits,Scenes,EventMaps}/` (SDK_Samples と並列) に保存され、相互に干渉しません。Kit のみは `HapbeatSDK/Kits/` 内で混在しますが、`tutorial-kit` という名前で SDK 由来と判別可能です。
 
-Open `Showcase.unity`, make sure the Hapbeat device is online (via Studio or
-Helper), and press Play. WASD to move, mouse to look, then visit each Zone.
+### 3. Play で動作確認
 
-> **AudioClip references** — the EventMap points at `Audio/*.wav` under the
-> imported sample folder. Don't delete the sample folder while the EventMap
-> still references those clips.
+`Assets/HapbeatSDK/SDK_Samples/Tutorial/Scenes/Tutorial.unity` を開き、Hapbeat デバイスを Studio または Helper でオンラインにしてから Play。
+WASD で移動、マウスで視点、各ゾーンで操作を試してください。
 
-## EventMap layout
+> **AudioClip 参照について**: コピーされた EventMap は `Assets/Samples/.../Tutorial/Audio/` 配下の WAV を参照します (HapbeatSDK には複製しません)。Import 済みサンプルを削除すると参照が切れるため、サンプルフォルダは残しておいてください。
 
-The Showcase uses **schema 2.0.0** Kit manifests (Studio's current format).
-Each `event_id` has the form `showcase-kit.<name>`. All entries are
-**StreamClip** by default so the device only needs Wi-Fi connectivity — no
-firmware-side Kit install required.
+### 4. walkthrough を試す
 
-Key entries:
+`Tutorial_Plain.unity` を起点に手順書 ([walkthrough.md](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/tutorial/walkthrough/)) の通りに Hapbeat を組み立てると `Tutorial.unity` と同じ動作になります — 自分で実装を学ぶ用途に向いています。
 
-| Zone | Entry | Loop | Notes |
-|---|---|:---:|---|
-| Z1 | `z1_pin_hit` | – | Fired per-pin via `HapbeatCollisionTrigger` |
-| Z2 | `z2_door_{open, close, lock, unlock, rattle, slam}` | – | Per-state via `HapbeatStateBehaviour` |
-| Z3 | `z3_hook_start` / `z3_hook_loop` / `z3_hook_release` | loop | `HapbeatSequenceTrigger` Fire / Loop / Stop |
-| Z4 | `z4_slider_click` | – | `HapbeatTickEmitter` detent ticks |
-| Z4 | `z4_stream_loop` | loop | Long-form stream demo |
-| Z5 | `z5_charge_loop` | loop | Charge rumble while LMB held |
-| Z5 | `z5_charge_thd` | – | Fires once at threshold cross |
-| Z5 | `z5_shot_{light, heavy}` | – | Release shot (variant chosen by charge level) |
-| Z5 | `z5_tar_hit_{light, heavy}` | – | Target receiver impact via `HapbeatUnityEventTrigger` |
-| Hotkey | `manual_fire`, `burst` | – | Scene-wide Q / 1-5 keys |
+## EventMap の構成 (推奨 — StreamClip ファースト)
 
-`gain` and `intensity` semantics: **effective gain = `entry.gain × manifest.intensity × per-trigger modulators`**.
-Set `entry.gain = 1.0` in the EventMap to use the authored manifest intensity
-directly, or scale up / down for per-entry overrides.
+Tutorial は **Hapbeat Studio で Kit を作らなくても、Unity 同梱 wav を StreamClip で再生** することで動くように設計しています。デバイスをオンラインにして Unity を Play すればすぐ触覚が返るのが最短導線です。
 
-### Switching to Command (Fire) mode (optional)
+| Display Name | StreamClip (Audio) | Mode | Target | Loop | 用途 |
+|---|---|---|---|---|---|
+| pin_hit | `drum_hit_1.wav` | StreamClip | `*/pos_r_arm` | - | Z1 Pin 衝突 |
+| door_open | `ui_click.wav` | StreamClip | `*/pos_neck` | - | Z2 ドア開 |
+| door_close | `ui_click.wav` | StreamClip | `*/pos_neck` | - | Z2 ドア閉 |
+| grab_start | `grab.wav` | StreamClip | `*/pos_r_arm` | - | Z3 Pickup Fire |
+| grab_loop | `rain_loop.mp3` | StreamClip | `*/pos_r_arm` | ✓ | Z3 Pickup Loop (binding 対象) |
+| grab_release | `release.wav` | StreamClip | `*/pos_r_arm` | - | Z3 Pickup Stop |
+| stream_demo | `rain_loop.mp3` | StreamClip | (Picker) | ✓ | Z4 Stream Test |
+| slider_tick | `ui_click.wav` | StreamClip | (Picker) | - | Z4 Tick |
+| charge_release | `explosion.wav` | StreamClip | (Picker) | - | Z5 PlayWithCurve |
+| target_hit | `target_hit.mp3` | StreamClip | (Picker) | - | Z5 命中 |
+| manual_fire | `punch_impact.wav` | StreamClip | (Picker) | - | Q キー |
+| burst | `gunshot.wav` | StreamClip | (Picker) | - | 1-5 キー |
 
-After you've validated StreamClip, you can move any entry to Command mode for:
+`*` は全 player にマッチするワイルドカード。`pos_r_arm` 等の標準 position は contracts spec で定義されています。
 
-- lower latency (only an event ID on the wire, no PCM stream)
-- no Unity-side AudioClip dependency (device plays the Kit-installed WAV)
-- Kit content authoring stays in Studio (Unity-side edits unnecessary)
+### Command モードを試したい場合 (任意)
 
-In the EventMap, switch the entry `Mode` from `StreamClip` to `Command` and
-make sure the device has the corresponding Kit deployed. The entry's
-`category + eventName` form the wire `event_id`
-(e.g. `showcase-kit.z1_pin_hit`).
+StreamClip で SDK の動作を一通り確認したら、Hapbeat Studio で同名の Kit を作って Command モードに切り替えると、
 
-## About the `showcase-kit`
+- 低遅延 (event id だけ送るので軽量)
+- デバイス内蔵 clip を使うので Unity 同梱の wav が不要
+- Studio で Kit のクリップを編集すれば Unity 側の変更不要
 
-`Kit/showcase-kit/showcase-kit-manifest.json` provides the per-event
-`intensity` values that drive both Command and StreamClip paths. The
-`install-clips/` / `stream-clips/` subfolders ship populated so the same Kit
-can be used in either mode on the device.
+といった利点を体験できます。各 entry の `Mode` を `Command` に切替、`Event ID` (例: `tutorial-kit.pin_hit`) を Studio 側 Kit の event id と合わせるだけで Tutorial の挙動はそのまま再現します。詳細は [walkthrough](../docs/tutorial/walkthrough.md) の最後の章を参照。
 
-Manifest filename convention is `<kit-name>-manifest.json`
-(here: `showcase-kit-manifest.json`). The SDK auto-discovers any manifest
-matching the pattern under `Assets/HapbeatSDK/Kits/`.
+## Kit (tutorial-kit) について
 
-Each EventMap entry also has an optional **manifest override** field next to
-the Test Play button. When set, the SDK looks up `intensity` from that
-specific manifest first. Leave it empty for auto-discovery across all kits.
+Tutorial は `tutorial-kit-manifest.json` で各 event の `intensity` を提供するために `tutorial-kit` を同梱しています (`Samples~/Tutorial/Kit/`)。`install-clips/` / `stream-clips/` は **初期状態では空** で、StreamClip 再生は EventMap が `Audio/` を直接参照するため不要です。Command モード化したい場合のみ、ユーザー側で `install-clips/` に対応する WAV (例: `pin_hit.wav`) を追加し、`tutorial-kit-manifest.json` の該当 event の `mode` を `"command"` に変更します。
 
-## Known constraints
+Build メニューの Deploy mode は Kit を `Assets/HapbeatSDK/Kits/tutorial-kit/` にコピーします (Studio convention の kit root)。
 
-- The included 3D models are CC0 / CC BY 3.0 assets — see
-  [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for full credits.
-- `ChargeShooter` (Z5) ships with default projectile prefabs; you can swap
-  them in the inspector if you want a different shot visual.
+manifest ファイル名の規約は **`<kit-name>-manifest.json`** (このサンプルでは `tutorial-kit-manifest.json`)。複数 Kit が並ぶときの視認性のためで、SDK の自動 scan / per-entry override picker のいずれも "manifest" 部分一致で discovery します。
 
-## License
+各 EventMap entry には optional な **manifest override** フィールド (EventMap Window の Test Play ボタン右の "Manifest" スロット) があり、特定の `<kit-name>-manifest.json` (TextAsset) を強制参照させたい場合にセットできます。未設定なら `HapbeatSDK/Kits/` 全 manifest を自動 scan して clip 一致 → eventId 一致の順に解決します。
 
-Code in this sample is covered by the package's main `LICENSE`. Bundled audio,
-models, and textures are credited individually in `THIRD_PARTY_NOTICES.md`
-(CC0 sources grouped, CC BY 3.0 assets attributed per file).
+## 既知の制約
+
+- 配布されるシーンは primitive (Cube/Cylinder/Sphere) ベースです。Kenney CC0 モデルへの差し替えは Unity 上で手動編集してください。
+- `ChargeShooter._projectilePrefab` (Z5) は user 側で Sphere prefab を割当する必要があります (Rigidbody + tag `Projectile`)。
+
+## ライセンス
+
+同梱 wav・モデル等の出所は `THIRD_PARTY_NOTICES.md` を参照してください。

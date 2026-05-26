@@ -2,13 +2,13 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace Hapbeat.Samples.Showcase
+namespace Hapbeat.Samples.Tutorial
 {
     /// <summary>
-    /// Z1 Bowling Lane: left-click to launch the ball forward toward pins.
-    /// Space resets the ball and pins to the spawn pose.
-    /// Pin haptics are wired via HapbeatCollisionTrigger (BatchSetup) — this
-    /// script only owns ball physics, not haptic calls.
+    /// Z1 Bowling Lane: ball physics 制御のみ。Haptic は各 Pin に attach
+    /// された <c>HapbeatCollisionTrigger</c> が velocity-scaled で自動発火
+    /// するため、このスクリプトは触覚に関与しない (= "haptic = Trigger 任せ"
+    /// パターンの最小例)。
     /// </summary>
     public class BallLauncher : MonoBehaviour
     {
@@ -17,6 +17,7 @@ namespace Hapbeat.Samples.Showcase
         [SerializeField] private Transform _aimReference; // usually the player camera
         [SerializeField] private float _launchSpeed = 8f;
         [SerializeField] private List<Rigidbody> _pins = new List<Rigidbody>();
+        [SerializeField] private bool _verboseLog = true;
 
         private struct PoseSnapshot
         {
@@ -41,18 +42,27 @@ namespace Hapbeat.Samples.Showcase
 
         private void Update()
         {
+            if (Cursor.lockState != CursorLockMode.Locked) return;
             if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame)
+            {
+                if (_verboseLog) Debug.Log("[Bowling] LMB → Launch");
                 Launch();
-
+            }
             if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
-                Reset();
+            {
+                if (_verboseLog) Debug.Log("[Bowling] Space → Reset");
+                ResetPose();
+            }
         }
 
         private void Launch()
         {
-            if (_ball == null) return;
+            if (_ball == null)
+            {
+                Debug.LogWarning("[Bowling] _ball が未割当");
+                return;
+            }
 
-            // Reset ball to spawn pose first so each launch is consistent.
             _ball.transform.position = _spawnPose != null ? _spawnPose.position : _ballRest.pos;
             _ball.transform.rotation = _spawnPose != null ? _spawnPose.rotation : _ballRest.rot;
             _ball.linearVelocity = Vector3.zero;
@@ -64,7 +74,7 @@ namespace Hapbeat.Samples.Showcase
             _ball.linearVelocity = dir * _launchSpeed;
         }
 
-        private void Reset()
+        private void ResetPose()
         {
             if (_ball != null)
             {

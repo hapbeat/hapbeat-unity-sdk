@@ -1,5 +1,45 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
+--- !u!114 &-6538067215249211531
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1737b47c63e44143816bac0749e16e4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
+  _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
+  _entryIdOnEnter: 96508c38734348408e681396f0f6dd89
+  _entryIndexOnEnter: 6
+  _entryIdOnExit: 
+  _entryIndexOnExit: -1
+  _requiredPreviousState: 
+  _gainMultiplier: 1
+  _verboseLog: 0
+--- !u!114 &-5355776472968308939
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1737b47c63e44143816bac0749e16e4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
+  _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
+  _entryIdOnEnter: 13c5585a0719421ba8b5b6e8bcf681bb
+  _entryIndexOnEnter: 3
+  _entryIdOnExit: 
+  _entryIndexOnExit: -1
+  _requiredPreviousState: Open
+  _gainMultiplier: 1
+  _verboseLog: 0
 --- !u!1102 &-5236469920967779340
 AnimatorState:
   serializedVersion: 6
@@ -15,7 +55,9 @@ AnimatorState:
   - {fileID: 7652917414007016274}
   - {fileID: 5428126196225108008}
   - {fileID: 7082340286540330800}
-  m_StateMachineBehaviours: []
+  m_StateMachineBehaviours:
+  - {fileID: 7376345329850022915}
+  - {fileID: 1226320513668951622}
   m_Position: {x: 50, y: 50, z: 0}
   m_IKOnFeet: 0
   m_WriteDefaultValues: 1
@@ -30,6 +72,41 @@ AnimatorState:
   m_MirrorParameter: 
   m_CycleOffsetParameter: 
   m_TimeParameter: 
+--- !u!114 &-4844874915358605665
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  _soundName: door_slam
+  _requiredPreviousState: 
+  _verboseLog: 0
+--- !u!114 &-4809305199421437723
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1737b47c63e44143816bac0749e16e4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
+  _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
+  _entryIdOnEnter: 097c5c77c643422290a4cc15e5da789e
+  _entryIndexOnEnter: 1
+  _entryIdOnExit: 
+  _entryIndexOnExit: -1
+  _requiredPreviousState: Closed
+  _gainMultiplier: 1
+  _verboseLog: 0
 --- !u!1101 &-2955753510675999865
 AnimatorStateTransition:
   m_ObjectHideFlags: 1
@@ -53,7 +130,7 @@ AnimatorStateTransition:
   m_Mute: 0
   m_IsExit: 0
   serializedVersion: 3
-  m_TransitionDuration: 0.05
+  m_TransitionDuration: 2
   m_TransitionOffset: 0
   m_ExitTime: 0
   m_HasExitTime: 0
@@ -74,7 +151,9 @@ AnimatorState:
   m_Transitions:
   - {fileID: 3705171975577057065}
   - {fileID: 1041827951251847356}
-  m_StateMachineBehaviours: []
+  m_StateMachineBehaviours:
+  - {fileID: 1871661594003510899}
+  - {fileID: -4809305199421437723}
   m_Position: {x: 50, y: 50, z: 0}
   m_IKOnFeet: 0
   m_WriteDefaultValues: 1
@@ -101,7 +180,9 @@ AnimatorState:
   m_CycleOffset: 0
   m_Transitions:
   - {fileID: 2810598783701895214}
-  m_StateMachineBehaviours: []
+  m_StateMachineBehaviours:
+  - {fileID: 450486764917587379}
+  - {fileID: 4987250142699993779}
   m_Position: {x: 50, y: 50, z: 0}
   m_IKOnFeet: 0
   m_WriteDefaultValues: 1
@@ -168,6 +249,21 @@ AnimatorController:
     m_IKPass: 0
     m_SyncedLayerAffectsTiming: 0
     m_Controller: {fileID: 9100000}
+--- !u!114 &450486764917587379
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  _soundName: door_unlock
+  _requiredPreviousState: 
+  _verboseLog: 0
 --- !u!1101 &1041827951251847356
 AnimatorStateTransition:
   m_ObjectHideFlags: 1
@@ -188,7 +284,7 @@ AnimatorStateTransition:
   m_Mute: 0
   m_IsExit: 0
   serializedVersion: 3
-  m_TransitionDuration: 0.3
+  m_TransitionDuration: 2.2
   m_TransitionOffset: 0
   m_ExitTime: 0.16666669
   m_HasExitTime: 0
@@ -208,7 +304,9 @@ AnimatorState:
   m_CycleOffset: 0
   m_Transitions:
   - {fileID: 4685576647674677824}
-  m_StateMachineBehaviours: []
+  m_StateMachineBehaviours:
+  - {fileID: 4357528289610083502}
+  - {fileID: 1377144587436005844}
   m_Position: {x: 50, y: 50, z: 0}
   m_IKOnFeet: 0
   m_WriteDefaultValues: 1
@@ -223,6 +321,46 @@ AnimatorState:
   m_MirrorParameter: 
   m_CycleOffsetParameter: 
   m_TimeParameter: 
+--- !u!114 &1226320513668951622
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1737b47c63e44143816bac0749e16e4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
+  _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
+  _entryIdOnEnter: 3ec09f14e87b40b0a2120de59f283c7d
+  _entryIndexOnEnter: 2
+  _entryIdOnExit: 
+  _entryIndexOnExit: -1
+  _requiredPreviousState: Open
+  _gainMultiplier: 1
+  _verboseLog: 0
+--- !u!114 &1377144587436005844
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1737b47c63e44143816bac0749e16e4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
+  _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
+  _entryIdOnEnter: 548dbbe23170484082274dcf288398ed
+  _entryIndexOnEnter: 4
+  _entryIdOnExit: 
+  _entryIndexOnExit: -1
+  _requiredPreviousState: 
+  _gainMultiplier: 1
+  _verboseLog: 0
 --- !u!1102 &1571546807842893392
 AnimatorState:
   serializedVersion: 6
@@ -235,7 +373,9 @@ AnimatorState:
   m_CycleOffset: 0
   m_Transitions:
   - {fileID: 3667540789856485107}
-  m_StateMachineBehaviours: []
+  m_StateMachineBehaviours:
+  - {fileID: 2242593609515730138}
+  - {fileID: -6538067215249211531}
   m_Position: {x: 50, y: 50, z: 0}
   m_IKOnFeet: 0
   m_WriteDefaultValues: 1
@@ -250,6 +390,36 @@ AnimatorState:
   m_MirrorParameter: 
   m_CycleOffsetParameter: 
   m_TimeParameter: 
+--- !u!114 &1871661594003510899
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  _soundName: door_open
+  _requiredPreviousState: 
+  _verboseLog: 0
+--- !u!114 &2242593609515730138
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  _soundName: door_rattle
+  _requiredPreviousState: 
+  _verboseLog: 0
 --- !u!1102 &2716056670015203432
 AnimatorState:
   serializedVersion: 6
@@ -262,7 +432,9 @@ AnimatorState:
   m_CycleOffset: 0
   m_Transitions:
   - {fileID: 4877875461748760507}
-  m_StateMachineBehaviours: []
+  m_StateMachineBehaviours:
+  - {fileID: -4844874915358605665}
+  - {fileID: -5355776472968308939}
   m_Position: {x: 50, y: 50, z: 0}
   m_IKOnFeet: 0
   m_WriteDefaultValues: 1
@@ -295,6 +467,34 @@ AnimatorStateTransition:
   m_TransitionOffset: 0
   m_ExitTime: 1
   m_HasExitTime: 1
+  m_HasFixedDuration: 0
+  m_InterruptionSource: 0
+  m_OrderedInterruption: 1
+  m_CanTransitionToSelf: 1
+--- !u!1101 &3017239556490251617
+AnimatorStateTransition:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: 
+  m_Conditions:
+  - m_ConditionMode: 1
+    m_ConditionEvent: Slam
+    m_EventTreshold: 0
+  - m_ConditionMode: 1
+    m_ConditionEvent: isClosed
+    m_EventTreshold: 0
+  m_DstStateMachine: {fileID: 0}
+  m_DstState: {fileID: -5236469920967779340}
+  m_Solo: 0
+  m_Mute: 0
+  m_IsExit: 0
+  serializedVersion: 3
+  m_TransitionDuration: 0
+  m_TransitionOffset: 0
+  m_ExitTime: 0.75
+  m_HasExitTime: 0
   m_HasFixedDuration: 1
   m_InterruptionSource: 0
   m_OrderedInterruption: 1
@@ -332,6 +532,9 @@ AnimatorStateTransition:
   - m_ConditionMode: 1
     m_ConditionEvent: Slam
     m_EventTreshold: 0
+  - m_ConditionMode: 2
+    m_ConditionEvent: isClosed
+    m_EventTreshold: 0
   m_DstStateMachine: {fileID: 0}
   m_DstState: {fileID: 2716056670015203432}
   m_Solo: 0
@@ -346,6 +549,21 @@ AnimatorStateTransition:
   m_InterruptionSource: 0
   m_OrderedInterruption: 1
   m_CanTransitionToSelf: 1
+--- !u!114 &4357528289610083502
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  _soundName: door_lock
+  _requiredPreviousState: 
+  _verboseLog: 0
 --- !u!1101 &4685576647674677824
 AnimatorStateTransition:
   m_ObjectHideFlags: 1
@@ -360,11 +578,11 @@ AnimatorStateTransition:
   m_Mute: 0
   m_IsExit: 0
   serializedVersion: 3
-  m_TransitionDuration: 0.25
+  m_TransitionDuration: 0
   m_TransitionOffset: 0
   m_ExitTime: 1
   m_HasExitTime: 1
-  m_HasFixedDuration: 1
+  m_HasFixedDuration: 0
   m_InterruptionSource: 0
   m_OrderedInterruption: 1
   m_CanTransitionToSelf: 1
@@ -390,6 +608,26 @@ AnimatorStateTransition:
   m_InterruptionSource: 0
   m_OrderedInterruption: 1
   m_CanTransitionToSelf: 1
+--- !u!114 &4987250142699993779
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1737b47c63e44143816bac0749e16e4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
+  _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
+  _entryIdOnEnter: 17f736b6c7664d74a9478c06bdbf8fd9
+  _entryIndexOnEnter: 5
+  _entryIdOnExit: 
+  _entryIndexOnExit: -1
+  _requiredPreviousState: 
+  _gainMultiplier: 1
+  _verboseLog: 0
 --- !u!1101 &5428126196225108008
 AnimatorStateTransition:
   m_ObjectHideFlags: 1
@@ -410,11 +648,11 @@ AnimatorStateTransition:
   m_Mute: 0
   m_IsExit: 0
   serializedVersion: 3
-  m_TransitionDuration: 0.25
+  m_TransitionDuration: 0
   m_TransitionOffset: 0
   m_ExitTime: 0.75
   m_HasExitTime: 0
-  m_HasFixedDuration: 1
+  m_HasFixedDuration: 0
   m_InterruptionSource: 0
   m_OrderedInterruption: 1
   m_CanTransitionToSelf: 1
@@ -438,14 +676,29 @@ AnimatorStateTransition:
   m_Mute: 0
   m_IsExit: 0
   serializedVersion: 3
-  m_TransitionDuration: 0.25
+  m_TransitionDuration: 0
   m_TransitionOffset: 0
   m_ExitTime: 0.75
   m_HasExitTime: 0
-  m_HasFixedDuration: 1
+  m_HasFixedDuration: 0
   m_InterruptionSource: 0
   m_OrderedInterruption: 1
   m_CanTransitionToSelf: 1
+--- !u!114 &7376345329850022915
+MonoBehaviour:
+  m_ObjectHideFlags: 1
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  _soundName: door_close
+  _requiredPreviousState: Open
+  _verboseLog: 0
 --- !u!1107 &7389835429501111340
 AnimatorStateMachine:
   serializedVersion: 6
@@ -474,11 +727,12 @@ AnimatorStateMachine:
     m_State: {fileID: -831848732443368406}
     m_Position: {x: 130, y: 200, z: 0}
   m_ChildStateMachines: []
-  m_AnyStateTransitions: []
+  m_AnyStateTransitions:
+  - {fileID: 3017239556490251617}
   m_EntryTransitions: []
   m_StateMachineTransitions: {}
   m_StateMachineBehaviours: []
-  m_AnyStatePosition: {x: 130, y: 0, z: 0}
+  m_AnyStatePosition: {x: 130, y: -10, z: 0}
   m_EntryPosition: {x: 120, y: 90, z: 0}
   m_ExitPosition: {x: 840, y: 200, z: 0}
   m_ParentStateMachinePosition: {x: 800, y: 20, z: 0}
@@ -503,10 +757,10 @@ AnimatorStateTransition:
   m_Mute: 0
   m_IsExit: 0
   serializedVersion: 3
-  m_TransitionDuration: 0.1
+  m_TransitionDuration: 17.908875
   m_TransitionOffset: 0
-  m_ExitTime: 0
-  m_HasExitTime: 0
+  m_ExitTime: 0.14927907
+  m_HasExitTime: 1
   m_HasFixedDuration: 0
   m_InterruptionSource: 0
   m_OrderedInterruption: 1

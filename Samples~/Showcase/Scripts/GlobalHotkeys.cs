@@ -1,69 +1,71 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
-namespace Hapbeat.Samples.Showcase
+namespace Hapbeat.Samples.Tutorial
 {
     /// <summary>
-    /// Showcase-wide keyboard shortcuts used to demonstrate script-driven
-    /// SDK calls without taking up a dedicated zone:
-    ///   <list type="bullet">
-    ///     <item><b>Q</b> — single Bridge.Play() of the manual_fire entry.</item>
-    ///     <item><b>1-5</b> — Bridge.PlayScaled() with key value as gain factor (0.2 / 0.4 / ... / 1.0).</item>
-    ///     <item><b>P</b> — HapbeatManager.Ping() with the round-trip latency shown in the HUD.</item>
-    ///   </list>
-    /// All calls go through ShowcaseBridge so they honour the active TargetPicker selection.
+    /// Pong (Ping 応答) の RTT を HUD テキストに反映するためだけの小さな
+    /// MonoBehaviour。Q / P キー入力自体は <c>HapbeatKeyDispatcher</c> +
+    /// <c>HapbeatActionHelper</c> 経由で宣言的に wiring する設計に変えたため、
+    /// このスクリプトは Update での入力監視を持たない。
     /// </summary>
     public class GlobalHotkeys : MonoBehaviour
     {
-        [SerializeField] private ShowcaseBridge _bridge;
         [SerializeField] private Text _pingResultText;
-        [SerializeField] private string _manualFireEvent = "manual_fire";
-        [SerializeField] private string _burstEvent = "burst";
+        [SerializeField] private bool _verboseLog = true;
 
-        private static readonly Key[] s_digitKeys =
-        {
-            Key.Digit1, Key.Digit2, Key.Digit3, Key.Digit4, Key.Digit5,
-        };
+        private bool _pongSubscribed;
+        // ユーザーが P キーで明示的に Ping を送った時のみ console に出すフラグ。
+        // HapbeatManager は keep-alive で定期 ping を打つので、毎回ログを
+        // 出すと console が埋まる。Pong 1 回分だけ消費される one-shot flag。
+        private bool _userInitiatedPing;
 
-        private void OnEnable()
-        {
-            if (HapbeatManager.Instance != null)
-                HapbeatManager.Instance.OnPong += HandlePong;
-        }
-
-        private void OnDisable()
-        {
-            if (HapbeatManager.Instance != null)
-                HapbeatManager.Instance.OnPong -= HandlePong;
-        }
+        private void Start() => TrySubscribe();
 
         private void Update()
         {
-            if (_bridge == null) return;
-            var kb = Keyboard.current;
-            if (kb == null) return;
+            // HapbeatManager が遅れて初期化されるケースに対応 (Subscribe 失敗時にリトライ)。
+            if (!_pongSubscribed) TrySubscribe();
+        }
 
-            if (kb.qKey.wasPressedThisFrame)
-                _bridge.PlayWithPickerTarget(_manualFireEvent);
+        private void OnDestroy()
+        {
+            if (_pongSubscribed && HapbeatManager.Instance != null)
+                HapbeatManager.Instance.OnPong -= HandlePong;
+            _pongSubscribed = false;
+        }
 
-            for (int i = 0; i < s_digitKeys.Length; i++)
-            {
-                if (kb[s_digitKeys[i]].wasPressedThisFrame)
-                {
-                    float gain = (i + 1) / 5f;
-                    _bridge.PlayScaledWithPickerTarget(_burstEvent, gain * 5f, 0f, 5f);
-                }
-            }
-
-            if (kb.pKey.wasPressedThisFrame)
-                _bridge.SendPing();
+        private void TrySubscribe()
+        {
+            if (_pongSubscribed) return;
+            var mgr = HapbeatManager.Instance;
+            if (mgr == null) return;
+            mgr.OnPong += HandlePong;
+            _pongSubscribed = true;
+            if (_verboseLog) Debug.Log("[Hotkey] OnPong subscribed.");
         }
 
         private void HandlePong(long rttUs)
         {
+            // 自動 ping (keep-alive) の場合 console 出さない。HUD は常に更新。
+            if (_userInitiatedPing)
+            {
+                if (_verboseLog) Debug.Log($"[Hotkey] Pong received: {rttUs / 1000f:F1} ms");
+                _userInitiatedPing = false;
+            }
             if (_pingResultText != null)
+            {
+                // 慣例通り "Ping" = 往復時間 (RTT)。
                 _pingResultText.text = $"Ping: {rttUs / 1000f:F1} ms";
+            }
+        }
+
+        /// <summary>UnityEvent から呼ばれて即時表示するため (Pong 待ち間の placeholder)。
+        /// 同時に「次の Pong は user-initiated」フラグを立てて console ログ許可。</summary>
+        public void NotifyPingSent()
+        {
+            _userInitiatedPing = true;
+            if (_pingResultText != null) _pingResultText.text = "Ping: ...";
         }
     }
 }
