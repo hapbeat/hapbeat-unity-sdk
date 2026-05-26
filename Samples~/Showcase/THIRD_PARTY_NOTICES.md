@@ -1,32 +1,81 @@
 # Showcase Sample — Third Party Notices
 
-## Audio assets (`Audio/`)
+This sample bundles third-party 3D models, textures, and audio. CC0 sources are
+listed for provenance; CC BY assets are credited per-file as required by their
+license.
 
-`Samples~/Showcase/Audio/` 以下の WAV / MP3 ファイルは、配布 OK のフリー効果音サイトから取得した素材を、Hapbeat の触覚信号用にリサンプル・トリミング・ゲイン調整して再配布しています。
-
-由来として可能性のあるサイト (SDK ルート `README.md` のクレジットと共通):
-
-- 効果音ラボ — https://soundeffect-lab.info/
-- 魔王魂 — https://maou.audio/
-- 効果音辞典（小森平） — https://taira-komori.net/
-- OtoLogic — https://otologic.jp/
-- 音人 — https://on-jin.com/
-
-配布前に各サイトの利用規約に従って加工しており、著作権・作者メタデータは除去済みです。
-出典が明確でないファイルについて、権利者・配布元からご連絡をいただければ確認の上、整合を取ります (削除 / 差し替え / クレジット追記など)。Issue または GitHub の連絡先までお知らせください。
+---
 
 ## 3D Models (`Models/`)
 
-将来的に [Kenney CC0 アセット](https://kenney.nl/assets) のモデルを `Models/` フォルダに配置する予定です。
-現状の Showcase シーンは Unity プリミティブ (Cube / Sphere / Cylinder) のみで構成されているため、Models フォルダは空です。
+### CC BY 3.0 — attribution required
 
-Kenney アセットを利用する場合は、以下を本ファイルに追記してください:
+These two assets require attribution. Both are © their respective authors,
+distributed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
 
-```
-- Source: Kenney.nl
-- License: CC0 1.0 Universal (Public Domain Dedication)
-- URL: https://creativecommons.org/publicdomain/zero/1.0/
-- Used assets: <pack name> / <file name>
-```
+| File | Title | Author | Source |
+|---|---|---|---|
+| `Models/Z1_Bowling/bowling_pin.obj` | Bowling Pin | Jakob Hippe | <https://poly.pizza/m/d1ZCN1qopib> |
+| `Models/Z5_ChargeShot/Missile.obj` | Missile | Poly by Google | <https://poly.pizza/m/dPVCvXP-S58> |
 
-Kenney のライセンスでは attribution は任意ですが、出所の記録のために本ファイルに記載することを推奨します。
+### CC0 — public domain
+
+No attribution required, listed for provenance.
+
+| File | Title | Author | Source |
+|---|---|---|---|
+| `Models/Z2_Door/Door.fbx` | Door | Quaternius | <https://poly.pizza/m/a948jjnuaL> |
+| `Models/Z3_Fishing/FishingRod_Lvl5.obj` | Fishing Rod | Quaternius | <https://poly.pizza/m/0YAR0Lg58p> |
+| `Models/Z3_Fishing/Shark.obj` | (Cute Fish pack) | Quaternius | <https://quaternius.com/packs/cutefish.html> |
+
+### Source not yet documented
+
+The following models are bundled but their source / license has not been
+recorded yet. To be confirmed and added above:
+
+- `Models/Z5_ChargeShot/blaster-g.fbx`
+- `Models/Z5_ChargeShot/bullet-foam-tip-thick.fbx`
+- `Models/Z5_ChargeShot/target-large.fbx`
+
+---
+
+## Textures (`Textures/`, Materials)
+
+All textures are CC0 from [Poly Haven](https://polyhaven.com/) (every asset on
+Poly Haven is CC0 by site policy).
+
+| Use | Source |
+|---|---|
+| Z1 Bowling lane (laminate floor) | <https://polyhaven.com/a/laminate_floor_02> |
+| Z2 Door (oak veneer) | <https://polyhaven.com/a/oak_veneer_01> |
+
+---
+
+## Audio (`Audio/`, `Kit/`)
+
+`Audio/*` and `Kit/install-clips/*` / `Kit/stream-clips/*` WAVs are derived
+from royalty-free sound-effect sites, then resampled / trimmed / gain-adjusted
+for haptic playback.
+
+Possible source sites (matches the credits in the SDK root `README.md`):
+
+- 効果音ラボ — <https://soundeffect-lab.info/>
+- 魔王魂 — <https://maou.audio/>
+- 効果音辞典 (小森平) — <https://taira-komori.net/>
+- OtoLogic — <https://otologic.jp/>
+- 音人 — <https://on-jin.com/>
+
+Files have been processed for haptic use and metadata (author / copyright tags)
+removed. If you are the rights holder and need an entry corrected, removed, or
+relicensed, please open a GitHub issue.
+
+---
+
+## License summary
+
+- **CC BY 3.0** (attribution required): 2 model files, credited above.
+- **CC0**: all remaining 3D models, all textures, all bundled audio.
+
+The Hapbeat SDK code itself (`Editor/`, `Runtime/`, sample `Scripts/`) is
+licensed under the terms in the package's main `LICENSE` file and is not
+covered by the third-party notices here.
