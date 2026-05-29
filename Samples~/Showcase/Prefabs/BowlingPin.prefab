@@ -101,7 +101,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatCollisionTrigger
   _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
   _entryId: 1260162361b5486bb433bb2c1779cb59
-  _entryIndex: 0
   _triggerEnabled: 1
   _cooldown: 0
   _gainMultiplier: 1
@@ -247,7 +246,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 1e6f9d388c6661b41a1858a8c7c984a3, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.CollisionAudio
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.CollisionAudio
   _clips:
   - {fileID: 8300000, guid: ad6534bc8f3ed2a48926cd6e11f96d9f, type: 3}
   _minVelocity: 0.5

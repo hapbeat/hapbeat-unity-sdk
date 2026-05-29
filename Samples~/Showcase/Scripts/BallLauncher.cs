@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// Z1 Bowling Lane: ball physics 制御のみ。Haptic は各 Pin に attach

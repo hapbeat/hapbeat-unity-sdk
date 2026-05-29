@@ -4,7 +4,7 @@ using UnityEngine;
 using Hapbeat;
 using Hapbeat.Editor;
 
-namespace Hapbeat.Samples.Tutorial.Editor
+namespace Hapbeat.Samples.Showcase.Editor
 {
     /// <summary>
     /// Custom Inspector for <see cref="ChargeShooter"/>.

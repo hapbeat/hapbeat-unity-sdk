@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// Pong (Ping 応答) の RTT を HUD テキストに反映するためだけの小さな

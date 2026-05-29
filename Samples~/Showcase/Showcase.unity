@@ -265,7 +265,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 8cf61f6debe0adb438db975b4b5f5439, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.DoorController
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.DoorController
   _bindings:
   - label: Open / Close door
     key: 20
@@ -323,7 +323,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 45fe2906f4280744482308dadca055da, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.SoundPlayer
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.SoundPlayer
   _clips:
   - name: door_open
     clip: {fileID: 8300000, guid: 196776e473737fc4bb35ae718e023e70, type: 3}
@@ -590,7 +590,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 87e604e5f7bfe3048a46ac8300ec92e3, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.UiDeselectOnPointerUp
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.UiDeselectOnPointerUp
 --- !u!114 &96142281
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -677,7 +677,7 @@ MonoBehaviour:
           m_BoolArgument: 0
         m_CallState: 2
       - m_Target: {fileID: 96142283}
-        m_TargetAssemblyTypeName: Hapbeat.Samples.Tutorial.TickAudioEmitter, Assembly-CSharp
+        m_TargetAssemblyTypeName: Hapbeat.Samples.Showcase.TickAudioEmitter, Assembly-CSharp
         m_MethodName: Fire
         m_Mode: 0
         m_Arguments:
@@ -699,7 +699,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 8fb416d2e39ea5947bfa1e801610cd6f, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.TickAudioEmitter
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.TickAudioEmitter
   _clip: {fileID: 8300000, guid: 8eb2af67d135d784bbc23b54f9a8802e, type: 3}
   _volume: 0.5
   _tickMode: 0
@@ -1741,7 +1741,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 42606acc52a49374a9d30e1005983cad, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.ChargeShooter
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.ChargeShooter
   _muzzle: {fileID: 1394039118}
   _projectilePrefabLight: {fileID: 8232313526934668680, guid: 1c04a6be9b1c6a5499cc70c6a33405cc, type: 3}
   _projectilePrefabHeavy: {fileID: 5980626707913289820, guid: 2dac96822a01062469829e1eee78e3f9, type: 3}
@@ -1936,7 +1936,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 25d7a94e22d62ce44bde1065f8c6f2bb, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StreamDemoController
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.StreamDemoController
   _trigger: {fileID: 299213037}
   _gainSlider: {fileID: 922074470}
   _panSlider: {fileID: 96142282}
@@ -2008,7 +2008,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 14f4828cf9ee79a47a5259db5bc33eed, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.CameraFollowMount
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.CameraFollowMount
   _targetCamera: {fileID: 2137819160}
   _localPosition: {x: 0.3, y: -0.15, z: 0.8}
   _localEulerAngles: {x: 0, y: 0, z: 0}
@@ -2347,7 +2347,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 79ced69ebcbb9fc47a5eb7cf41b3d1c3, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.HudGuide
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.HudGuide
   _keysText: {fileID: 1342404225}
   _descText: {fileID: 376879015}
   _guideText: {fileID: 0}
@@ -3773,7 +3773,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: c4bc81927b9f0ba49a8cb13a9eb7c0b7, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.ZoneSwitcher
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.ZoneSwitcher
   _zones:
   - label: Z1_Bowling
     root: {fileID: 1167941406}
@@ -4108,7 +4108,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 87e604e5f7bfe3048a46ac8300ec92e3, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.UiDeselectOnPointerUp
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.UiDeselectOnPointerUp
 --- !u!114 &922074469
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -4195,7 +4195,7 @@ MonoBehaviour:
           m_BoolArgument: 0
         m_CallState: 2
       - m_Target: {fileID: 922074471}
-        m_TargetAssemblyTypeName: Hapbeat.Samples.Tutorial.TickAudioEmitter, Assembly-CSharp
+        m_TargetAssemblyTypeName: Hapbeat.Samples.Showcase.TickAudioEmitter, Assembly-CSharp
         m_MethodName: Fire
         m_Mode: 0
         m_Arguments:
@@ -4217,7 +4217,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 8fb416d2e39ea5947bfa1e801610cd6f, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.TickAudioEmitter
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.TickAudioEmitter
   _clip: {fileID: 8300000, guid: 8eb2af67d135d784bbc23b54f9a8802e, type: 3}
   _volume: 0.5
   _tickMode: 0
@@ -4827,7 +4827,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 6b943acc4797c37449616e9f6506fc2e, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.FishingController
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.FishingController
   _sequence: {fileID: 1015836572}
   _object: {fileID: 687266851}
   _restPose: {fileID: 36816265}
@@ -4908,7 +4908,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 14f4828cf9ee79a47a5259db5bc33eed, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.CameraFollowMount
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.CameraFollowMount
   _targetCamera: {fileID: 0}
   _localPosition: {x: 0.44, y: 0.15, z: 1}
   _localEulerAngles: {x: -17.5, y: 16.83, z: 8.92}
@@ -5450,7 +5450,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 457cd6cdd958ed04d843aeefc6dccd3c, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.BallLauncher
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.BallLauncher
   _ball: {fileID: 1190094152}
   _spawnPose: {fileID: 603522760}
   _aimReference: {fileID: 2137819158}
@@ -6586,7 +6586,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7ca660a67d49c0047918aa7fa41f9228, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.TargetReceiver
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.TargetReceiver
   _lightTag: ProjectileLight
   _heavyTag: ProjectileHeavy
   _flashSeconds: 0.2
@@ -6974,7 +6974,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: f303a592d2ed05343b9380e2cb871ab5, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.GlobalHotkeys
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.GlobalHotkeys
   _pingResultText: {fileID: 606734788}
   _verboseLog: 0
 --- !u!114 &1709333165
@@ -7066,7 +7066,7 @@ MonoBehaviour:
             m_BoolArgument: 0
           m_CallState: 2
         - m_Target: {fileID: 1709333163}
-          m_TargetAssemblyTypeName: Hapbeat.Samples.Tutorial.GlobalHotkeys, Assembly-CSharp
+          m_TargetAssemblyTypeName: Hapbeat.Samples.Showcase.GlobalHotkeys, Assembly-CSharp
           m_MethodName: NotifyPingSent
           m_Mode: 1
           m_Arguments:
@@ -8020,7 +8020,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 63f7233299a32394bb8fe6c68ad8d6f8, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.SimpleFPSController
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.SimpleFPSController
   _moveSpeed: 4
   _lookSensitivity: 2
   _gravity: -9.81

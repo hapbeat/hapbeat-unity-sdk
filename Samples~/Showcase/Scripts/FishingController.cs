@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// Z3 Fishing: 釣り竿の先端から釣り糸が常時垂れている。LMB hold で

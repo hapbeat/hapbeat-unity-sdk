@@ -309,6 +309,10 @@ Run アニメーション:
 
 Package Manager > Hapbeat SDK > Samples からインポートできます。
 
+> ⚠️ **SDK バージョンを上げて Sample を再 import する場合**
+> 古いバージョンの `Assets/Samples/Hapbeat SDK/<旧バージョン>/` フォルダを **必ず削除** してください。Unity は package 更新時に古い import を自動削除しないため、放置すると同一クラスが二重定義になり compile error やシーン重複の原因になります。
+> SDK は起動時に `Assets/Samples/Hapbeat SDK/` 配下を scan し、複数バージョンが見つかると Console に警告を出します (`Hapbeat > Diagnostics > Check Sample Versions` から手動再実行可)。
+
 | サンプル | 内容 | 前提 |
 |---|---|---|
 | Basic Example | キーボード操作（Space/S/X/P）で基本 API を確認 | なし |

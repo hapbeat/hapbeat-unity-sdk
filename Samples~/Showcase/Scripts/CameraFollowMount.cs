@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// GameObject を Player Camera 直下の固定相対位置に常駐させる

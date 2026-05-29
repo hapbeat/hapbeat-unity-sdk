@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// この GO をプレイヤー (デフォルトは Camera.main) の方向に向ける。

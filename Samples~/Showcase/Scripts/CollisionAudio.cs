@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// OnCollisionEnter で AudioSource.PlayOneShot を発火する collision-driven 音再生。

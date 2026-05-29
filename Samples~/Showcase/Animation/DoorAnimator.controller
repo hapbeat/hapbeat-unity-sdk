@@ -14,9 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
   _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
   _entryIdOnEnter: 96508c38734348408e681396f0f6dd89
-  _entryIndexOnEnter: 6
   _entryIdOnExit: 
-  _entryIndexOnExit: -1
   _requiredPreviousState: 
   _gainMultiplier: 1
   _verboseLog: 0
@@ -34,9 +32,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
   _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
   _entryIdOnEnter: 13c5585a0719421ba8b5b6e8bcf681bb
-  _entryIndexOnEnter: 3
   _entryIdOnExit: 
-  _entryIndexOnExit: -1
   _requiredPreviousState: Open
   _gainMultiplier: 1
   _verboseLog: 0
@@ -83,7 +79,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.StateAudioBehaviour
   _soundName: door_slam
   _requiredPreviousState: 
   _verboseLog: 0
@@ -101,9 +97,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
   _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
   _entryIdOnEnter: 097c5c77c643422290a4cc15e5da789e
-  _entryIndexOnEnter: 1
   _entryIdOnExit: 
-  _entryIndexOnExit: -1
   _requiredPreviousState: Closed
   _gainMultiplier: 1
   _verboseLog: 0
@@ -260,7 +254,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.StateAudioBehaviour
   _soundName: door_unlock
   _requiredPreviousState: 
   _verboseLog: 0
@@ -335,9 +329,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
   _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
   _entryIdOnEnter: 3ec09f14e87b40b0a2120de59f283c7d
-  _entryIndexOnEnter: 2
   _entryIdOnExit: 
-  _entryIndexOnExit: -1
   _requiredPreviousState: Open
   _gainMultiplier: 1
   _verboseLog: 0
@@ -355,9 +347,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
   _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
   _entryIdOnEnter: 548dbbe23170484082274dcf288398ed
-  _entryIndexOnEnter: 4
   _entryIdOnExit: 
-  _entryIndexOnExit: -1
   _requiredPreviousState: 
   _gainMultiplier: 1
   _verboseLog: 0
@@ -401,7 +391,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.StateAudioBehaviour
   _soundName: door_open
   _requiredPreviousState: 
   _verboseLog: 0
@@ -416,7 +406,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.StateAudioBehaviour
   _soundName: door_rattle
   _requiredPreviousState: 
   _verboseLog: 0
@@ -560,7 +550,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.StateAudioBehaviour
   _soundName: door_lock
   _requiredPreviousState: 
   _verboseLog: 0
@@ -622,9 +612,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatStateBehaviour
   _eventMap: {fileID: 11400000, guid: dfa615902a1686b44ac36df435ffa5f7, type: 2}
   _entryIdOnEnter: 17f736b6c7664d74a9478c06bdbf8fd9
-  _entryIndexOnEnter: 5
   _entryIdOnExit: 
-  _entryIndexOnExit: -1
   _requiredPreviousState: 
   _gainMultiplier: 1
   _verboseLog: 0
@@ -695,7 +683,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d4607cadb7b6b964b91d1d6d4a8b3f5d, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Tutorial.StateAudioBehaviour
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.StateAudioBehaviour
   _soundName: door_close
   _requiredPreviousState: Open
   _verboseLog: 0
@@ -710,10 +698,10 @@ AnimatorStateMachine:
   m_ChildStates:
   - serializedVersion: 1
     m_State: {fileID: -5236469920967779340}
-    m_Position: {x: 340, y: 80, z: 0}
+    m_Position: {x: 350, y: 90, z: 0}
   - serializedVersion: 1
     m_State: {fileID: -2555155370187852451}
-    m_Position: {x: 600, y: 80, z: 0}
+    m_Position: {x: 620, y: 80, z: 0}
   - serializedVersion: 1
     m_State: {fileID: 1571546807842893392}
     m_Position: {x: 550, y: 200, z: 0}

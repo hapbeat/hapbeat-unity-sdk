@@ -470,6 +470,23 @@ namespace Hapbeat.Editor
                 e.Use();
                 Repaint();
             }
+            // Ctrl+A (Cmd+A on macOS): select every row. Multi-selection is a
+            // Table-view concept, so only act there. Crucially, skip when a text
+            // field is being edited (inline Name / eventId / gain cells) so the
+            // shortcut keeps its normal "select all text" behaviour there instead
+            // of being hijacked into row selection.
+            else if (_viewMode == ViewMode.Table
+                     && !EditorGUIUtility.editingTextField
+                     && (e.modifiers & (EventModifiers.Control | EventModifiers.Command)) != 0
+                     && e.keyCode == KeyCode.A)
+            {
+                _tableMultiSelected.Clear();
+                for (int k = 0; k < _selectedMap.entries.Count; k++)
+                    _tableMultiSelected.Add(k);
+                GUIUtility.keyboardControl = 0;
+                e.Use();
+                Repaint();
+            }
         }
 
         /// <summary>
@@ -634,10 +651,10 @@ namespace Hapbeat.Editor
             // pinned to its preferred width). By computing widths ourselves, the
             // toolbar remains fully visible even at ~380px window widths.
             float winW = position.width;
-            // Fixed right-side area: Batch(80) + Scan(80) + ↻(24) + List(42) + Table(48) + gaps(~14) + margin
-            const float rightFixedW = 288f;
-            // When _selectedMap is null, the ↻ button doesn't render — shave off its 24px.
-            float rightFixed = _selectedMap == null ? rightFixedW - 24f : rightFixedW;
+            // Fixed right-side area: Bulk(76) + Batch(80) + Scan(80) + ↻(24) + List(42) + Table(48) + gaps(~16) + margin
+            const float rightFixedW = 366f;
+            // When _selectedMap is null, Bulk Edit + ↻ buttons don't render — shave their 100px.
+            float rightFixed = _selectedMap == null ? rightFixedW - 100f : rightFixedW;
             // Add trailing +/- (24+24) and endcap spacing
             rightFixed += 52f;
 
@@ -684,6 +701,26 @@ namespace Hapbeat.Editor
             }
 
             GUILayout.FlexibleSpace();
+
+            // Bulk Edit — applies selected fields (mode / gain / target / delay /
+            // manifest / notes) across many entries at once. Defaults to ALL
+            // entries (Select-all is on by default in the modal), so it's a
+            // whole-map editing tool; untick Select-all to scope it to the
+            // current Table-view multi-selection instead.
+            if (_selectedMap != null)
+            {
+                using (new EditorGUI.DisabledScope(_selectedMap.entries.Count == 0))
+                {
+                    if (GUILayout.Button(
+                            new GUIContent("Bulk Edit",
+                                "Apply selected fields (mode / gain / target / delay / manifest / notes) " +
+                                "across entries at once.\n\n" +
+                                "Defaults to all entries. Untick \"Select all\" in the modal to limit it " +
+                                "to the rows you selected in Table view (Ctrl / Shift click, or Ctrl+A)."),
+                            EditorStyles.toolbarButton, GUILayout.Width(76)))
+                        OpenBulkEditPopup();
+                }
+            }
 
             if (GUILayout.Button("Batch Setup", EditorStyles.toolbarButton, GUILayout.Width(80)))
             {
@@ -854,7 +891,7 @@ namespace Hapbeat.Editor
                 var modeProp = entryProp.FindPropertyRelative("mode");
                 int oldMode = modeProp.enumValueIndex;
                 int newModeIdx = EditorGUI.Popup(modeRect, oldMode,
-                    new[] { "FIRE", "CLIP", "LIVE" });
+                    new[] { "FIRE", "CLIP" });
                 if (newModeIdx != oldMode)
                     WriteToSelected(entriesProp, i, propagate,
                         p => p.FindPropertyRelative("mode").enumValueIndex = newModeIdx);
@@ -893,11 +930,28 @@ namespace Hapbeat.Editor
                         p => p.FindPropertyRelative("gain").floatValue = newGain);
                 x += ColGainW + ColGap;
 
-                // Target (read-only summary — click row + go to List mode for full editor)
+                // Target — clickable button. Opens the bulk-edit popup. If this
+                // row is part of a multi-selection the popup writes to ALL selected
+                // rows; otherwise just this row.
                 var targetRect = new Rect(x, y, ColTargetW, h);
                 var targetProp = entryProp.FindPropertyRelative("target");
                 string targetText = string.IsNullOrEmpty(targetProp.stringValue) ? "all" : targetProp.stringValue;
-                GUI.Label(targetRect, targetText, EditorStyles.miniLabel);
+                var targetBtnStyle = EditorStyles.miniButton;
+                if (GUI.Button(targetRect, new GUIContent(targetText + " ▾", targetProp.stringValue), targetBtnStyle))
+                {
+                    // If clicked on a row not in the multi-selection, scope to just this row.
+                    if (!_tableMultiSelected.Contains(i))
+                    {
+                        _tableMultiSelected.Clear();
+                        _selectedEntryIndex = i;
+                    }
+                    // Commit pending widget edits before opening modeless popup so
+                    // the popup callback doesn't race with table cell writes.
+                    so.ApplyModifiedProperties();
+                    Rect screenRect = GUIUtility.GUIToScreenRect(targetRect);
+                    OpenTargetPopupForSelected(i, screenRect);
+                    GUIUtility.ExitGUI();
+                }
                 x += ColTargetW + ColGap;
 
                 // Delete button
@@ -1110,10 +1164,19 @@ namespace Hapbeat.Editor
                     _tableMultiSelected.Clear();
                     _selectedEntryIndex = i;
                 }
+                // Capture screen-space mouse position for dropdown anchors fired
+                // from the (asynchronous) menu callback — by then OnGUI has ended
+                // and GUIToScreenPoint is no longer valid.
+                _pendingContextMenuScreenPos = GUIUtility.GUIToScreenPoint(e.mousePosition);
                 ShowTableContextMenu(i);
                 e.Use();
             }
         }
+
+        // Screen-space mouse position captured at the moment the table row
+        // context menu was opened — used to anchor follow-up dropdowns
+        // (e.g. the "Set Target..." popup) at the cursor.
+        private Vector2 _pendingContextMenuScreenPos;
 
         private void ShowTableContextMenu(int anchorIndex)
         {
@@ -1144,6 +1207,10 @@ namespace Hapbeat.Editor
                 menu.AddItem(new GUIContent("Set Gain.../0.5"), false, () => BatchSetGain(selected, 0.5f));
                 menu.AddItem(new GUIContent("Set Gain.../1.0"), false, () => BatchSetGain(selected, 1.0f));
                 menu.AddItem(new GUIContent("Set Gain.../2.0"), false, () => BatchSetGain(selected, 2.0f));
+                menu.AddSeparator("");
+                Vector2 anchorPos = _pendingContextMenuScreenPos;
+                menu.AddItem(new GUIContent("Set Target..."), false, () =>
+                    OpenTargetPopupForSelected(anchorIndex, new Rect(anchorPos, Vector2.zero)));
                 menu.AddSeparator("");
                 menu.AddItem(new GUIContent("Duplicate All"), false, () => BatchDuplicate(selected));
                 menu.AddItem(new GUIContent("Delete All"), false, () => BatchDelete(selected));
@@ -1179,6 +1246,71 @@ namespace Hapbeat.Editor
                     _selectedMap.entries[i].gain = gain;
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
+        }
+
+        private void BatchSetTarget(List<int> indices, string target)
+        {
+            if (_selectedMap == null) return;
+            Undo.RecordObject(_selectedMap, "Set Hapbeat Entry Target (batch)");
+            string value = target ?? "";
+            foreach (int i in indices)
+                if (i >= 0 && i < _selectedMap.entries.Count && _selectedMap.entries[i] != null)
+                    _selectedMap.entries[i].target = value;
+            EditorUtility.SetDirty(_selectedMap);
+            AssetDatabase.SaveAssetIfDirty(_selectedMap);
+            Repaint();
+        }
+
+        /// <summary>
+        /// Open the bulk Target editor anchored at <paramref name="activatorScreenRect"/>.
+        /// The popup is seeded from the anchor row's current target and applies
+        /// the result to every selected row (or just the anchor when nothing is
+        /// multi-selected).
+        /// </summary>
+        private void OpenTargetPopupForSelected(int anchorIndex, Rect activatorScreenRect)
+        {
+            if (_selectedMap == null) return;
+            var selected = GetSelectedRowIndicesUnion(anchorIndex);
+            if (selected.Count == 0) return;
+
+            string seed = "";
+            if (anchorIndex >= 0 && anchorIndex < _selectedMap.entries.Count
+                && _selectedMap.entries[anchorIndex] != null)
+                seed = _selectedMap.entries[anchorIndex].target ?? "";
+
+            // Snapshot selection so right-clicking elsewhere while the popup is
+            // open doesn't widen the target set unexpectedly.
+            var indices = new List<int>(selected);
+
+            TargetEditPopup.Show(activatorScreenRect, seed, indices.Count, applied =>
+            {
+                BatchSetTarget(indices, applied);
+            });
+        }
+
+        /// <summary>
+        /// Open the Bulk Edit modal for the current selection (or the anchor row
+        /// if no multi-selection). Each field has its own "Override?" checkbox
+        /// in the modal so the user only writes the fields they explicitly
+        /// changed — unchecked fields are left as-is.
+        /// </summary>
+        private void OpenBulkEditPopup()
+        {
+            if (_selectedMap == null || _selectedMap.entries.Count == 0) return;
+            // The explicit Table-view selection (used only when the user unticks
+            // "Select all" in the modal). May be empty — the modal defaults to
+            // editing all entries regardless.
+            var selected = new List<int>(_tableMultiSelected);
+            if (selected.Count == 0 && _selectedEntryIndex >= 0
+                && _selectedEntryIndex < _selectedMap.entries.Count)
+                selected.Add(_selectedEntryIndex);
+            selected.Sort();
+            BulkEditPopup.Open(_selectedMap, selected, () =>
+            {
+                ScanScene();
+                RefreshIntensityCache();
+                Repaint();
+            });
         }
 
         private void BatchDuplicate(List<int> indices)
@@ -1299,8 +1431,8 @@ namespace Hapbeat.Editor
             {
                 GUILayout.Label(
                     selCount == 0
-                        ? "Tip: Ctrl / Shift click to select multiple rows, then right-click to bulk-edit."
-                        : $"{selCount} rows selected.",
+                        ? "Tip: Ctrl / Shift click to select multiple rows (Ctrl+A = all), then press Bulk Edit in the toolbar."
+                        : $"{selCount} rows selected — press Bulk Edit in the toolbar to edit them together.",
                     EditorStyles.miniLabel);
                 GUILayout.FlexibleSpace();
                 if (selCount > 0 && GUILayout.Button("Clear selection", EditorStyles.miniButton, GUILayout.Width(120)))
@@ -1628,16 +1760,15 @@ namespace Hapbeat.Editor
                 new GUIContent("Name", "Human-readable label for this event (e.g. Grab, Click)."),
                 nameProp.stringValue);
 
-            // Mode — labelled to match Studio's FIRE / CLIP / LIVE shorthand so
-            // authors see the same terminology across both tools. The underlying
-            // enum names (Command / StreamClip) stay unchanged,
-            // so serialized data is unaffected.
+            // Mode — labelled to match Studio's FIRE / CLIP shorthand so authors
+            // see the same terminology across both tools. The underlying enum
+            // names (Command / StreamClip) stay unchanged, so serialized data
+            // is unaffected.
             var modeProp = entryProp.FindPropertyRelative("mode");
             int newModeIdx = EditorGUILayout.Popup(
                 new GUIContent("Mode",
                     "FIRE: send eventId, device plays pre-flashed Kit clip.\n" +
-                    "CLIP: SDK streams a Kit WAV over UDP as PCM16.\n" +
-                    "LIVE: SDK captures an AudioSource and streams it."),
+                    "CLIP: SDK streams a Kit WAV over UDP as PCM16."),
                 modeProp.enumValueIndex,
                 s_ModeLabels);
             modeProp.enumValueIndex = newModeIdx;
@@ -4951,6 +5082,368 @@ namespace Hapbeat.Editor
 
         private static string BuildTargetFromParts(string prefix, int player, string position, int group)
             => HapbeatTargetEditorUtil.BuildTargetFromParts(prefix, player, position, group);
+    }
+
+    /// <summary>
+    /// Modeless dropdown for editing a target string and applying it to one or
+    /// more EventMap entries. Used by the Table view's Target cell (single row)
+    /// and the "Set Target..." batch context menu (multi row).
+    ///
+    /// Edits the four semantic parts (prefix / player / position / group) via
+    /// <see cref="HapbeatTargetEditorUtil"/>, then invokes the caller-supplied
+    /// callback with the rebuilt target string on Apply.
+    /// </summary>
+    internal class TargetEditPopup : EditorWindow
+    {
+        private string _prefix;
+        private int _player;
+        private string _position;
+        private int _group;
+        private int _count;
+        private Action<string> _onApply;
+
+        public static void Show(Rect activatorScreenRect, string seedTarget, int count, Action<string> onApply)
+        {
+            var w = CreateInstance<TargetEditPopup>();
+            HapbeatTargetEditorUtil.ParseTarget(seedTarget,
+                out w._prefix, out w._player, out w._position, out w._group);
+            w._count = Mathf.Max(1, count);
+            w._onApply = onApply;
+            w.ShowAsDropDown(activatorScreenRect, new Vector2(320f, 170f));
+        }
+
+        private void OnGUI()
+        {
+            EditorGUILayout.LabelField(
+                _count == 1
+                    ? "Set target for 1 entry"
+                    : $"Set target for {_count} entries",
+                EditorStyles.boldLabel);
+            EditorGUILayout.Space(2);
+
+            _prefix = EditorGUILayout.TextField(
+                new GUIContent("Prefix",
+                    "Optional team prefix for multi-team setups (e.g. team_red).\n" +
+                    "Leave empty for most projects."),
+                _prefix ?? "");
+            _player = EditorGUILayout.IntField(
+                new GUIContent("Player",
+                    "Player number (1-99). Set -1 to target all players."),
+                _player);
+
+            var posOptions = new string[HapbeatEventEntry.StandardPositions.Length + 1];
+            var posValues = new string[posOptions.Length];
+            posOptions[0] = "(none — all positions)";
+            posValues[0] = "";
+            for (int p = 0; p < HapbeatEventEntry.StandardPositions.Length; p++)
+            {
+                posOptions[p + 1] = HapbeatEventEntry.PositionLabels[p];
+                posValues[p + 1] = HapbeatEventEntry.StandardPositions[p];
+            }
+            int posIdx = Array.IndexOf(posValues, _position ?? "");
+            if (posIdx < 0) posIdx = 0;
+            int newPosIdx = EditorGUILayout.Popup(
+                new GUIContent("Position",
+                    "Body position of the target device.\n" +
+                    "Select (none) to target all positions for the selected player."),
+                posIdx, posOptions);
+            _position = posValues[newPosIdx];
+
+            _group = EditorGUILayout.IntField(
+                new GUIContent("Group",
+                    "Group number (1-99). Set -1 to target all groups."),
+                _group);
+
+            string built = HapbeatTargetEditorUtil.BuildTargetFromParts(
+                _prefix, _player, _position, _group);
+
+            EditorGUI.BeginDisabledGroup(true);
+            EditorGUILayout.TextField(new GUIContent(" → target"),
+                string.IsNullOrEmpty(built) ? "(broadcast — all devices)" : built);
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUILayout.Space(6);
+            using (new GUILayout.HorizontalScope())
+            {
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Cancel", GUILayout.Width(80)))
+                    Close();
+                if (GUILayout.Button("Apply", GUILayout.Width(80)))
+                {
+                    _onApply?.Invoke(built);
+                    Close();
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Modal for bulk-editing multiple EventMap entries. Each editable field
+    /// has its own "Override?" toggle so the user can pick precisely which
+    /// fields to overwrite — unchecked fields are left untouched on every
+    /// target row. One Undo group covers the whole apply pass.
+    ///
+    /// Triggered from the Table view's "Bulk Edit..." toolbar button or the
+    /// right-click context menu. Seeds initial values from the first selected
+    /// row so applying a single override (e.g. "set everyone to gain 0.5")
+    /// is one click.
+    /// </summary>
+    internal class BulkEditPopup : EditorWindow
+    {
+        private HapbeatEventMap _map;
+        // The explicit Table-view selection passed in by the caller. Used only
+        // when _selectAll is off. May be empty.
+        private List<int> _selected;
+        private Action _onApplied;
+
+        // FIRE / CLIP labels, ordered to match HapticMode (Command=0, StreamClip=1).
+        // Mirrors HapbeatEventMapWindow.s_ModeLabels (which is private to that class).
+        private static readonly string[] s_BulkModeLabels = { "FIRE (Command)", "CLIP (Stream Clip)" };
+
+        // When on (default), the edit targets every entry in the map. When off,
+        // it targets the explicit selection in _selected.
+        private bool _selectAll = true;
+
+        // Override flags
+        private bool _ovMode, _ovGain, _ovLoop, _ovTarget, _ovDelay, _ovManifest, _ovNotes;
+
+        // Working values
+        private HapticMode _mode = HapticMode.Command;
+        private float _gain = 1f;
+        private bool _loop;
+        private string _targetPrefix = "";
+        private int _targetPlayer = -1;
+        private string _targetPosition = "";
+        private int _targetGroup = -1;
+        private float _delay;
+        private UnityEngine.TextAsset _manifest;
+        private string _notes = "";
+        private Vector2 _scroll;
+
+        public static void Open(HapbeatEventMap map, List<int> selected, Action onApplied)
+        {
+            var w = CreateInstance<BulkEditPopup>();
+            w._map = map;
+            w._selected = selected ?? new List<int>();
+            w._onApplied = onApplied;
+
+            // Seed working values from a representative entry: the first explicit
+            // selection if any, else the first entry in the map. This makes
+            // "set everyone to this entry's gain" a one-tick operation.
+            int seedIdx = (w._selected.Count > 0) ? w._selected[0] : 0;
+            if (map != null && seedIdx >= 0 && seedIdx < map.entries.Count
+                && map.entries[seedIdx] != null)
+            {
+                var seed = map.entries[seedIdx];
+                w._mode = seed.mode;
+                w._gain = seed.gain;
+                w._loop = seed.loop;
+                HapbeatTargetEditorUtil.ParseTarget(seed.target,
+                    out w._targetPrefix, out w._targetPlayer, out w._targetPosition, out w._targetGroup);
+                w._delay = seed.delayOffsetSeconds;
+                w._manifest = seed.manifestOverride;
+                w._notes = seed.notes ?? "";
+            }
+
+            w.titleContent = new GUIContent("Bulk Edit");
+            w.minSize = new Vector2(420f, 440f);
+            w.maxSize = new Vector2(720f, 720f);
+            w.ShowUtility();
+        }
+
+        /// <summary>Number of entries the current scope (Select-all vs explicit selection) will edit.</summary>
+        private int TargetCount => _selectAll
+            ? (_map != null ? _map.entries.Count : 0)
+            : (_selected != null ? _selected.Count : 0);
+
+        private void OnGUI()
+        {
+            // --- Scope: Select all (default) vs explicit Table-view selection ---
+            int allCount = _map != null ? _map.entries.Count : 0;
+            int selCount = _selected != null ? _selected.Count : 0;
+            using (new GUILayout.HorizontalScope())
+            {
+                _selectAll = EditorGUILayout.ToggleLeft(
+                    new GUIContent($"Select all ({allCount})",
+                        "On: edit every entry in this map.\n" +
+                        "Off: edit only the rows selected in Table view."),
+                    _selectAll, GUILayout.Width(160));
+                using (new EditorGUI.DisabledScope(_selectAll || selCount == 0))
+                    GUILayout.Label(
+                        selCount == 0
+                            ? "(no rows selected in Table)"
+                            : $"selection: {selCount} {(selCount == 1 ? "entry" : "entries")}",
+                        EditorStyles.miniLabel);
+            }
+            EditorGUILayout.Space(2);
+
+            int n = TargetCount;
+            EditorGUILayout.HelpBox(
+                $"Apply changes to {n} {(n == 1 ? "entry" : "entries")}.\n" +
+                "Tick the checkbox next to each field you want to overwrite — " +
+                "unchecked fields stay as-is on every targeted row.",
+                MessageType.Info);
+            EditorGUILayout.Space(4);
+
+            _scroll = EditorGUILayout.BeginScrollView(_scroll);
+
+            DrawOverrideRow("Mode", ref _ovMode, () =>
+            {
+                // Use the same FIRE / CLIP shorthand as the rest of the window
+                // (EnumPopup would show the raw "Command" / "StreamClip" names).
+                int idx = EditorGUILayout.Popup((int)_mode, s_BulkModeLabels);
+                _mode = (HapticMode)idx;
+            });
+
+            DrawOverrideRow("Gain", ref _ovGain, () =>
+            {
+                _gain = EditorGUILayout.Slider(_gain, 0f, 2f);
+            });
+
+            DrawOverrideRow("Loop", ref _ovLoop, () =>
+            {
+                _loop = EditorGUILayout.Toggle(_loop);
+            });
+
+            DrawTargetSection();
+
+            DrawOverrideRow("Delay Offset (s)", ref _ovDelay, () =>
+            {
+                _delay = EditorGUILayout.Slider(_delay, -0.2f, 0.2f);
+            });
+
+            DrawOverrideRow("Manifest Override", ref _ovManifest, () =>
+            {
+                _manifest = (UnityEngine.TextAsset)EditorGUILayout.ObjectField(
+                    _manifest, typeof(UnityEngine.TextAsset), false);
+            });
+
+            DrawNotesSection();
+
+            EditorGUILayout.EndScrollView();
+
+            EditorGUILayout.Space(8);
+            int overrideCount = (_ovMode ? 1 : 0) + (_ovGain ? 1 : 0) + (_ovLoop ? 1 : 0)
+                              + (_ovTarget ? 1 : 0) + (_ovDelay ? 1 : 0) + (_ovManifest ? 1 : 0)
+                              + (_ovNotes ? 1 : 0);
+
+            using (new GUILayout.HorizontalScope())
+            {
+                GUILayout.Label(
+                    overrideCount == 0
+                        ? "No fields selected to override."
+                        : $"{overrideCount} field{(overrideCount == 1 ? "" : "s")} will be overwritten.",
+                    EditorStyles.miniLabel);
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("Cancel", GUILayout.Width(100)))
+                    Close();
+                using (new EditorGUI.DisabledScope(overrideCount == 0 || n == 0))
+                {
+                    if (GUILayout.Button($"Apply to {n}", GUILayout.Width(140)))
+                    {
+                        Apply();
+                        Close();
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Standard row: [☐ override] [label] [editor for value]. The editor
+        /// is disabled (greyed) until the override checkbox is on, so the user
+        /// can't accidentally edit a value they didn't intend to overwrite.
+        /// </summary>
+        private void DrawOverrideRow(string label, ref bool overrideFlag, Action drawEditor)
+        {
+            using (new GUILayout.HorizontalScope())
+            {
+                overrideFlag = EditorGUILayout.Toggle(overrideFlag, GUILayout.Width(18));
+                EditorGUILayout.LabelField(label, GUILayout.Width(140));
+                using (new EditorGUI.DisabledScope(!overrideFlag))
+                    drawEditor();
+            }
+        }
+
+        private void DrawTargetSection()
+        {
+            using (new GUILayout.HorizontalScope())
+            {
+                _ovTarget = EditorGUILayout.Toggle(_ovTarget, GUILayout.Width(18));
+                EditorGUILayout.LabelField("Target", GUILayout.Width(140));
+                string preview = HapbeatTargetEditorUtil.BuildTargetFromParts(
+                    _targetPrefix, _targetPlayer, _targetPosition, _targetGroup);
+                EditorGUILayout.LabelField(
+                    string.IsNullOrEmpty(preview) ? "(broadcast — all devices)" : preview,
+                    EditorStyles.miniLabel);
+            }
+            using (new EditorGUI.DisabledScope(!_ovTarget))
+            using (new EditorGUI.IndentLevelScope())
+            {
+                _targetPrefix = EditorGUILayout.TextField("Prefix", _targetPrefix ?? "");
+                _targetPlayer = EditorGUILayout.IntField("Player", _targetPlayer);
+
+                var posOptions = new string[HapbeatEventEntry.StandardPositions.Length + 1];
+                var posValues = new string[posOptions.Length];
+                posOptions[0] = "(none — all positions)";
+                posValues[0] = "";
+                for (int p = 0; p < HapbeatEventEntry.StandardPositions.Length; p++)
+                {
+                    posOptions[p + 1] = HapbeatEventEntry.PositionLabels[p];
+                    posValues[p + 1] = HapbeatEventEntry.StandardPositions[p];
+                }
+                int posIdx = Array.IndexOf(posValues, _targetPosition ?? "");
+                if (posIdx < 0) posIdx = 0;
+                int newPosIdx = EditorGUILayout.Popup("Position", posIdx, posOptions);
+                _targetPosition = posValues[newPosIdx];
+
+                _targetGroup = EditorGUILayout.IntField("Group", _targetGroup);
+            }
+        }
+
+        private void DrawNotesSection()
+        {
+            using (new GUILayout.HorizontalScope())
+            {
+                _ovNotes = EditorGUILayout.Toggle(_ovNotes, GUILayout.Width(18));
+                EditorGUILayout.LabelField("Notes", GUILayout.Width(140));
+            }
+            using (new EditorGUI.DisabledScope(!_ovNotes))
+                _notes = EditorGUILayout.TextArea(_notes ?? "",
+                    GUILayout.Height(56), GUILayout.ExpandWidth(true));
+        }
+
+        private void Apply()
+        {
+            if (_map == null) return;
+            Undo.RecordObject(_map, "Bulk Edit Hapbeat Entries");
+
+            string builtTarget = HapbeatTargetEditorUtil.BuildTargetFromParts(
+                _targetPrefix, _targetPlayer, _targetPosition, _targetGroup);
+
+            // Resolve the target index set from the current scope. Select-all
+            // edits every entry; otherwise only the explicit Table selection.
+            IEnumerable<int> targets = _selectAll
+                ? System.Linq.Enumerable.Range(0, _map.entries.Count)
+                : (_selected ?? new List<int>());
+
+            foreach (int i in targets)
+            {
+                if (i < 0 || i >= _map.entries.Count) continue;
+                var e = _map.entries[i];
+                if (e == null) continue;
+                if (_ovMode) e.mode = _mode;
+                if (_ovGain) e.gain = _gain;
+                if (_ovLoop) e.loop = _loop;
+                if (_ovTarget) e.target = builtTarget ?? "";
+                if (_ovDelay) e.delayOffsetSeconds = _delay;
+                if (_ovManifest) e.manifestOverride = _manifest;
+                if (_ovNotes) e.notes = _notes ?? "";
+            }
+
+            EditorUtility.SetDirty(_map);
+            AssetDatabase.SaveAssetIfDirty(_map);
+            _onApplied?.Invoke();
+        }
     }
 
     // ----- Project window で dirty な EventMap に ● を描画 -----

@@ -7,6 +7,30 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.2.1] - Unreleased
+
+v0.2.0 直後に発覚した sample アップグレード時の compile error と、EventMap の使い勝手改善をまとめた hotfix リリース。
+
+### Fixed
+
+- **Sample namespace を folder 名に追従** (`Hapbeat.Samples.Tutorial` → `Hapbeat.Samples.Showcase`)
+  v0.2.0 で `Tutorial` → `Showcase` に folder rename したが、namespace が legacy のまま残っていた。
+  古いバージョン (v0.1.x) の Tutorial sample を import 済みの状態で v0.2.0 の Showcase sample を import すると、同一 namespace 下で同名 class が二重定義になり compile error が発生していた問題を解消。
+
+### Added
+
+- **`Hapbeat > Diagnostics > Check Sample Versions`** — `Assets/Samples/Hapbeat SDK/` 配下に複数バージョンの sample が同時 import されている場合に Console 警告を出す診断ツール。Editor 起動時に自動 scan + 手動再実行可能。
+- **EventMap Window: Target 一括編集**
+  Table view の Target セルをクリックすると popup editor が開き、選択している全行に同じ target (player / position / group) を一括適用できるようになった。右クリックメニューの `Set Target...` でも同じ popup を起動可能。
+
+### Migration
+
+**v0.2.0 → v0.2.1 で Sample を再 import する場合は古いバージョンの folder を削除してください**
+
+Unity の UPM Samples は package 更新時に古い import folder (`Assets/Samples/Hapbeat SDK/<旧バージョン>/`) を自動削除しません。残っていると同一クラスの二重定義で compile error になります。Project ウィンドウで該当 folder を削除してから新しい Sample を import してください。SDK が起動時に自動 scan して警告を出します。
+
+---
+
 ## [0.2.0] - 2026-05-26
 
 v0.1.0 以降に蓄積した API 整理・サンプル再編・遅延補正・Editor UX 改修をまとめたリリース。

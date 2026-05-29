@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// Animator state Enter で <see cref="SoundPlayer.Play"/> を呼ぶ StateMachineBehaviour。

@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Hapbeat.Samples.Tutorial
+namespace Hapbeat.Samples.Showcase
 {
     /// <summary>
     /// <see cref="Hapbeat.HapbeatTickEmitter"/> の audio 版 (Slider 専用)。
