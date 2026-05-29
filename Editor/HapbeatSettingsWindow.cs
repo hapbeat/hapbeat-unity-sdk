@@ -137,19 +137,28 @@ namespace Hapbeat.Editor
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("Latency Compensation", EditorStyles.boldLabel);
 
-            EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("hapticDelaySeconds"),
+            // Stored in seconds on the asset (consistent with delayOffsetSeconds /
+            // streamSendAheadSeconds / the wire protocol), but shown / edited in
+            // milliseconds here since that's the unit users think in for latency.
+            // Convert ms <-> s at the UI boundary only; no data migration.
+            var delayProp = _serializedConfig.FindProperty("hapticDelaySeconds");
+            EditorGUI.BeginChangeCheck();
+            float delayMs = Mathf.Round(delayProp.floatValue * 1000f);
+            delayMs = EditorGUILayout.Slider(
                 new GUIContent(
-                    "Haptic Delay (s)",
+                    "Haptic Delay (ms)",
                     "Global delay applied to every Play / StreamClip to align with the audio\n" +
                     "output device. Hapbeat is UDP-direct (~10 ms), so when speakers /\n" +
                     "headphones are slower the haptic arrives first — this offset compensates.\n\n" +
                     "Typical values:\n" +
-                    "  Wired / USB DAC      → 0.00\n" +
-                    "  Built-in speakers    → 0.02–0.05\n" +
-                    "  Bluetooth (aptX LL)  → 0.03–0.05\n" +
-                    "  Bluetooth (SBC/AAC)  → 0.15–0.20\n\n" +
-                    "Per-entry Delay Offset can add ±0.2 s on top."));
+                    "  Wired / USB DAC      → 0\n" +
+                    "  Built-in speakers    → 20–50\n" +
+                    "  Bluetooth (aptX LL)  → 30–50\n" +
+                    "  Bluetooth (SBC/AAC)  → 150–200\n\n" +
+                    "Per-entry Delay Offset can add ±200 ms on top."),
+                delayMs, 0f, 500f);
+            if (EditorGUI.EndChangeCheck())
+                delayProp.floatValue = delayMs / 1000f;
 
             EditorGUILayout.Space(5);
 

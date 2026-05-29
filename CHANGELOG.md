@@ -7,7 +7,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.2.1] - Unreleased
+## [0.2.1] - 2026-05-30
 
 v0.2.0 直後に発覚した sample アップグレード時の compile error と、EventMap の使い勝手改善をまとめた hotfix リリース。
 
@@ -16,12 +16,21 @@ v0.2.0 直後に発覚した sample アップグレード時の compile error �
 - **Sample namespace を folder 名に追従** (`Hapbeat.Samples.Tutorial` → `Hapbeat.Samples.Showcase`)
   v0.2.0 で `Tutorial` → `Showcase` に folder rename したが、namespace が legacy のまま残っていた。
   古いバージョン (v0.1.x) の Tutorial sample を import 済みの状態で v0.2.0 の Showcase sample を import すると、同一 namespace 下で同名 class が二重定義になり compile error が発生していた問題を解消。
+  あわせて Showcase の scene / prefab / animator 内に残っていた legacy namespace 参照 (`m_TargetAssemblyTypeName` 等) も修正し、UnityEvent 配線の解決ずれを解消。
+- **`HierarchySeparator` を復活** — v0.2.0 の cleanup で巻き込み削除されていた、Hierarchy 上の区切り装飾 (`-------- ... --------`) を Showcase namespace + Unity 6 API (`EntityIdToObject`) で再追加。
 
 ### Added
 
 - **`Hapbeat > Diagnostics > Check Sample Versions`** — `Assets/Samples/Hapbeat SDK/` 配下に複数バージョンの sample が同時 import されている場合に Console 警告を出す診断ツール。Editor 起動時に自動 scan + 手動再実行可能。
-- **EventMap Window: Target 一括編集**
-  Table view の Target セルをクリックすると popup editor が開き、選択している全行に同じ target (player / position / group) を一括適用できるようになった。右クリックメニューの `Set Target...` でも同じ popup を起動可能。
+- **EventMap Window: Bulk Edit モーダル** — toolbar の `Bulk Edit` から起動。Mode / Gain / Loop / Target / Delay Offset / Manifest Override / Notes を **Override チェックで選択的に**一括編集できる。最上部の `Select all` トグル (デフォルト ON) で全 entry または Table 選択行を対象に切替。変更は 1 つの Undo group にまとまる。
+- **EventMap Table view: Ctrl/Cmd+A で全行選択** — inline text field 編集中はテキスト全選択を奪わない。
+- Table view の Target セルクリック / 右クリック `Set Target...` による target 一括適用 (player / position / group) も従来通り利用可能。
+
+### Changed
+
+- **Unity 6 (6000.0) 以上を要件化** — `package.json` の `unity` を `2021.3` → `6000.0` に更新。SDK 本体が既に Unity 6 の `EntityIdToObject` を使用しているため、実態に合わせた是正。
+- **EventMap の mode 選択から `LIVE` を削除** — Table / Inspector とも `FIRE` / `CLIP` の 2 択に統一 (`LIVE` は廃止済みで UI ラベルのみ残っていた)。
+- **Settings の Haptic Delay 表示を ms 単位に** — スライダーを `Haptic Delay (ms)` (0–500 ms) 表記に変更。内部ストレージは秒のまま (プロトコル / per-entry delay と一貫)。
 
 ### Migration
 
