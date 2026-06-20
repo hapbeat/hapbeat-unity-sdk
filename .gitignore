@@ -39,3 +39,6 @@ dev-notes.meta
 # Hapbeat Studio per-kit cache (local outputHash tracker — recreated on
 # each user's machine, not part of the shipped package).
 .studio-cache.json
+CLAUDE.md
+instructions/
+.claude/
