@@ -159,5 +159,9 @@ suffix, `""`/`null` = broadcast. Standard positions live in
 
 ## More detail
 
-- Unity SDK guide: https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/
-- Docs portal: https://devtools.hapbeat.com/
+When this single file is not enough, an agent can fetch:
+
+- **Complete reference in one text file (recommended next step):** https://devtools.hapbeat.com/_llms-txt/unity-sdk.txt
+- **Samples in this package:** `Samples~/` (BasicExample, Tutorial — import via Package Manager)
+- **Concepts** (shared by every SDK): event id <-> kit https://devtools.hapbeat.com/docs/concepts/event-id-and-kit/ - command vs clip https://devtools.hapbeat.com/docs/concepts/fire-vs-clip/ - targeting https://devtools.hapbeat.com/docs/concepts/group-player-addressing/
+- Human docs: https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/ - Portal: https://devtools.hapbeat.com/
