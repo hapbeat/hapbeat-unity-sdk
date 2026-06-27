@@ -1,0 +1,48 @@
+name: Notify devtools-site of docs change
+
+# このワークフローの目的:
+#   CHANGELOG.md が変更された push のみ devtools-site
+#   (https://github.com/Hapbeat/hapbeat-devtools-site) に
+#   repository_dispatch を投げ、portal site の自動再ビルド・デプロイを起動する。
+#
+#   機能改善・バグ修正など CHANGELOG.md 以外の push では走らない。
+#
+# 必要 secret:
+#   DOCS_SITE_DISPATCH_TOKEN
+#     - fine-grained PAT (Repository access: hapbeat-devtools-site のみ)
+#     - 必須権限: Actions: Write
+#     - 設定箇所: repo Settings → Secrets and variables → Actions →
+#                 New repository secret
+#
+# devtools-site 側の受信設定:
+#   .github/workflows/deploy.yml の `on.repository_dispatch.types` に
+#   `docs-updated` が登録済み。
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'CHANGELOG.md'
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger devtools-site rebuild
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::DOCS_SITE_DISPATCH_TOKEN secret is not set; skipping dispatch."
+            exit 0
+          fi
+          gh api repos/Hapbeat/hapbeat-devtools-site/dispatches \
+            -X POST \
+            -H 'Accept: application/vnd.github+json' \
+            -f event_type=docs-updated \
+            -f "client_payload[source_repo]=${{ github.repository }}" \
+            -f "client_payload[commit]=${{ github.sha }}" \
+            -f "client_payload[ref]=${{ github.ref_name }}"
+          echo "Dispatched docs-updated → hapbeat-devtools-site"
