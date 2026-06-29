@@ -1,9 +1,9 @@
 # Changelog
 
-All notable changes to Hapbeat Unity SDK are documented in this file.
+Hapbeat Unity SDK の主要な変更点をまとめます。
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
-Version numbers follow [Semantic Versioning](https://semver.org/).
+形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に、
+バージョン付けは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
 ---
 
@@ -11,7 +11,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/).
 
 v0.2.0 直後に発覚した sample アップグレード時の compile error と、EventMap の使い勝手改善をまとめた hotfix リリース。
 
-### Fixed
+### Fixed（修正）
 
 - **Sample namespace を folder 名に追従** (`Hapbeat.Samples.Tutorial` → `Hapbeat.Samples.Showcase`)
   v0.2.0 で `Tutorial` → `Showcase` に folder rename したが、namespace が legacy のまま残っていた。
@@ -19,20 +19,20 @@ v0.2.0 直後に発覚した sample アップグレード時の compile error �
   あわせて Showcase の scene / prefab / animator 内に残っていた legacy namespace 参照 (`m_TargetAssemblyTypeName` 等) も修正し、UnityEvent 配線の解決ずれを解消。
 - **`HierarchySeparator` を復活** — v0.2.0 の cleanup で巻き込み削除されていた、Hierarchy 上の区切り装飾 (`-------- ... --------`) を Showcase namespace + Unity 6 API (`EntityIdToObject`) で再追加。
 
-### Added
+### Added（追加）
 
 - **`Hapbeat > Diagnostics > Check Sample Versions`** — `Assets/Samples/Hapbeat SDK/` 配下に複数バージョンの sample が同時 import されている場合に Console 警告を出す診断ツール。Editor 起動時に自動 scan + 手動再実行可能。
 - **EventMap Window: Bulk Edit モーダル** — toolbar の `Bulk Edit` から起動。Mode / Gain / Loop / Target / Delay Offset / Manifest Override / Notes を **Override チェックで選択的に**一括編集できる。最上部の `Select all` トグル (デフォルト ON) で全 entry または Table 選択行を対象に切替。変更は 1 つの Undo group にまとまる。
 - **EventMap Table view: Ctrl/Cmd+A で全行選択** — inline text field 編集中はテキスト全選択を奪わない。
 - Table view の Target セルクリック / 右クリック `Set Target...` による target 一括適用 (player / position / group) も従来通り利用可能。
 
-### Changed
+### Changed（変更）
 
 - **Unity 6 (6000.0) 以上を要件化** — `package.json` の `unity` を `2021.3` → `6000.0` に更新。SDK 本体が既に Unity 6 の `EntityIdToObject` を使用しているため、実態に合わせた是正。
 - **EventMap の mode 選択から `LIVE` を削除** — Table / Inspector とも `FIRE` / `CLIP` の 2 択に統一 (`LIVE` は廃止済みで UI ラベルのみ残っていた)。
 - **Settings の Haptic Delay 表示を ms 単位に** — スライダーを `Haptic Delay (ms)` (0–500 ms) 表記に変更。内部ストレージは秒のまま (プロトコル / per-entry delay と一貫)。
 
-### Migration
+### Migration（移行）
 
 **v0.2.0 → v0.2.1 で Sample を再 import する場合は古いバージョンの folder を削除してください**
 
@@ -45,7 +45,7 @@ Unity の UPM Samples は package 更新時に古い import folder (`Assets/Samp
 v0.1.0 以降に蓄積した API 整理・サンプル再編・遅延補正・Editor UX 改修をまとめたリリース。
 **Pre-1.0 のため Breaking change を含みます** — 詳細は下記を参照。
 
-### Breaking changes
+### Breaking changes（破壊的変更）
 
 - **`HapbeatAnimatorTrigger` を廃止し `HapbeatStateBehaviour` に置換**
   Animator state に直接 attach する StateMachineBehaviour 方式に変更。
@@ -63,7 +63,7 @@ v0.1.0 以降に蓄積した API 整理・サンプル再編・遅延補正・Ed
   UPM Sample import の表示名・フォルダ名が変わります。
   旧 `Tutorial` を import 済みのプロジェクトは、新規に `Showcase` を import し直してください。
 
-### Added
+### Added（追加）
 
 **Latency compensation**
 - `HapbeatConfig.hapticDelaySeconds` — グローバル遅延補正 (映像/音声に対して触覚を遅延発火)。
@@ -108,24 +108,24 @@ v0.1.0 以降に蓄積した API 整理・サンプル再編・遅延補正・Ed
 - 3rd-party 資産の credits を per-file 化 (`Samples~/Showcase/THIRD_PARTY_NOTICES.md`)。CC0 / CC BY 3.0 を分離記載。
 - XR helpers サンプルは引き続き opt-in (`Samples~/XriHelpers/`)。
 
-### Changed
+### Changed（変更）
 
 - **UI 文字列を英語に統一** — Tooltip / Label / Dialog / HelpBox / Debug.Log の user-facing 文字列を全 23 ファイルで英語化。日本語は portal docs に集約。
 - ドキュメントを **portal (devtools.hapbeat.com) に一本化** — `docs~/` を削除し各サブ repo の docs は portal が一元参照。
 
-### Fixed
+### Fixed（修正）
 
 - `HapbeatUnityEventTrigger.FireWithGain` が `_entryIndex` 参照のままになっていた問題を `ResolveEntry()` 経由に修正。
 - Manifest schema 2.0.0 環境で send-ahead lead が指定値を超過するケースを `WaitForSecondsRealtime` で固定。
 - Sample deploy 時に destination の親フォルダが未生成だと `AssetDatabase.CopyAsset` が silent fail する問題に対し、事前に `EnsureAssetFolder` を実行。
 
-### Removed
+### Removed（削除）
 
 - `Editor/HapbeatSampleDeployment.cs` — dead code (旧 `BasicExampleSceneBuilder` と `HapbeatSampleImportDeployer` 削除により呼び出し元なし)。
 - `Editor/HapbeatSampleImportDeployer.cs` — 「Deploy Imported Sample」メニュー (非標準 UX)。Sample import 後はユーザー自身が `Assets/` 配下に手動コピー。
 - `docs~/` ディレクトリ — portal 集約に伴い撤去。
 
-### Migration notes
+### Migration notes（移行メモ）
 
 - **`HapbeatAnimatorTrigger` を使っていた場合**: Animator Controller の対象 state を選択 → Add Behaviour → `HapbeatStateBehaviour` を attach → EventMap entry を pick。
 - **Tutorial サンプルを編集していた場合**: 編集内容は `Assets/` 配下にコピー済みのはず。再 import で Showcase が降ってくるが、旧 Tutorial 編集物は上書きされません (UPM の Sample import は新規パスに展開するため)。
@@ -139,7 +139,7 @@ v0.1.0 以降に蓄積した API 整理・サンプル再編・遅延補正・Ed
 
 Initial public release.
 
-### Added
+### Added（追加）
 
 **Core runtime**
 - `HapbeatManager` — シングルトン。Wi-Fi UDP broadcast で Hapbeat デバイスと通信
