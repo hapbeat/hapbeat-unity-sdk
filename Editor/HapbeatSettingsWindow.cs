@@ -29,6 +29,16 @@ namespace Hapbeat.Editor
             FindOrCreateConfig();
         }
 
+        private void OnInspectorUpdate()
+        {
+            // The Addressing status block's "Active (runtime)" row reflects live
+            // HapbeatManager state, which can change mid-session (script calls to
+            // SetAddressOverride / ClearPersistedAddressOverride). Repaint while
+            // in Play mode so it doesn't go stale until the user moves the mouse.
+            if (Application.isPlaying)
+                Repaint();
+        }
+
         private void OnGUI()
         {
             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
@@ -95,8 +105,12 @@ namespace Hapbeat.Editor
                 "-1 = disabled (the EventMap entry's target string is sent as-is).\n" +
                 "1-99 = force every outgoing command to that player / group, " +
                 "regardless of what each EventMap entry's target says. Use this to " +
-                "deploy one identical build to many HMDs, each bound to its own Hapbeat " +
-                "(HapbeatManager.SetAddressOverride can also change this at runtime).",
+                "deploy one identical build to many HMDs, each bound to its own Hapbeat.\n\n" +
+                "The fields below are this Config asset's build-wide defaults. Calling " +
+                "HapbeatManager.SetAddressOverride(..., persist: true) at runtime saves a " +
+                "per-device override to this device's PlayerPrefs, which takes priority " +
+                "over the Config defaults on every subsequent launch — see the status " +
+                "block below.",
                 MessageType.None);
 
             EditorGUILayout.PropertyField(
@@ -106,6 +120,9 @@ namespace Hapbeat.Editor
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("overrideGroup"),
                 new GUIContent("Override Group", "Forced group number applied to every outgoing command. -1 = disabled."));
+
+            EditorGUILayout.Space(3);
+            DrawAddressOverrideStatus();
 
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("App Info", EditorStyles.boldLabel);
@@ -214,6 +231,65 @@ namespace Hapbeat.Editor
 
             _serializedConfig.ApplyModifiedProperties();
         }
+
+        /// <summary>
+        /// Always-on status block for the Addressing section: shows the per-device
+        /// override actually saved in PlayerPrefs (independent of the Config fields
+        /// above) and, when in Play mode, the value currently driving routing.
+        /// <para>
+        /// Both rows are drawn unconditionally (never inserted/removed) so this
+        /// block never shifts the rest of the window's layout — only the text and
+        /// the "Clear Saved Override" button's enabled state change.
+        /// </para>
+        /// </summary>
+        private void DrawAddressOverrideStatus()
+        {
+            bool hasSaved = HapbeatManager.TryGetPersistedAddressOverride(out int savedPlayer, out int savedGroup);
+
+            string savedText = hasSaved
+                ? $"Saved on this device: player={FormatOverrideValue(savedPlayer, "(none)")}, group={FormatOverrideValue(savedGroup, "(none)")}"
+                : "Saved on this device: none";
+            EditorGUILayout.LabelField(savedText, EditorStyles.miniLabel);
+
+            string activeText;
+            if (Application.isPlaying && HapbeatManager.Instance != null)
+            {
+                var manager = HapbeatManager.Instance;
+                activeText = $"Active (runtime): player={FormatOverrideValue(manager.OverridePlayer, "disabled")}, " +
+                             $"group={FormatOverrideValue(manager.OverrideGroup, "disabled")}";
+            }
+            else
+            {
+                activeText = "Active (runtime): — (enter Play Mode)";
+            }
+            EditorGUILayout.LabelField(activeText, EditorStyles.miniLabel);
+
+            EditorGUI.BeginDisabledGroup(!hasSaved);
+            if (GUILayout.Button("Clear Saved Override"))
+            {
+                if (Application.isPlaying && HapbeatManager.Instance != null)
+                {
+                    // Runtime instance available — go through the manager so the
+                    // live override, connected client, and CONNECT_STATUS push all
+                    // update together (same reflection path SetAddressOverride uses).
+                    HapbeatManager.Instance.ClearPersistedAddressOverride();
+                }
+                else
+                {
+                    // No running instance to reflect through — just delete the
+                    // PlayerPrefs keys directly using the same public constants.
+                    PlayerPrefs.DeleteKey(HapbeatManager.PlayerPrefsKeyOverridePlayer);
+                    PlayerPrefs.DeleteKey(HapbeatManager.PlayerPrefsKeyOverrideGroup);
+                    PlayerPrefs.Save();
+                }
+                Repaint();
+            }
+            EditorGUI.EndDisabledGroup();
+        }
+
+        /// <summary>-1 (disabled) renders as <paramref name="disabledLabel"/>; otherwise the raw number.</summary>
+        private static string FormatOverrideValue(int value, string disabledLabel)
+            => value >= 1 ? value.ToString() : disabledLabel;
 
         private void DrawConnectionSection()
         {

@@ -195,8 +195,15 @@ namespace Hapbeat
         private int _overridePlayer = -1;
         private int _overrideGroup = -1;
 
-        private const string OverridePlayerPrefKey = "Hapbeat.OverridePlayer";
-        private const string OverrideGroupPrefKey = "Hapbeat.OverrideGroup";
+        /// <summary>PlayerPrefs key for the persisted address-override player number.
+        /// Public so Editor UI (<see cref="TryGetPersistedAddressOverride"/> callers,
+        /// settings windows, …) can read/clear the same key without duplicating the
+        /// string literal.</summary>
+        public const string PlayerPrefsKeyOverridePlayer = "Hapbeat.OverridePlayer";
+
+        /// <summary>PlayerPrefs key for the persisted address-override group number.
+        /// See <see cref="PlayerPrefsKeyOverridePlayer"/>.</summary>
+        public const string PlayerPrefsKeyOverrideGroup = "Hapbeat.OverrideGroup";
 
         /// <summary>List of discovered devices from the last scan.</summary>
         public IReadOnlyList<HapbeatDevice> DiscoveredDevices => _discovery?.DiscoveredDevices ?? new List<HapbeatDevice>().AsReadOnly();
@@ -347,8 +354,8 @@ namespace Hapbeat
 
             if (persist)
             {
-                PlayerPrefs.SetInt(OverridePlayerPrefKey, _overridePlayer);
-                PlayerPrefs.SetInt(OverrideGroupPrefKey, _overrideGroup);
+                PlayerPrefs.SetInt(PlayerPrefsKeyOverridePlayer, _overridePlayer);
+                PlayerPrefs.SetInt(PlayerPrefsKeyOverrideGroup, _overrideGroup);
                 PlayerPrefs.Save();
             }
 
@@ -359,6 +366,49 @@ namespace Hapbeat
             // for the next periodic push.
             if (_client != null && _client.IsConnected)
                 _client.SendConnectStatus(true, EffectiveGroup, AppName, SystemInfo.deviceName);
+        }
+
+        /// <summary>
+        /// Reads the per-device address override persisted by a prior
+        /// <see cref="SetAddressOverride"/> call with <c>persist: true</c>,
+        /// without requiring a live <see cref="HapbeatManager"/> instance —
+        /// intended for Editor UI that inspects PlayerPrefs outside Play mode.
+        /// </summary>
+        /// <param name="player">Persisted player number, or -1 if not saved.</param>
+        /// <param name="group">Persisted group number, or -1 if not saved.</param>
+        /// <returns>True if either the player or the group key is present in PlayerPrefs.</returns>
+        public static bool TryGetPersistedAddressOverride(out int player, out int group)
+        {
+            bool hasPlayer = PlayerPrefs.HasKey(PlayerPrefsKeyOverridePlayer);
+            bool hasGroup = PlayerPrefs.HasKey(PlayerPrefsKeyOverrideGroup);
+            player = hasPlayer ? PlayerPrefs.GetInt(PlayerPrefsKeyOverridePlayer) : -1;
+            group = hasGroup ? PlayerPrefs.GetInt(PlayerPrefsKeyOverrideGroup) : -1;
+            return hasPlayer || hasGroup;
+        }
+
+        /// <summary>
+        /// Clears the per-device address override saved by <see cref="SetAddressOverride"/>
+        /// (persist: true) and reverts the runtime override back to the HapbeatConfig
+        /// asset's defaults (<see cref="HapbeatConfig.overridePlayer"/> /
+        /// <c>overrideGroup</c>).
+        /// <para>
+        /// Reuses <see cref="SetAddressOverride"/> (with <c>persist: false</c>, so the
+        /// just-cleared keys aren't immediately re-saved) to push the reverted values
+        /// to the client and, if connected, send an immediate CONNECT_STATUS update —
+        /// same reflection path as a normal override change.
+        /// </para>
+        /// </summary>
+        public void ClearPersistedAddressOverride()
+        {
+            PlayerPrefs.DeleteKey(PlayerPrefsKeyOverridePlayer);
+            PlayerPrefs.DeleteKey(PlayerPrefsKeyOverrideGroup);
+            PlayerPrefs.Save();
+
+            int configPlayer = _config != null ? _config.overridePlayer : -1;
+            int configGroup = _config != null ? _config.overrideGroup : -1;
+            SetAddressOverride(configPlayer, configGroup, persist: false);
+
+            Log("Persisted address override cleared — reverted to config defaults.");
         }
 
         /// <summary>
@@ -830,11 +880,11 @@ namespace Hapbeat
             // PlayerPrefs (if present) wins over HapbeatConfig — this is how a
             // per-device address override persists across app restarts once
             // SetAddressOverride(..., persist: true) has been called.
-            int player = PlayerPrefs.HasKey(OverridePlayerPrefKey)
-                ? PlayerPrefs.GetInt(OverridePlayerPrefKey)
+            int player = PlayerPrefs.HasKey(PlayerPrefsKeyOverridePlayer)
+                ? PlayerPrefs.GetInt(PlayerPrefsKeyOverridePlayer)
                 : (_config != null ? _config.overridePlayer : -1);
-            int group = PlayerPrefs.HasKey(OverrideGroupPrefKey)
-                ? PlayerPrefs.GetInt(OverrideGroupPrefKey)
+            int group = PlayerPrefs.HasKey(PlayerPrefsKeyOverrideGroup)
+                ? PlayerPrefs.GetInt(PlayerPrefsKeyOverrideGroup)
                 : (_config != null ? _config.overrideGroup : -1);
             _overridePlayer = HapbeatClient.NormalizeOverride(player);
             _overrideGroup = HapbeatClient.NormalizeOverride(group);

@@ -19,6 +19,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
   - Showcase サンプルに `AddressOverrideDemo` (Z4_Stream ゾーン) を追加。+/- ステッパーで player/group を選び Apply → `SetAddressOverride(..., persist: true)` を呼ぶ実演 UI。
   - `Tests/Runtime/ResolveTargetTests.cs` — `ResolveTarget` のユニットテストを追加。
   - Editor: Settings ウィンドウに Addressing フィールド、Manager Inspector に現在の override 状態表示、Editor Test Play (`HapbeatEditorTransport`) が config の override をミラーして再生プレビューに反映するよう対応。
+  - `HapbeatManager.TryGetPersistedAddressOverride(out int, out int)` (static) / `ClearPersistedAddressOverride()` を追加。Settings ウィンドウの Addressing セクションに「この端末に保存された override」「実行時に有効な override」を常時表示する状態行と `Clear Saved Override` ボタンを追加し、PlayerPrefs 保存値が見えず戻せない問題を解消。
 
 ---
 
