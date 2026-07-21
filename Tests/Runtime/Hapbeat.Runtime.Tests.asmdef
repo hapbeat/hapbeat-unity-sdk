@@ -6,7 +6,9 @@
         "UnityEditor.TestRunner",
         "Hapbeat.Runtime"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Editor"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": true,

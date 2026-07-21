@@ -74,14 +74,21 @@ namespace Hapbeat.Samples.Showcase
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
             canvasGo.AddComponent<GraphicRaycaster>();
 
-            // --- Panel: bottom-right corner, fixed size ---
+            // --- Panel: top-center, fixed size ---
+            // Anchored to the top-center of the screen (not bottom-right) so it
+            // doesn't overlap the "[Z4] Stream Console" panel, which occupies the
+            // screen center. The top edge already hosts a guide text (top-left)
+            // and a connection status readout (top-right), so this panel is kept
+            // compact and sits just below the top edge, centered between them.
             var panel = CreatePanel(canvasGo.transform, "Panel", new Color(0f, 0f, 0f, 0.6f));
             var panelRt = panel.GetComponent<RectTransform>();
-            panelRt.anchorMin = new Vector2(1f, 0f);
-            panelRt.anchorMax = new Vector2(1f, 0f);
-            panelRt.pivot = new Vector2(1f, 0f);
+            panelRt.anchorMin = new Vector2(0.5f, 1f);
+            panelRt.anchorMax = new Vector2(0.5f, 1f);
+            panelRt.pivot = new Vector2(0.5f, 1f);
             panelRt.sizeDelta = new Vector2(340f, 190f);
-            panelRt.anchoredPosition = new Vector2(-16f, 16f);
+            // Top-anchored pivot: y is measured downward from the anchor, so a
+            // small negative offset nudges the panel just below the screen edge.
+            panelRt.anchoredPosition = new Vector2(0f, -8f);
 
             var layout = panel.AddComponent<VerticalLayoutGroup>();
             layout.padding = new RectOffset(12, 12, 10, 10);
