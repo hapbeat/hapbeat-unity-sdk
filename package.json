@@ -5,6 +5,9 @@
   "description": "Unity SDK for Hapbeat haptic devices",
   "unity": "6000.0",
   "keywords": ["haptics", "hapbeat", "esp-now"],
+  "dependencies": {
+    "com.unity.ugui": "2.0.0"
+  },
   "samples": [
     {
       "displayName": "BasicExample",

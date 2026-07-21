@@ -19,7 +19,22 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
   - Showcase サンプルに `AddressOverrideDemo` (Z4_Stream ゾーン) を追加。+/- ステッパーで player/group を選び Apply → `SetAddressOverride(..., persist: true)` を呼ぶ実演 UI。
   - `Tests/Runtime/ResolveTargetTests.cs` — `ResolveTarget` のユニットテストを追加。
   - Editor: Settings ウィンドウに Addressing フィールド、Manager Inspector に現在の override 状態表示、Editor Test Play (`HapbeatEditorTransport`) が config の override をミラーして再生プレビューに反映するよう対応。
-  - `HapbeatManager.TryGetPersistedAddressOverride(out int, out int)` (static) / `ClearPersistedAddressOverride()` を追加。Settings ウィンドウの Addressing セクションに「この端末に保存された override」「実行時に有効な override」を常時表示する状態行と `Clear Saved Override` ボタンを追加し、PlayerPrefs 保存値が見えず戻せない問題を解消。
+  - `HapbeatManager.TryGetPersistedAddressOverride(out int, out int)` (static) / `ClearPersistedAddressOverride()` を追加。「この端末に保存された override」「実行時に有効な override」を常時表示する状態行と `Clear Saved Override` ボタンを追加し、PlayerPrefs 保存値が見えず戻せない問題を解消。
+- `HapbeatManager.AddressOverrideDisabled` (`= -1`) を公開定数として追加。-1 は「その軸を override しない（EventMap entry の target をそのまま使う）」ことを意味し、target を -1 という値に書き換えるわけではない、という誤解を防ぐための named constant。
+- `HapbeatManager.ApplyAddressPlaceholders(string, int, int)` (static) を追加。`appName` 内の `<p>` / `<g>` を現在の address-override player/group 番号（無効時は `-`）に置換する純粋関数。`HapbeatManager.AppName` が CONNECT_STATUS 送信直前に自動適用する。
+- `HapbeatAddressOverridePanel` (Runtime) — Showcase サンプルの `AddressOverrideDemo` 実装を SDK 本体に昇格。`ScreenSpaceOverlay` / `WorldSpace`（VR コントローラー等への 3D パネル取り付け用）の 2 レイアウトに対応し、`PlayerUp` / `PlayerDown` / `GroupUp` / `GroupDown` / `Apply` を public メソッドとして公開（外部コントローラー / UnityEvent から配線可能）。`AddressOverrideDemo` はこのクラスの空派生に置き換え。
+- `Tests/Runtime/AddressPlaceholderTests.cs` — `ApplyAddressPlaceholders` のユニットテストを追加。
+- Runtime asmdef (`Hapbeat.Runtime.asmdef`) に `UnityEngine.UI` 参照、`package.json` に `com.unity.ugui` 依存を追加（`HapbeatAddressOverridePanel` の uGUI 利用を UPM 配布先プロジェクトで確実に解決するため）。
+
+### Changed（変更）
+
+- Address Override の状態可視化を Settings ウィンドウから `HapbeatManagerEditor`（Manager インスペクタ）の "Address Override (this device)" ボックスへ移設。Edit / Play 両モードで常時表示し、レイアウトシフトを避けるため状態行は常に描画（テキストのみ切り替え）。
+- Settings ウィンドウで `enableLogging` に誤って付いていた "Verbose Log" ラベルを "Enable Logging" に修正し、`verboseLogging`（PONG/keep-alive 等の詳細ログ）用の PropertyField を新規追加。
+
+### Removed（削除）
+
+- `HapbeatConfig.group` / `overridePlayer` / `overrideGroup` / `discoveryTimeoutMs` を削除。`group` と `discoveryTimeoutMs` はどこからも読まれない dead field、`overridePlayer` / `overrideGroup` は PlayerPrefs 経由の実行時 override（`SetAddressOverride`）に一本化したため、config 側の既定値という概念自体を廃止した。
+- `HapbeatManager.DefaultGroup` / `EffectiveGroup` を削除。CONNECT_STATUS (0x20) の group バイトはデバイス側で保存後一切読まれないレガシーフィールドと判明したため、private ヘルパー経由で override group（有効時）か 0 を送るだけの実装に簡素化。
 
 ---
 

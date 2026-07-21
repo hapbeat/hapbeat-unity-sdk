@@ -12,6 +12,10 @@ namespace Hapbeat
     /// </summary>
     public class HapbeatManager : MonoBehaviour
     {
+        /// <summary>Sentinel value for a disabled address-override axis (player or group).
+        /// See <see cref="SetAddressOverride"/> / <see cref="OverridePlayer"/> / <see cref="OverrideGroup"/>.</summary>
+        public const int AddressOverrideDisabled = -1;
+
         /// <summary>Singleton instance of HapbeatManager.</summary>
         public static HapbeatManager Instance { get; private set; }
 
@@ -78,29 +82,49 @@ namespace Hapbeat
         /// </summary>
         public long TimeOffsetUs { get; private set; }
 
-        /// <summary>The default group ID from configuration.</summary>
-        /// <summary>The default group ID. -1 maps to 0 (broadcast).</summary>
-        public byte DefaultGroup => _config != null && _config.group >= 0 ? (byte)_config.group : (byte)0;
-
-        /// <summary>
-        /// Group byte sent in CONNECT_STATUS (OLED display). When a forced
-        /// <see cref="OverrideGroup"/> is active (1-99) the display follows the
-        /// value that actually drives routing; otherwise falls back to
-        /// <see cref="DefaultGroup"/> (HapbeatConfig.group — display-only,
-        /// no effect on Play/Stop/Stream routing).
-        /// </summary>
-        public byte EffectiveGroup => _overrideGroup >= 1 ? (byte)_overrideGroup : DefaultGroup;
-
-        /// <summary>Currently effective forced player number (-1 = disabled). See <see cref="SetAddressOverride"/>.</summary>
+        /// <summary>Currently effective forced player number, or <see cref="AddressOverrideDisabled"/>
+        /// (-1) if this axis doesn't override the EventMap target's player. See <see cref="SetAddressOverride"/>.</summary>
         public int OverridePlayer => _overridePlayer;
 
-        /// <summary>Currently effective forced group number (-1 = disabled). See <see cref="SetAddressOverride"/>.</summary>
+        /// <summary>Currently effective forced group number, or <see cref="AddressOverrideDisabled"/>
+        /// (-1) if this axis doesn't override the EventMap target's group. See <see cref="SetAddressOverride"/>.</summary>
         public int OverrideGroup => _overrideGroup;
 
-        /// <summary>App name shown on device OLED. Uses config value or falls back to Application.productName.</summary>
+        /// <summary>App name shown on device OLED. Uses config value (with &lt;p&gt;/&lt;g&gt;
+        /// address-override placeholders applied) or falls back to Application.productName.</summary>
         public string AppName => _config != null && !string.IsNullOrEmpty(_config.appName)
-            ? _config.appName
+            ? ApplyAddressPlaceholders(_config.appName, _overridePlayer, _overrideGroup)
             : Application.productName;
+
+        /// <summary>
+        /// Group byte sent in CONNECT_STATUS (OLED display). This is a legacy
+        /// wire field the device firmware stores but never reads back — it has
+        /// no effect on Play/Stop/Stream routing (that's controlled entirely by
+        /// each EventMap entry's target string, optionally forced by
+        /// <see cref="OverridePlayer"/> / <see cref="OverrideGroup"/>). We send
+        /// the active override group when set, or 0 otherwise.
+        /// </summary>
+        private byte ConnectStatusGroupByte => _overrideGroup >= 1 ? (byte)_overrideGroup : (byte)0;
+
+        /// <summary>
+        /// Replaces the <c>&lt;p&gt;</c> / <c>&lt;g&gt;</c> placeholders in <paramref name="appName"/>
+        /// with the current address-override player/group number, or <c>"-"</c> when that axis
+        /// is disabled (-1). Pure, null-safe, UnityEngine-independent — safe to unit test directly.
+        /// </summary>
+        /// <param name="appName">Raw app name string, e.g. "Booth &lt;p&gt;/&lt;g&gt;". May be null or empty.</param>
+        /// <param name="overridePlayer">Current override player number, or a disabled value (&lt; 1).</param>
+        /// <param name="overrideGroup">Current override group number, or a disabled value (&lt; 1).</param>
+        /// <returns><paramref name="appName"/> with placeholders substituted (unchanged if null/empty
+        /// or if it contains no placeholders). Callers should cap the result at
+        /// <see cref="HapbeatConfig.MaxAppNameLength"/> for wire transmission.</returns>
+        public static string ApplyAddressPlaceholders(string appName, int overridePlayer, int overrideGroup)
+        {
+            if (string.IsNullOrEmpty(appName)) return appName;
+
+            string p = overridePlayer >= 1 ? overridePlayer.ToString() : "-";
+            string g = overrideGroup >= 1 ? overrideGroup.ToString() : "-";
+            return appName.Replace("<p>", p).Replace("<g>", g);
+        }
 
         /// <summary>
         /// Global haptic-side latency compensation (seconds). All Trigger-based
@@ -243,7 +267,7 @@ namespace Hapbeat
                 if (Time.realtimeSinceStartup - _lastPingTime >= _config.pingInterval)
                 {
                     Ping();
-                    _client.SendConnectStatus(true, EffectiveGroup, AppName, SystemInfo.deviceName);
+                    _client.SendConnectStatus(true, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);
                     _lastPingTime = Time.realtimeSinceStartup;
                 }
             }
@@ -336,13 +360,18 @@ namespace Hapbeat
 
         /// <summary>
         /// Override the player / group applied to every outgoing command at runtime.
-        /// Pass -1 to disable either axis; values outside 1..99 are normalized to -1.
+        /// Pass <see cref="AddressOverrideDisabled"/> (-1) to disable either axis —
+        /// this means "don't override that axis", not "rewrite the target's value to -1";
+        /// a disabled axis leaves the EventMap entry's target string exactly as authored.
+        /// Values outside 1..99 are normalized to <see cref="AddressOverrideDisabled"/>.
         /// When <paramref name="persist"/> is true the values are stored in PlayerPrefs
         /// and restored on next launch — this is the intended flow for "one identical
         /// build deployed to many HMDs, each bound to its own Hapbeat".
         /// </summary>
-        /// <param name="player">Forced player number (1-99), or -1 to leave the EventMap target's player as-is.</param>
-        /// <param name="group">Forced group number (1-99), or -1 to leave the EventMap target's group as-is.</param>
+        /// <param name="player">Forced player number (1-99), or <see cref="AddressOverrideDisabled"/>
+        /// to leave the EventMap target's player as-is.</param>
+        /// <param name="group">Forced group number (1-99), or <see cref="AddressOverrideDisabled"/>
+        /// to leave the EventMap target's group as-is.</param>
         /// <param name="persist">If true, saves to PlayerPrefs so the override survives an app restart.</param>
         public void SetAddressOverride(int player, int group, bool persist = false)
         {
@@ -365,7 +394,7 @@ namespace Hapbeat
             // new routing immediately, instead of waiting up to pingInterval seconds
             // for the next periodic push.
             if (_client != null && _client.IsConnected)
-                _client.SendConnectStatus(true, EffectiveGroup, AppName, SystemInfo.deviceName);
+                _client.SendConnectStatus(true, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);
         }
 
         /// <summary>
@@ -388,9 +417,9 @@ namespace Hapbeat
 
         /// <summary>
         /// Clears the per-device address override saved by <see cref="SetAddressOverride"/>
-        /// (persist: true) and reverts the runtime override back to the HapbeatConfig
-        /// asset's defaults (<see cref="HapbeatConfig.overridePlayer"/> /
-        /// <c>overrideGroup</c>).
+        /// (persist: true) and reverts the runtime override back to disabled
+        /// (<see cref="AddressOverrideDisabled"/> on both axes) — there is no config-level
+        /// default to fall back to; clearing simply means "stop overriding".
         /// <para>
         /// Reuses <see cref="SetAddressOverride"/> (with <c>persist: false</c>, so the
         /// just-cleared keys aren't immediately re-saved) to push the reverted values
@@ -404,11 +433,9 @@ namespace Hapbeat
             PlayerPrefs.DeleteKey(PlayerPrefsKeyOverrideGroup);
             PlayerPrefs.Save();
 
-            int configPlayer = _config != null ? _config.overridePlayer : -1;
-            int configGroup = _config != null ? _config.overrideGroup : -1;
-            SetAddressOverride(configPlayer, configGroup, persist: false);
+            SetAddressOverride(AddressOverrideDisabled, AddressOverrideDisabled, persist: false);
 
-            Log("Persisted address override cleared — reverted to config defaults.");
+            Log("Persisted address override cleared — reverted to disabled.");
         }
 
         /// <summary>
@@ -451,7 +478,7 @@ namespace Hapbeat
                 try
                 {
                     _client.OpenBroadcast(port);
-                    Log($"Broadcast mode opened on port {port} (group={EffectiveGroup})");
+                    Log($"Broadcast mode opened on port {port}");
                 }
                 catch (Exception ex)
                 {
@@ -502,7 +529,7 @@ namespace Hapbeat
 
             // Notify devices that app is disconnecting
             if (_client.IsConnected)
-                _client.SendConnectStatus(false, EffectiveGroup, AppName, SystemInfo.deviceName);
+                _client.SendConnectStatus(false, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);
 
             _client.Disconnect();
             Log("Disconnected.");
@@ -877,15 +904,16 @@ namespace Hapbeat
                 Log("No HapbeatConfig found. Using default settings.");
             }
 
-            // PlayerPrefs (if present) wins over HapbeatConfig — this is how a
-            // per-device address override persists across app restarts once
-            // SetAddressOverride(..., persist: true) has been called.
+            // PlayerPrefs (if present) restores a per-device address override saved
+            // by a prior SetAddressOverride(..., persist: true) call. There is no
+            // config-level default to fall back to — an override is either
+            // persisted from a previous run, or starts disabled.
             int player = PlayerPrefs.HasKey(PlayerPrefsKeyOverridePlayer)
                 ? PlayerPrefs.GetInt(PlayerPrefsKeyOverridePlayer)
-                : (_config != null ? _config.overridePlayer : -1);
+                : AddressOverrideDisabled;
             int group = PlayerPrefs.HasKey(PlayerPrefsKeyOverrideGroup)
                 ? PlayerPrefs.GetInt(PlayerPrefsKeyOverrideGroup)
-                : (_config != null ? _config.overrideGroup : -1);
+                : AddressOverrideDisabled;
             _overridePlayer = HapbeatClient.NormalizeOverride(player);
             _overrideGroup = HapbeatClient.NormalizeOverride(group);
 
@@ -909,7 +937,7 @@ namespace Hapbeat
                     Log($"Ready ({mode}).");
                     _lastPingTime = Time.realtimeSinceStartup;
                     // Notify devices that app is connected
-                    client.SendConnectStatus(true, EffectiveGroup, AppName, SystemInfo.deviceName);
+                    client.SendConnectStatus(true, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);
                     OnConnected?.Invoke();
                 }
                 else
@@ -965,7 +993,7 @@ namespace Hapbeat
             {
                 try
                 {
-                    _client.SendConnectStatus(false, EffectiveGroup, AppName, SystemInfo.deviceName);
+                    _client.SendConnectStatus(false, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);
                 }
                 catch { /* shutdown race — ignore */ }
             }

@@ -80,13 +80,15 @@ namespace Hapbeat.Editor
             {
                 _client = new HapbeatClient();
                 _client.OpenBroadcast(port);
-                // Mirror HapbeatConfig's address override so "▶ Test Play" previews
-                // the same target a running build would actually send — otherwise
-                // Edit-mode tests would silently ignore overridePlayer/overrideGroup
-                // while a deployed build (via HapbeatManager) honors it.
+                // Mirror the persisted address override (PlayerPrefs) so "▶ Test Play"
+                // previews the same target a running build would actually send —
+                // otherwise Edit-mode tests would silently ignore an override that a
+                // deployed build (via HapbeatManager) honors. There's no config-level
+                // default anymore; only a previously-persisted override applies here.
+                HapbeatManager.TryGetPersistedAddressOverride(out int savedPlayer, out int savedGroup);
                 _client.SetAddressOverride(
-                    cfg != null ? HapbeatClient.NormalizeOverride(cfg.overridePlayer) : -1,
-                    cfg != null ? HapbeatClient.NormalizeOverride(cfg.overrideGroup) : -1);
+                    HapbeatClient.NormalizeOverride(savedPlayer),
+                    HapbeatClient.NormalizeOverride(savedGroup));
                 EditorApplication.update -= TickStream;
                 EditorApplication.update += TickStream;
                 LastOpenError = null;
@@ -118,15 +120,6 @@ namespace Hapbeat.Editor
         }
 
         // ── Commands ─────────────────────────────────────────────────────────
-
-        public static byte DefaultGroup
-        {
-            get
-            {
-                var cfg = ResolveConfig();
-                return cfg != null && cfg.group >= 0 ? (byte)cfg.group : (byte)0;
-            }
-        }
 
         public static void Play(string eventId, float gain, string target = null)
         {

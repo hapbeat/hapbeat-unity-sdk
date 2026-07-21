@@ -55,8 +55,19 @@ namespace Hapbeat
             if (_statusText != null)
             {
                 string streaming = mgr.IsStreaming ? " [STREAMING]" : "";
+                string overrideText;
+                if (mgr.OverridePlayer < 1 && mgr.OverrideGroup < 1)
+                {
+                    overrideText = "override: off";
+                }
+                else
+                {
+                    string p = mgr.OverridePlayer >= 1 ? mgr.OverridePlayer.ToString() : "-";
+                    string g = mgr.OverrideGroup >= 1 ? mgr.OverrideGroup.ToString() : "-";
+                    overrideText = $"override: P{p} / G{g}";
+                }
                 _statusText.text = mgr.IsConnected
-                    ? $"Status: Connected (group={mgr.EffectiveGroup}){streaming}"
+                    ? $"Status: Connected ({overrideText}){streaming}"
                     : "Status: Disconnected";
             }
 
