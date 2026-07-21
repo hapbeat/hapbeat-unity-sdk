@@ -13,9 +13,21 @@ namespace Hapbeat
         [Tooltip("UDP port for communication with Hapbeat devices.")]
         public int port = 7700;
 
-        [Tooltip("Target group ID. -1 = no group filter (default). 0 = broadcast to all. 1-254 = specific group.")]
+        [Tooltip("Group ID shown in the device's CONNECT_STATUS (OLED display) only. " +
+                 "Does NOT affect Play/Stop/Stream routing — that is controlled by each " +
+                 "EventMap entry's target string, optionally forced by overridePlayer / " +
+                 "overrideGroup below. -1 = no group shown (default). 0-254 = group number shown on display.")]
         [Range(-1, 254)]
         public int group = -1;
+
+        [Header("Addressing")]
+        [Tooltip("Forced player number applied to every outgoing command. -1 = disabled (use the EventMap entry's target as-is). 1-99 = always target player_<N>.")]
+        [Range(-1, 99)]
+        public int overridePlayer = -1;
+
+        [Tooltip("Forced group number applied to every outgoing command. -1 = disabled. 1-99 = always append/replace group_<M>.")]
+        [Range(-1, 99)]
+        public int overrideGroup = -1;
 
         [Header("App Info")]
         [Tooltip("Shown on the Hapbeat device display. Max 16 chars; the default app_name element (8x1) shows the first 8. Empty = use Application.productName.")]

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -43,6 +44,12 @@ namespace Hapbeat
         private ushort _sequenceNumber;
         private readonly object _seqLock = new object();
         private readonly Stopwatch _stopwatch;
+
+        // Forced player/group applied to every outgoing target string. -1 = disabled.
+        // Pushed from HapbeatManager (owner of HapbeatConfig / PlayerPrefs); the
+        // client itself never reads config or PlayerPrefs directly.
+        private int _overridePlayer = -1;
+        private int _overrideGroup = -1;
 
         // Queue for dispatching callbacks to the main thread
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
@@ -149,10 +156,94 @@ namespace Hapbeat
             EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(false));
         }
 
+        /// <summary>
+        /// Set the forced player/group applied to every outgoing target string
+        /// (Play/Stop/StopAll/StreamBegin) via <see cref="ResolveTarget(string)"/>.
+        /// Pass -1 to disable either axis. Values outside 1..99 are normalized
+        /// to -1 (disabled) — see <see cref="NormalizeOverride"/>.
+        /// </summary>
+        public void SetAddressOverride(int player, int group)
+        {
+            _overridePlayer = NormalizeOverride(player);
+            _overrideGroup = NormalizeOverride(group);
+        }
+
+        /// <summary>
+        /// Clamp an override value to the valid device-addressing range (1..99).
+        /// Anything outside that range (including the disabled sentinel -1) is
+        /// normalized to -1 ("disabled").
+        /// </summary>
+        public static int NormalizeOverride(int value)
+        {
+            return (value >= 1 && value <= 99) ? value : -1;
+        }
+
+        /// <summary>
+        /// Resolve a target string against forced player/group overrides. Pure,
+        /// UnityEngine-independent function so it can be unit tested directly
+        /// (see Tests/Runtime/ResolveTargetTests.cs). Both overrides disabled
+        /// (&lt; 1) returns <paramref name="target"/> completely unchanged
+        /// (including null) — this is what keeps existing projects' behavior
+        /// byte-for-byte identical when the feature isn't used.
+        /// <para>
+        /// Grammar: <c>[prefix/] player_{N} / {position} [/group_{M}]</c>
+        /// — see hapbeat-contracts/specs/device-addressing.md §2.
+        /// </para>
+        /// </summary>
+        /// <param name="target">Original EventMap/API target string. May be null.</param>
+        /// <param name="overridePlayer">Forced player number, or &lt; 1 to leave the player slot alone.</param>
+        /// <param name="overrideGroup">Forced group number, or &lt; 1 to leave the group slot alone.</param>
+        public static string ResolveTarget(string target, int overridePlayer, int overrideGroup)
+        {
+            if (overridePlayer < 1 && overrideGroup < 1)
+                return target; // both disabled: full passthrough (BuildXxxPayload treats null as "")
+
+            List<string> segs = new List<string>((target ?? string.Empty).Split('/'));
+            segs.RemoveAll(string.IsNullOrEmpty);
+
+            if (overridePlayer >= 1)
+            {
+                string playerSeg = "player_" + overridePlayer;
+                int i = segs.FindIndex(s => s.StartsWith("player_", StringComparison.Ordinal));
+                if (i >= 0)
+                {
+                    segs[i] = playerSeg;
+                }
+                else
+                {
+                    int j = segs.FindIndex(s => s.StartsWith("pos_", StringComparison.Ordinal));
+                    if (j > 0)
+                        segs[j - 1] = playerSeg; // replace the placeholder segment (e.g. "*") right before position
+                    else
+                        segs.Insert(0, playerSeg); // j == 0 (position at front) or j == -1 (no position segment)
+                }
+            }
+
+            if (overrideGroup >= 1)
+            {
+                string groupSeg = "group_" + overrideGroup;
+                int k = segs.FindIndex(s => s.StartsWith("group_", StringComparison.Ordinal));
+                if (k >= 0)
+                    segs[k] = groupSeg;
+                else
+                    segs.Add(groupSeg);
+            }
+
+            return string.Join("/", segs);
+        }
+
+        /// <summary>Instance wrapper around <see cref="ResolveTarget(string, int, int)"/>
+        /// using the overrides pushed via <see cref="SetAddressOverride"/>.</summary>
+        private string ResolveTarget(string target)
+        {
+            return ResolveTarget(target, _overridePlayer, _overrideGroup);
+        }
+
         /// <summary>Send a PLAY command. <paramref name="target"/> is the device-addressing
         /// target string ("" = broadcast).</summary>
         public void SendPlay(string eventId, long targetTimeUs, float gain, string target = null)
         {
+            target = ResolveTarget(target);
             byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, gain, target);
             SendPacket(HapbeatProtocol.CMD_PLAY, payload);
         }
@@ -161,6 +252,7 @@ namespace Hapbeat
         /// target string ("" = broadcast).</summary>
         public void SendStop(string eventId, string target = null)
         {
+            target = ResolveTarget(target);
             byte[] payload = HapbeatProtocol.BuildStopPayload(eventId, target);
             SendPacket(HapbeatProtocol.CMD_STOP, payload);
         }
@@ -169,6 +261,7 @@ namespace Hapbeat
         /// target string ("" = broadcast).</summary>
         public void SendStopAll(string target = null)
         {
+            target = ResolveTarget(target);
             byte[] payload = HapbeatProtocol.BuildStopAllPayload(target);
             SendPacket(HapbeatProtocol.CMD_STOP_ALL, payload);
         }
@@ -188,6 +281,7 @@ namespace Hapbeat
         public void SendStreamBegin(ushort sampleRate, byte channels, byte format,
             uint totalSamples, float gain, string target = null)
         {
+            target = ResolveTarget(target);
             byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(
                 sampleRate, channels, format, totalSamples, gain, target);
             SendPacket(HapbeatProtocol.CMD_STREAM_BEGIN, payload);

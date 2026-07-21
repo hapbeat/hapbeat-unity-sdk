@@ -82,6 +82,21 @@ namespace Hapbeat
         /// <summary>The default group ID. -1 maps to 0 (broadcast).</summary>
         public byte DefaultGroup => _config != null && _config.group >= 0 ? (byte)_config.group : (byte)0;
 
+        /// <summary>
+        /// Group byte sent in CONNECT_STATUS (OLED display). When a forced
+        /// <see cref="OverrideGroup"/> is active (1-99) the display follows the
+        /// value that actually drives routing; otherwise falls back to
+        /// <see cref="DefaultGroup"/> (HapbeatConfig.group — display-only,
+        /// no effect on Play/Stop/Stream routing).
+        /// </summary>
+        public byte EffectiveGroup => _overrideGroup >= 1 ? (byte)_overrideGroup : DefaultGroup;
+
+        /// <summary>Currently effective forced player number (-1 = disabled). See <see cref="SetAddressOverride"/>.</summary>
+        public int OverridePlayer => _overridePlayer;
+
+        /// <summary>Currently effective forced group number (-1 = disabled). See <see cref="SetAddressOverride"/>.</summary>
+        public int OverrideGroup => _overrideGroup;
+
         /// <summary>App name shown on device OLED. Uses config value or falls back to Application.productName.</summary>
         public string AppName => _config != null && !string.IsNullOrEmpty(_config.appName)
             ? _config.appName
@@ -174,6 +189,15 @@ namespace Hapbeat
         private float _lastPingTime;
         private bool _isInitialized;
 
+        // Effective (already-normalized) forced player/group. -1 = disabled.
+        // Populated from PlayerPrefs (if present) or HapbeatConfig at Initialize(),
+        // and kept in sync with the HapbeatClient the SDK actually sends through.
+        private int _overridePlayer = -1;
+        private int _overrideGroup = -1;
+
+        private const string OverridePlayerPrefKey = "Hapbeat.OverridePlayer";
+        private const string OverrideGroupPrefKey = "Hapbeat.OverrideGroup";
+
         /// <summary>List of discovered devices from the last scan.</summary>
         public IReadOnlyList<HapbeatDevice> DiscoveredDevices => _discovery?.DiscoveredDevices ?? new List<HapbeatDevice>().AsReadOnly();
 
@@ -212,7 +236,7 @@ namespace Hapbeat
                 if (Time.realtimeSinceStartup - _lastPingTime >= _config.pingInterval)
                 {
                     Ping();
-                    _client.SendConnectStatus(true, DefaultGroup, AppName, SystemInfo.deviceName);
+                    _client.SendConnectStatus(true, EffectiveGroup, AppName, SystemInfo.deviceName);
                     _lastPingTime = Time.realtimeSinceStartup;
                 }
             }
@@ -304,6 +328,40 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Override the player / group applied to every outgoing command at runtime.
+        /// Pass -1 to disable either axis; values outside 1..99 are normalized to -1.
+        /// When <paramref name="persist"/> is true the values are stored in PlayerPrefs
+        /// and restored on next launch — this is the intended flow for "one identical
+        /// build deployed to many HMDs, each bound to its own Hapbeat".
+        /// </summary>
+        /// <param name="player">Forced player number (1-99), or -1 to leave the EventMap target's player as-is.</param>
+        /// <param name="group">Forced group number (1-99), or -1 to leave the EventMap target's group as-is.</param>
+        /// <param name="persist">If true, saves to PlayerPrefs so the override survives an app restart.</param>
+        public void SetAddressOverride(int player, int group, bool persist = false)
+        {
+            _overridePlayer = HapbeatClient.NormalizeOverride(player);
+            _overrideGroup = HapbeatClient.NormalizeOverride(group);
+
+            if (_client != null)
+                _client.SetAddressOverride(_overridePlayer, _overrideGroup);
+
+            if (persist)
+            {
+                PlayerPrefs.SetInt(OverridePlayerPrefKey, _overridePlayer);
+                PlayerPrefs.SetInt(OverrideGroupPrefKey, _overrideGroup);
+                PlayerPrefs.Save();
+            }
+
+            Log($"Address override set: player={_overridePlayer}, group={_overrideGroup}, persist={persist}");
+
+            // Keep the device's CONNECT_STATUS (OLED) group display in sync with the
+            // new routing immediately, instead of waiting up to pingInterval seconds
+            // for the next periodic push.
+            if (_client != null && _client.IsConnected)
+                _client.SendConnectStatus(true, EffectiveGroup, AppName, SystemInfo.deviceName);
+        }
+
+        /// <summary>
         /// Send a PING for keep-alive and time synchronization.
         /// </summary>
         public void Ping()
@@ -343,7 +401,7 @@ namespace Hapbeat
                 try
                 {
                     _client.OpenBroadcast(port);
-                    Log($"Broadcast mode opened on port {port} (group={DefaultGroup})");
+                    Log($"Broadcast mode opened on port {port} (group={EffectiveGroup})");
                 }
                 catch (Exception ex)
                 {
@@ -394,7 +452,7 @@ namespace Hapbeat
 
             // Notify devices that app is disconnecting
             if (_client.IsConnected)
-                _client.SendConnectStatus(false, DefaultGroup, AppName, SystemInfo.deviceName);
+                _client.SendConnectStatus(false, EffectiveGroup, AppName, SystemInfo.deviceName);
 
             _client.Disconnect();
             Log("Disconnected.");
@@ -769,7 +827,20 @@ namespace Hapbeat
                 Log("No HapbeatConfig found. Using default settings.");
             }
 
+            // PlayerPrefs (if present) wins over HapbeatConfig — this is how a
+            // per-device address override persists across app restarts once
+            // SetAddressOverride(..., persist: true) has been called.
+            int player = PlayerPrefs.HasKey(OverridePlayerPrefKey)
+                ? PlayerPrefs.GetInt(OverridePlayerPrefKey)
+                : (_config != null ? _config.overridePlayer : -1);
+            int group = PlayerPrefs.HasKey(OverrideGroupPrefKey)
+                ? PlayerPrefs.GetInt(OverrideGroupPrefKey)
+                : (_config != null ? _config.overrideGroup : -1);
+            _overridePlayer = HapbeatClient.NormalizeOverride(player);
+            _overrideGroup = HapbeatClient.NormalizeOverride(group);
+
             _client = CreateClient();
+            _client.SetAddressOverride(_overridePlayer, _overrideGroup);
             _isInitialized = true;
 
             // Auto-connect on startup
@@ -788,7 +859,7 @@ namespace Hapbeat
                     Log($"Ready ({mode}).");
                     _lastPingTime = Time.realtimeSinceStartup;
                     // Notify devices that app is connected
-                    client.SendConnectStatus(true, DefaultGroup, AppName, SystemInfo.deviceName);
+                    client.SendConnectStatus(true, EffectiveGroup, AppName, SystemInfo.deviceName);
                     OnConnected?.Invoke();
                 }
                 else
@@ -844,7 +915,7 @@ namespace Hapbeat
             {
                 try
                 {
-                    _client.SendConnectStatus(false, DefaultGroup, AppName, SystemInfo.deviceName);
+                    _client.SendConnectStatus(false, EffectiveGroup, AppName, SystemInfo.deviceName);
                 }
                 catch { /* shutdown race — ignore */ }
             }

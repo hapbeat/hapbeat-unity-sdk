@@ -84,8 +84,28 @@ namespace Hapbeat.Editor
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("group"),
-                new GUIContent("Group ID",
-                    "Target group. 0 = all devices, 1–254 = specific group (multiplayer)."));
+                new GUIContent("Group ID (display only)",
+                    "Shown in the device's CONNECT_STATUS (OLED display) only. Does NOT " +
+                    "affect Play/Stop/Stream routing — see Addressing below for that."));
+
+            // ── Addressing ────────────────────────────────────────────
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("Addressing", EditorStyles.boldLabel);
+            EditorGUILayout.HelpBox(
+                "-1 = disabled (the EventMap entry's target string is sent as-is).\n" +
+                "1-99 = force every outgoing command to that player / group, " +
+                "regardless of what each EventMap entry's target says. Use this to " +
+                "deploy one identical build to many HMDs, each bound to its own Hapbeat " +
+                "(HapbeatManager.SetAddressOverride can also change this at runtime).",
+                MessageType.None);
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("overridePlayer"),
+                new GUIContent("Override Player", "Forced player number applied to every outgoing command. -1 = disabled."));
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("overrideGroup"),
+                new GUIContent("Override Group", "Forced group number applied to every outgoing command. -1 = disabled."));
 
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("App Info", EditorStyles.boldLabel);

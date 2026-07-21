@@ -140,6 +140,10 @@ namespace Hapbeat.Editor
             {
                 EditorGUILayout.LabelField("Mode", manager.IsBroadcast ? "Broadcast" : "Unicast (Bridge)");
                 EditorGUILayout.LabelField("Default group", manager.DefaultGroup.ToString());
+                EditorGUILayout.LabelField("Address override",
+                    manager.OverridePlayer >= 1 || manager.OverrideGroup >= 1
+                        ? $"player={manager.OverridePlayer}, group={manager.OverrideGroup} (active — overrides EventMap targets)"
+                        : "disabled");
                 EditorGUILayout.LabelField("Time offset", $"{manager.TimeOffsetUs} μs");
             }
 

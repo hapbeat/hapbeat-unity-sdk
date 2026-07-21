@@ -56,7 +56,7 @@ namespace Hapbeat
             {
                 string streaming = mgr.IsStreaming ? " [STREAMING]" : "";
                 _statusText.text = mgr.IsConnected
-                    ? $"Status: Connected (group={mgr.DefaultGroup}){streaming}"
+                    ? $"Status: Connected (group={mgr.EffectiveGroup}){streaming}"
                     : "Status: Disconnected";
             }
 

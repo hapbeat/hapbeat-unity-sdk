@@ -1892,6 +1892,7 @@ GameObject:
   - component: {fileID: 299213035}
   - component: {fileID: 299213037}
   - component: {fileID: 299213036}
+  - component: {fileID: 290144233187}
   m_Layer: 0
   m_Name: StreamPanelHud
   m_TagString: Untagged
@@ -1943,6 +1944,18 @@ MonoBehaviour:
   _statusText: {fileID: 716075717}
   _toggleKey: 1
   _verboseLog: 0
+--- !u!114 &290144233187
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 299213034}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5d51f327ab7f66bc7a28f5d9ab5a9fdd, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.Showcase.AddressOverrideDemo
 --- !u!114 &299213037
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3805,7 +3818,9 @@ MonoBehaviour:
       Tab | lock/unlock cursor (before
       slider use)
 
-      Slider | realtime gain/pan modulation'
+      Slider | realtime gain/pan modulation
+
+      Panel (bottom-right) | player/group address override'
     unlockCursorOnEnter: 1
   - label: Z5_ChargeShot
     root: {fileID: 296434734}

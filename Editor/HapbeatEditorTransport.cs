@@ -80,6 +80,13 @@ namespace Hapbeat.Editor
             {
                 _client = new HapbeatClient();
                 _client.OpenBroadcast(port);
+                // Mirror HapbeatConfig's address override so "▶ Test Play" previews
+                // the same target a running build would actually send — otherwise
+                // Edit-mode tests would silently ignore overridePlayer/overrideGroup
+                // while a deployed build (via HapbeatManager) honors it.
+                _client.SetAddressOverride(
+                    cfg != null ? HapbeatClient.NormalizeOverride(cfg.overridePlayer) : -1,
+                    cfg != null ? HapbeatClient.NormalizeOverride(cfg.overrideGroup) : -1);
                 EditorApplication.update -= TickStream;
                 EditorApplication.update += TickStream;
                 LastOpenError = null;

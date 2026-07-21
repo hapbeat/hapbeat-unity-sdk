@@ -7,6 +7,21 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ---
 
+## [Unreleased]
+
+### Added（追加）
+
+- **Address Override（player/group の実行時上書き）** — 同一ビルドを複数 HMD に配布し、各端末を自分の Hapbeat に 1:1 で向けたいユースケース向け。
+  - `HapbeatConfig` に `Addressing` セクション (`overridePlayer` / `overrideGroup`、-1 = 無効・1-99 = 強制適用) を追加。設定すると EventMap 側の target 文字列に関わらず、全ての送信 (Play/Stop/StopAll/StreamBegin) にこの player/group が強制適用される。
+  - `HapbeatManager.SetAddressOverride(int player, int group, bool persist = false)` を追加。実行時に override を切り替え可能。`persist: true` で PlayerPrefs に保存し、次回起動時も復元される。
+  - `HapbeatManager.OverridePlayer` / `OverrideGroup` / `EffectiveGroup` を公開プロパティとして追加（`EffectiveGroup` は CONNECT_STATUS の OLED 表示用グループを override 適用後の値で返す）。
+  - `HapbeatClient.ResolveTarget(string target, int overridePlayer, int overrideGroup)` を追加（static、UnityEngine 非依存の純粋関数）。target 文字列の `player_<N>` / `group_<M>` セグメントを override 値で置換・挿入する。
+  - Showcase サンプルに `AddressOverrideDemo` (Z4_Stream ゾーン) を追加。+/- ステッパーで player/group を選び Apply → `SetAddressOverride(..., persist: true)` を呼ぶ実演 UI。
+  - `Tests/Runtime/ResolveTargetTests.cs` — `ResolveTarget` のユニットテストを追加。
+  - Editor: Settings ウィンドウに Addressing フィールド、Manager Inspector に現在の override 状態表示、Editor Test Play (`HapbeatEditorTransport`) が config の override をミラーして再生プレビューに反映するよう対応。
+
+---
+
 ## [0.2.1] - 2026-05-30
 
 v0.2.0 直後に発覚した sample アップグレード時の compile error と、EventMap の使い勝手改善をまとめた hotfix リリース。
