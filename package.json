@@ -23,6 +23,11 @@
       "displayName": "XR Helpers",
       "description": "Optional helpers for XR Interaction Toolkit (HapbeatXRGrabFilter etc.). Import only when XRI is in your project.",
       "path": "Samples~/XriHelpers"
+    },
+    {
+      "displayName": "VR Verification",
+      "description": "Minimal XR rig for on-device verification (address override, test haptics). No XRI dependency.",
+      "path": "Samples~/VRVerification"
     }
   ],
   "author": {
