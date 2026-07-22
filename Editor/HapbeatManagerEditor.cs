@@ -190,66 +190,25 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Always-on "Address Override (this device)" box: shows the per-device override
-        /// actually saved in PlayerPrefs and, when in Play mode, the value currently
-        /// driving routing (<see cref="HapbeatManager.OverridePlayer"/> / <c>OverrideGroup</c>).
+        /// Compact "Address Override (this device)" box: the two always-on status
+        /// rows (saved / active), shared with <see cref="HapbeatRuntimeStatusWindow"/>
+        /// via <see cref="HapbeatAddressOverrideStatusGUI"/>, plus a button to open
+        /// that window for the full view (including "Clear Saved Override", now
+        /// consolidated there instead of duplicated inline).
         /// <para>
         /// Available in both Edit and Play mode (unlike the rest of this section's
-        /// runtime-only rows) since the saved override can be inspected/cleared without
-        /// entering Play. Both rows are drawn unconditionally (never inserted/removed) so
-        /// this box never shifts the rest of the inspector's layout — only the text and
-        /// the "Clear Saved Override" button's enabled state change.
+        /// runtime-only rows) since the saved override can be inspected without
+        /// entering Play. Rows are drawn unconditionally (never inserted/removed) so
+        /// this box never shifts the rest of the inspector's layout — only the text changes.
         /// </para>
         /// </summary>
         private void DrawAddressOverrideBox(HapbeatManager manager)
         {
-            EditorGUILayout.LabelField("Address Override (this device)", EditorStyles.boldLabel);
+            HapbeatAddressOverrideStatusGUI.DrawCompact(manager);
 
-            bool hasSaved = HapbeatManager.TryGetPersistedAddressOverride(out int savedPlayer, out int savedGroup);
-
-            string savedText = hasSaved
-                ? $"Saved on this device: player={FormatOverrideValue(savedPlayer, "(none)")}, group={FormatOverrideValue(savedGroup, "(none)")}"
-                : "Saved on this device: none";
-            EditorGUILayout.LabelField(savedText, EditorStyles.miniLabel);
-
-            string activeText;
-            if (Application.isPlaying && manager != null)
-            {
-                activeText = $"Active (runtime): player={FormatOverrideValue(manager.OverridePlayer, "disabled")}, " +
-                             $"group={FormatOverrideValue(manager.OverrideGroup, "disabled")}";
-            }
-            else
-            {
-                activeText = "Active (runtime): — (enter Play Mode)";
-            }
-            EditorGUILayout.LabelField(activeText, EditorStyles.miniLabel);
-
-            EditorGUI.BeginDisabledGroup(!hasSaved);
-            if (GUILayout.Button("Clear Saved Override"))
-            {
-                if (Application.isPlaying && manager != null)
-                {
-                    // Runtime instance available — go through the manager so the
-                    // live override, connected client, and CONNECT_STATUS push all
-                    // update together (same reflection path SetAddressOverride uses).
-                    manager.ClearPersistedAddressOverride();
-                }
-                else
-                {
-                    // No running instance to reflect through — just delete the
-                    // PlayerPrefs keys directly using the same public constants.
-                    PlayerPrefs.DeleteKey(HapbeatManager.PlayerPrefsKeyOverridePlayer);
-                    PlayerPrefs.DeleteKey(HapbeatManager.PlayerPrefsKeyOverrideGroup);
-                    PlayerPrefs.Save();
-                }
-                Repaint();
-            }
-            EditorGUI.EndDisabledGroup();
+            if (GUILayout.Button("Open Runtime Status"))
+                HapbeatRuntimeStatusWindow.ShowWindow();
         }
-
-        /// <summary>-1 (disabled) renders as <paramref name="disabledLabel"/>; otherwise the raw number.</summary>
-        private static string FormatOverrideValue(int value, string disabledLabel)
-            => value >= 1 ? value.ToString() : disabledLabel;
 
         // ── Device list section ─────────────────────────────────────────
 

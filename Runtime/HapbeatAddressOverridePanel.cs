@@ -71,6 +71,12 @@ namespace Hapbeat
 
         private bool _built;
 
+        // The Canvas this panel builds at runtime. Kept as a field (rather than
+        // relying on transform.Find) because Build() may re-parent it to the
+        // scene root — see the nested-Canvas guard below — which decouples it
+        // from this component's own transform hierarchy.
+        private GameObject _canvasGo;
+
         private void OnEnable()
         {
             if (!_built)
@@ -78,6 +84,12 @@ namespace Hapbeat
                 Build();
                 _built = true;
             }
+
+            // Build() may have moved the Canvas out from under this GameObject
+            // (nested-Canvas guard) — re-sync its active state explicitly since
+            // Unity no longer does that for us via the hierarchy.
+            if (_canvasGo != null)
+                _canvasGo.SetActive(true);
 
             // Reflect whatever is currently active (a PlayerPrefs-restored value
             // from a previous session, or disabled) so the editing steppers start
@@ -90,6 +102,26 @@ namespace Hapbeat
             }
 
             RefreshLabels();
+        }
+
+        private void OnDisable()
+        {
+            // Mirror the disable — otherwise a re-parented Canvas (see Build())
+            // keeps rendering after this component is disabled, since it's no
+            // longer a child that Unity disables automatically.
+            if (_canvasGo != null)
+                _canvasGo.SetActive(false);
+        }
+
+        private void OnDestroy()
+        {
+            // Same reasoning as OnDisable: once re-parented to the scene root,
+            // the Canvas no longer dies with this GameObject on its own.
+            if (_canvasGo != null)
+            {
+                Destroy(_canvasGo);
+                _canvasGo = null;
+            }
         }
 
         private void Build()
@@ -106,6 +138,24 @@ namespace Hapbeat
             canvasGo.transform.SetParent(transform, false);
             var canvas = canvasGo.AddComponent<Canvas>();
             canvas.sortingOrder = 50;
+
+            // Nested-Canvas guard: a child Canvas inherits its parent Canvas's
+            // render settings and cannot have its own RenderMode/anchoring — so
+            // if this panel is attached under another Canvas (e.g. a screen-space
+            // HUD), our ScreenSpaceOverlay/WorldSpace choice and screen anchors
+            // above would silently be ignored and the panel would render wherever
+            // the ancestor Canvas positions it. Detect that and re-parent our
+            // Canvas to the scene root so it becomes independent, as intended.
+            var ancestorCanvas = GetComponentInParent<Canvas>(true);
+            if (ancestorCanvas != null && ancestorCanvas.gameObject != canvasGo)
+            {
+                Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: found under an ancestor Canvas " +
+                    $"(\"{ancestorCanvas.name}\") — moved its own Canvas (\"{canvasGo.name}\") to the scene " +
+                    "root so it can render as an independent RenderMode/anchor instead of inheriting the " +
+                    "parent Canvas's settings.", this);
+                canvasGo.transform.SetParent(null, false);
+            }
+            _canvasGo = canvasGo;
 
             bool worldSpace = _space == HapbeatAddressOverridePanelSpace.WorldSpace;
             if (worldSpace)

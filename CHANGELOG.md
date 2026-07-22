@@ -25,6 +25,13 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - `HapbeatAddressOverridePanel` (Runtime) — Showcase サンプルの `AddressOverrideDemo` 実装を SDK 本体に昇格。`ScreenSpaceOverlay` / `WorldSpace`（VR コントローラー等への 3D パネル取り付け用）の 2 レイアウトに対応し、`PlayerUp` / `PlayerDown` / `GroupUp` / `GroupDown` / `Apply` を public メソッドとして公開（外部コントローラー / UnityEvent から配線可能）。`AddressOverrideDemo` はこのクラスの空派生に置き換え。
 - `Tests/Runtime/AddressPlaceholderTests.cs` — `ApplyAddressPlaceholders` のユニットテストを追加。
 - Runtime asmdef (`Hapbeat.Runtime.asmdef`) に `UnityEngine.UI` 参照、`package.json` に `com.unity.ugui` 依存を追加（`HapbeatAddressOverridePanel` の uGUI 利用を UPM 配布先プロジェクトで確実に解決するため）。
+- 新サンプル `VRVerification`（`Samples~/VRVerification/`）— Quest 等 VR 実機での address-override 検証用最小 XR リグ。XRI に依存せず、code-defined InputAction（`<XRHMD>/centerEyePosition` 等）で HMD 姿勢をカメラに適用し、コントローラーボタンで world-space `HapbeatAddressOverridePanel` の player/group ステッパー + Apply + テスト再生（`sample-kit.sine_100hz`）を操作する。デスクトップ検証用にキーボードフォールバック（P/O, G/H, Space, T）も同アクションに追加バインド。
+- **`Hapbeat > Open Runtime Status`** ウィンドウ (`HapbeatRuntimeStatusWindow`) を追加。1 画面で Address Override（保存値/実行時値 + Clear ボタン）、App Name（config テンプレートとプレースホルダー解決後に OLED へ送られる実文字列のプレビュー + 文字数）、Connection（Play 中のみ: 接続状態 / broadcast・unicast / ポート / AliveDeviceCount / 発見済みデバイス一覧）を常時確認できる。`HapbeatManagerEditor` の Address Override ボックスはこのウィンドウを開くボタン付きのコンパクト表示に整理し、両者の描画ロジックは新設の `HapbeatAddressOverrideStatusGUI`（internal 共有ヘルパー）に統合して重複を排除。
+
+### Fixed（修正）
+
+- **`HapbeatAddressOverridePanel` のネスト Canvas バグ** — 自身が別の Canvas（例: 既存のスクリーンスペース HUD）の子として配置されている場合、生成した Canvas も入れ子になり、`RenderMode` やスクリーンアンカー設定が Unity の仕様で無視され、意図しない位置（親パネル基準）に描画されていた問題を修正。`Build()` が祖先 Canvas の有無を検出し、検出時は自分の Canvas をシーンルートへ退避して独立させる。退避後も `OnEnable`/`OnDisable`/`OnDestroy` でこの Canvas の表示・生存をコンポーネント自身と同期する。
+  - Showcase サンプルの `AddressOverrideDemo`（Z4_Stream ゾーン）が実際にこの構成（`StreamPanelHud` → `StreamCanvas` の子として配置）になっていたため、`Samples~/Showcase/Showcase.unity` を修正し、`Z4_Stream` 直下（`StreamCanvas` の外）の独立 GameObject に配線し直した。
 
 ### Changed（変更）
 
