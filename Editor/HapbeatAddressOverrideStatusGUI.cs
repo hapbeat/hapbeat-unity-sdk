@@ -18,6 +18,32 @@ namespace Hapbeat.Editor
     /// </summary>
     internal static class HapbeatAddressOverrideStatusGUI
     {
+        // ── Value color highlighting ────────────────────────────────────
+        //
+        // Dynamic values (saved/active player-group numbers, connection info,
+        // resolved appName, etc.) are wrapped in a rich-text <color> tag so they
+        // stand out from their plain-white/black labels. EditorStyles.miniLabel's
+        // richText flag isn't guaranteed across Unity versions/skins, so a
+        // dedicated rich-text copy is used for any row that colorizes a value.
+        // Hex differs per skin for readable contrast: warm yellow on the dark
+        // Pro skin, darker amber-brown on the light Personal skin.
+        private static GUIStyle s_miniLabelRichText;
+
+        private static GUIStyle MiniLabelRichText
+        {
+            get
+            {
+                if (s_miniLabelRichText == null)
+                    s_miniLabelRichText = new GUIStyle(EditorStyles.miniLabel) { richText = true };
+                return s_miniLabelRichText;
+            }
+        }
+
+        private static string ValueColorHex => EditorGUIUtility.isProSkin ? "E5C069" : "8A5A00";
+
+        /// <summary>Wraps <paramref name="value"/> in the shared value-highlight color tag.</summary>
+        public static string Colorize(string value) => $"<color=#{ValueColorHex}>{value}</color>";
+
         /// <summary>-1 (disabled) renders as <paramref name="disabledLabel"/>; otherwise the raw number.</summary>
         public static string FormatOverrideValue(int value, string disabledLabel)
             => value >= 1 ? value.ToString() : disabledLabel;
@@ -49,9 +75,10 @@ namespace Hapbeat.Editor
         {
             bool hasSaved = HapbeatManager.TryGetPersistedAddressOverride(out int savedPlayer, out int savedGroup);
             string savedText = hasSaved
-                ? $"Saved on this device: player={FormatOverrideValue(savedPlayer, "(none)")}, group={FormatOverrideValue(savedGroup, "(none)")}"
+                ? $"Saved on this device: player={Colorize(FormatOverrideValue(savedPlayer, "(none)"))}, " +
+                  $"group={Colorize(FormatOverrideValue(savedGroup, "(none)"))}"
                 : "Saved on this device: none";
-            EditorGUILayout.LabelField(savedText, EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(savedText, MiniLabelRichText);
         }
 
         public static void DrawActiveRow(HapbeatManager manager)
@@ -59,14 +86,14 @@ namespace Hapbeat.Editor
             string activeText;
             if (Application.isPlaying && manager != null)
             {
-                activeText = $"Active (runtime): player={FormatOverrideValue(manager.OverridePlayer, "disabled")}, " +
-                             $"group={FormatOverrideValue(manager.OverrideGroup, "disabled")}";
+                activeText = $"Active (runtime): player={Colorize(FormatOverrideValue(manager.OverridePlayer, "disabled"))}, " +
+                             $"group={Colorize(FormatOverrideValue(manager.OverrideGroup, "disabled"))}";
             }
             else
             {
                 activeText = "Active (runtime): — (enter Play Mode)";
             }
-            EditorGUILayout.LabelField(activeText, EditorStyles.miniLabel);
+            EditorGUILayout.LabelField(activeText, MiniLabelRichText);
         }
 
         /// <summary>Draws the "Clear Saved Override" button, disabled when there's nothing saved.

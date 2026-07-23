@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
-namespace Hapbeat.Samples.VRVerification
+namespace Hapbeat.Samples.VRBasicExample
 {
     /// <summary>
     /// Minimal on-device VR verification rig. Reads the HMD pose via
@@ -29,8 +29,8 @@ namespace Hapbeat.Samples.VRVerification
     /// <item>Left Trigger / Keyboard T — test haptic only (no Apply)</item>
     /// </list>
     /// </summary>
-    [AddComponentMenu("Hapbeat/Samples/VR Verification Controller")]
-    public class VRVerificationController : MonoBehaviour
+    [AddComponentMenu("Hapbeat/Samples/VR Basic Example Controller")]
+    public class VRBasicExampleController : MonoBehaviour
     {
         /// <summary>Standard sample-kit event (DEC-040) used as the test haptic.</summary>
         private const string TestEventId = "sample-kit.sine_100hz";
@@ -100,14 +100,14 @@ namespace Hapbeat.Samples.VRVerification
         private void BuildHmdPoseActions()
         {
             _hmdPositionAction = new InputAction(
-                name: "VRVerification/HmdPosition",
+                name: "VRBasicExample/HmdPosition",
                 type: InputActionType.Value,
                 binding: "<XRHMD>/centerEyePosition",
                 expectedControlType: "Vector3");
             _hmdPositionAction.Enable();
 
             _hmdRotationAction = new InputAction(
-                name: "VRVerification/HmdRotation",
+                name: "VRBasicExample/HmdRotation",
                 type: InputActionType.Value,
                 binding: "<XRHMD>/centerEyeRotation",
                 expectedControlType: "Quaternion");
@@ -117,7 +117,7 @@ namespace Hapbeat.Samples.VRVerification
         private void BuildRightHandActions()
         {
             _rightPlayerUpAction = new InputAction(
-                name: "VRVerification/RightPlayerUp",
+                name: "VRBasicExample/RightPlayerUp",
                 type: InputActionType.Button,
                 binding: "<XRController>{RightHand}/primaryButton");
             _rightPlayerUpAction.AddBinding("<Keyboard>/p");
@@ -125,7 +125,7 @@ namespace Hapbeat.Samples.VRVerification
             _rightPlayerUpAction.Enable();
 
             _rightPlayerDownAction = new InputAction(
-                name: "VRVerification/RightPlayerDown",
+                name: "VRBasicExample/RightPlayerDown",
                 type: InputActionType.Button,
                 binding: "<XRController>{RightHand}/secondaryButton");
             _rightPlayerDownAction.AddBinding("<Keyboard>/o");
@@ -133,7 +133,7 @@ namespace Hapbeat.Samples.VRVerification
             _rightPlayerDownAction.Enable();
 
             _rightApplyTestAction = new InputAction(
-                name: "VRVerification/RightApplyAndTest",
+                name: "VRBasicExample/RightApplyAndTest",
                 type: InputActionType.Button,
                 binding: "<XRController>{RightHand}/triggerPressed");
             _rightApplyTestAction.AddBinding("<Keyboard>/space");
@@ -144,7 +144,7 @@ namespace Hapbeat.Samples.VRVerification
         private void BuildLeftHandActions()
         {
             _leftGroupUpAction = new InputAction(
-                name: "VRVerification/LeftGroupUp",
+                name: "VRBasicExample/LeftGroupUp",
                 type: InputActionType.Button,
                 binding: "<XRController>{LeftHand}/primaryButton");
             _leftGroupUpAction.AddBinding("<Keyboard>/g");
@@ -152,7 +152,7 @@ namespace Hapbeat.Samples.VRVerification
             _leftGroupUpAction.Enable();
 
             _leftGroupDownAction = new InputAction(
-                name: "VRVerification/LeftGroupDown",
+                name: "VRBasicExample/LeftGroupDown",
                 type: InputActionType.Button,
                 binding: "<XRController>{LeftHand}/secondaryButton");
             _leftGroupDownAction.AddBinding("<Keyboard>/h");
@@ -160,7 +160,7 @@ namespace Hapbeat.Samples.VRVerification
             _leftGroupDownAction.Enable();
 
             _leftTestOnlyAction = new InputAction(
-                name: "VRVerification/LeftTestOnly",
+                name: "VRBasicExample/LeftTestOnly",
                 type: InputActionType.Button,
                 binding: "<XRController>{LeftHand}/triggerPressed");
             _leftTestOnlyAction.AddBinding("<Keyboard>/t");
@@ -246,7 +246,7 @@ namespace Hapbeat.Samples.VRVerification
             {
                 if (!_loggedMissingManager)
                 {
-                    Debug.LogWarning("[Hapbeat] VRVerificationController: HapbeatManager.Instance is null — " +
+                    Debug.LogWarning("[Hapbeat] VRBasicExampleController: HapbeatManager.Instance is null — " +
                         "cannot play test haptic. Ensure a GameObject with HapbeatManager exists in the scene.");
                     _loggedMissingManager = true;
                 }
@@ -265,7 +265,7 @@ namespace Hapbeat.Samples.VRVerification
             const float worldWidth = 0.7f;
             const float worldHeight = 0.24f;
 
-            var canvasGo = new GameObject("VRVerificationGuideCanvas");
+            var canvasGo = new GameObject("VRBasicExampleGuideCanvas");
             canvasGo.transform.SetParent(transform, false);
             var canvas = canvasGo.AddComponent<Canvas>();
             canvas.renderMode = RenderMode.WorldSpace;

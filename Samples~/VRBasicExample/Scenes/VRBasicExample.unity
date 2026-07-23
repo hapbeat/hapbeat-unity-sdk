@@ -208,7 +208,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 9fef8f2b7015425848b48a29b4906785, type: 3}
   m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.VRVerification.VRVerificationController
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.VRBasicExample.VRBasicExampleController
   _panel: {fileID: 300004}
   _cameraTransform: {fileID: 200102}
 --- !u!1 &200100

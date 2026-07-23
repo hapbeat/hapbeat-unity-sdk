@@ -27,10 +27,11 @@ namespace Hapbeat
     /// Demonstrates the "one identical build, many HMDs" flow: +/- steppers
     /// pick a Player / Group number (1..99, or below 1 = disabled), Apply
     /// calls <see cref="HapbeatManager.SetAddressOverride(int, int, bool)"/>
-    /// with <c>persist: true</c>, and the status text shows both the value
-    /// currently being edited and the value actually applied — including a
-    /// live preview of what <c>player_1/pos_chest</c> resolves to via
-    /// <see cref="HapbeatClient.ResolveTarget(string, int, int)"/>.
+    /// with <c>persist: true</c>, and a single status line shows a live
+    /// preview of what <c>player_1/pos_chest</c> resolves to via
+    /// <see cref="HapbeatClient.ResolveTarget(string, int, int)"/> for the
+    /// currently-edited values — highlighted while it differs from what's
+    /// actually applied, plain once Apply catches it up.
     /// </para>
     ///
     /// <para>
@@ -45,6 +46,14 @@ namespace Hapbeat
     {
         private const string PreviewTarget = "player_1/pos_chest";
 
+        // Player/Group value labels are always highlighted in this color so
+        // they read as "the variable part" at a glance — distinct from their
+        // white "Player:"/"Group:" labels. Also used for the status line while
+        // the edited values differ from what's actually applied (see
+        // RefreshLabels), so the same color consistently means
+        // "edited/not-yet-applied" throughout the panel.
+        private static readonly Color s_variableColor = new Color(1f, 0.85f, 0.2f);
+
         [Header("Layout")]
         [Tooltip("ScreenSpaceOverlay = fixed 2D HUD (top-center). WorldSpace = 3D panel parented to this GameObject (e.g. for VR).")]
         [SerializeField]
@@ -52,7 +61,7 @@ namespace Hapbeat
 
         [Tooltip("World-space panel size in meters (ignored in ScreenSpaceOverlay). Default ~0.5m wide.")]
         [SerializeField]
-        private Vector2 _worldSize = new Vector2(0.5f, 0.28f);
+        private Vector2 _worldSize = new Vector2(0.5f, 0.18f);
 
         [Tooltip("World-space local position offset relative to this GameObject (ignored in ScreenSpaceOverlay).")]
         [SerializeField]
@@ -190,40 +199,68 @@ namespace Hapbeat
             {
                 // Screen-space: top-center, fixed size, doesn't overlap other
                 // top-anchored HUD elements (guide text top-left, connection
-                // status top-right).
+                // status top-right). Kept small/compact so it never covers them.
                 panelRt.anchorMin = new Vector2(0.5f, 1f);
                 panelRt.anchorMax = new Vector2(0.5f, 1f);
                 panelRt.pivot = new Vector2(0.5f, 1f);
-                panelRt.sizeDelta = new Vector2(340f, 190f);
+                panelRt.sizeDelta = new Vector2(300f, 110f);
                 // Top-anchored pivot: y is measured downward from the anchor, so a
                 // small negative offset nudges the panel just below the screen edge.
                 panelRt.anchoredPosition = new Vector2(0f, -8f);
             }
 
             var layout = panel.AddComponent<VerticalLayoutGroup>();
-            layout.padding = new RectOffset(12, 12, 10, 10);
-            layout.spacing = 6f;
+            layout.padding = new RectOffset(10, 10, 6, 6);
+            layout.spacing = 4f;
             layout.childControlWidth = true;
             layout.childControlHeight = true;
             layout.childForceExpandWidth = true;
             layout.childForceExpandHeight = false;
 
-            CreateText(panel.transform, "Title", "Address Override", 16, FontStyle.Bold, TextAnchor.MiddleLeft);
+            var titleText = CreateText(panel.transform, "Title", "Address Override", 11, FontStyle.Bold, TextAnchor.MiddleLeft);
+            var titleLayoutElement = titleText.gameObject.AddComponent<LayoutElement>();
+            titleLayoutElement.minHeight = 14f;
+            titleLayoutElement.preferredHeight = 14f;
 
-            _playerValueText = CreateStepperRow(panel.transform, "Player", PlayerDown, PlayerUp);
-            _groupValueText = CreateStepperRow(panel.transform, "Group", GroupDown, GroupUp);
+            // Content row: Player/Group steppers stacked on the left, a single
+            // Apply button spanning both rows' height on the right (roughly
+            // square, not a full-width bar) — keeps the whole panel short.
+            var contentRow = new GameObject("ContentRow", typeof(RectTransform));
+            contentRow.transform.SetParent(panel.transform, false);
+            var contentLayout = contentRow.AddComponent<HorizontalLayoutGroup>();
+            contentLayout.spacing = 8f;
+            contentLayout.childControlWidth = true;
+            contentLayout.childControlHeight = true;
+            contentLayout.childForceExpandWidth = false;
+            contentLayout.childForceExpandHeight = false;
 
-            var applyButton = CreateButton(panel.transform, "ApplyButton", "Apply");
+            var steppersColumn = new GameObject("SteppersColumn", typeof(RectTransform));
+            steppersColumn.transform.SetParent(contentRow.transform, false);
+            var steppersLayout = steppersColumn.AddComponent<VerticalLayoutGroup>();
+            steppersLayout.spacing = 4f;
+            steppersLayout.childControlWidth = true;
+            steppersLayout.childControlHeight = true;
+            steppersLayout.childForceExpandWidth = true;
+            steppersLayout.childForceExpandHeight = false;
+
+            _playerValueText = CreateStepperRow(steppersColumn.transform, "Player", PlayerDown, PlayerUp);
+            _groupValueText = CreateStepperRow(steppersColumn.transform, "Group", GroupDown, GroupUp);
+
+            var applyButton = CreateButton(contentRow.transform, "ApplyButton", "Apply");
+            var applyLayoutElement = applyButton.GetComponent<LayoutElement>();
+            applyLayoutElement.preferredWidth = 60f;
+            applyLayoutElement.preferredHeight = 56f; // matches the two stepper rows' combined height (26 + 4 spacing + 26)
             applyButton.onClick.AddListener(Apply);
 
-            // Fixed-height status block (2 lines reserved) so editing/applying
-            // never shifts the panel size — see workspace layout-shift rule.
+            // Fixed-height, single-line status so editing/applying never shifts
+            // the panel size — see workspace layout-shift rule. Never wraps
+            // (Overflow, not Wrap) so it stays exactly one line.
             _statusText = CreateText(panel.transform, "Status", "", 12, FontStyle.Normal, TextAnchor.UpperLeft);
-            _statusText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            _statusText.horizontalOverflow = HorizontalWrapMode.Overflow;
             _statusText.verticalOverflow = VerticalWrapMode.Overflow;
             var statusLayoutElement = _statusText.gameObject.AddComponent<LayoutElement>();
-            statusLayoutElement.minHeight = 34f;
-            statusLayoutElement.preferredHeight = 34f;
+            statusLayoutElement.minHeight = 16f;
+            statusLayoutElement.preferredHeight = 16f;
         }
 
         private Text CreateStepperRow(Transform parent, string label, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc)
@@ -246,6 +283,7 @@ namespace Hapbeat
             CreateSmallButton(row.transform, "Dec", "-", onDec);
 
             var valueText = CreateText(row.transform, "Value", "-", 13, FontStyle.Bold, TextAnchor.MiddleCenter);
+            valueText.color = s_variableColor; // the variable part — always highlighted, unlike the "Player:"/"Group:" label
             var valueLayoutElement = valueText.gameObject.AddComponent<LayoutElement>();
             valueLayoutElement.preferredWidth = 48f;
 
@@ -360,15 +398,18 @@ namespace Hapbeat
             int appliedGroup = mgr != null ? mgr.OverrideGroup : -1;
 
             string editingResolved = HapbeatClient.ResolveTarget(PreviewTarget, _editingPlayer, _editingGroup);
-            string appliedResolved = HapbeatClient.ResolveTarget(PreviewTarget, appliedPlayer, appliedGroup);
+
+            // A single status line showing where the currently-*edited* values
+            // would resolve to. Colored yellow (same as the variable labels)
+            // while the edited values haven't been Applied yet, white once they
+            // match what's actually active — never a second line, so Apply
+            // never shifts the panel size (see workspace layout-shift rule).
+            bool pendingApply = _editingPlayer != appliedPlayer || _editingGroup != appliedGroup;
 
             if (_statusText != null)
             {
-                _statusText.text =
-                    $"editing: player={LabelFor(_editingPlayer)} group={LabelFor(_editingGroup)}  |  " +
-                    $"例: {PreviewTarget} → {editingResolved}\n" +
-                    $"applied: player={LabelFor(appliedPlayer)} group={LabelFor(appliedGroup)}  |  " +
-                    $"例: {PreviewTarget} → {appliedResolved}";
+                _statusText.text = $"{PreviewTarget} → {editingResolved}";
+                _statusText.color = pendingApply ? s_variableColor : Color.white;
             }
         }
 

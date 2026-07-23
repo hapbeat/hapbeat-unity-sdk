@@ -92,11 +92,26 @@ namespace Hapbeat.Editor
                 preview = Application.productName;
             }
 
-            EditorGUILayout.LabelField($"On device (OLED): \"{preview}\"", EditorStyles.miniLabel);
             EditorGUILayout.LabelField(
-                $"   {(preview?.Length ?? 0)} / {HapbeatConfig.MaxAppNameLength} chars " +
-                "— longer strings are truncated by the protocol.",
-                EditorStyles.miniLabel);
+                $"On device (OLED): \"{HapbeatAddressOverrideStatusGUI.Colorize(preview)}\"",
+                RichTextMiniLabel);
+            EditorGUILayout.LabelField(
+                $"   {HapbeatAddressOverrideStatusGUI.Colorize((preview?.Length ?? 0).ToString())} / " +
+                $"{HapbeatConfig.MaxAppNameLength} chars — longer strings are truncated by the protocol.",
+                RichTextMiniLabel);
+        }
+
+        // Rich-text copy of EditorStyles.miniLabel, shared by every row in this
+        // window that colorizes a dynamic value via HapbeatAddressOverrideStatusGUI.Colorize.
+        private static GUIStyle s_richTextMiniLabel;
+        private static GUIStyle RichTextMiniLabel
+        {
+            get
+            {
+                if (s_richTextMiniLabel == null)
+                    s_richTextMiniLabel = new GUIStyle(EditorStyles.miniLabel) { richText = true };
+                return s_richTextMiniLabel;
+            }
         }
 
         // ── Connection ───────────────────────────────────────────────────
@@ -115,17 +130,20 @@ namespace Hapbeat.Editor
                 return;
             }
 
-            EditorGUILayout.LabelField("Connected", isConnected.ToString(), EditorStyles.miniLabel);
+            EditorGUILayout.LabelField("Connected", HapbeatAddressOverrideStatusGUI.Colorize(isConnected.ToString()), RichTextMiniLabel);
 
             if (!isConnected)
                 return;
 
-            EditorGUILayout.LabelField("Mode", manager.IsBroadcast ? "broadcast" : "unicast", EditorStyles.miniLabel);
+            EditorGUILayout.LabelField("Mode",
+                HapbeatAddressOverrideStatusGUI.Colorize(manager.IsBroadcast ? "broadcast" : "unicast"), RichTextMiniLabel);
             // Port is read from the config asset (public field), not from the
             // internal HapbeatClient — this window only uses HapbeatManager's
             // public surface.
-            EditorGUILayout.LabelField("Port", config != null ? config.port.ToString() : "-", EditorStyles.miniLabel);
-            EditorGUILayout.LabelField("Alive devices", manager.AliveDeviceCount.ToString(), EditorStyles.miniLabel);
+            EditorGUILayout.LabelField("Port",
+                HapbeatAddressOverrideStatusGUI.Colorize(config != null ? config.port.ToString() : "-"), RichTextMiniLabel);
+            EditorGUILayout.LabelField("Alive devices",
+                HapbeatAddressOverrideStatusGUI.Colorize(manager.AliveDeviceCount.ToString()), RichTextMiniLabel);
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Discovered devices", EditorStyles.miniBoldLabel);
@@ -136,7 +154,7 @@ namespace Hapbeat.Editor
             else
             {
                 foreach (var device in manager.DiscoveredDevices)
-                    EditorGUILayout.LabelField($"  {device.name}", device.ipAddress, EditorStyles.miniLabel);
+                    EditorGUILayout.LabelField($"  {device.name}", HapbeatAddressOverrideStatusGUI.Colorize(device.ipAddress), RichTextMiniLabel);
             }
         }
     }

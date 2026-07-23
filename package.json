@@ -25,9 +25,9 @@
       "path": "Samples~/XriHelpers"
     },
     {
-      "displayName": "VR Verification",
-      "description": "Minimal XR rig for on-device verification (address override, test haptics). No XRI dependency.",
-      "path": "Samples~/VRVerification"
+      "displayName": "VR Basic Example",
+      "description": "Minimal VR (Quest) example for on-device verification (address override, test haptics). No XRI dependency.",
+      "path": "Samples~/VRBasicExample"
     }
   ],
   "author": {
