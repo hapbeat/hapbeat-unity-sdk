@@ -129,8 +129,10 @@ GameObject:
   m_Component:
   - component: {fileID: 100002}
   - component: {fileID: 100004}
+  - component: {fileID: 100006}
+  - component: {fileID: 100008}
   m_Layer: 0
-  m_Name: Hapbeat
+  m_Name: ConfigSceneController
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -164,6 +166,40 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatManager
   _config: {fileID: 0}
+--- !u!114 &100006
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 100000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9fef8f2b7015425848b48a29b4906785, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.VRConfigExample.VRConfigExampleController
+  _panel: {fileID: 300004}
+  _cameraTransform: {fileID: 200102}
+  _testTrigger: {fileID: 100008}
+  _returnSceneName:
+--- !u!114 &100008
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 100000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf86876cf7f5a4749a8d3693f9a68bbc, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatUnityEventTrigger
+  _eventMap: {fileID: 11400000, guid: b71252555cce42e08284ea99c06c681d, type: 2}
+  _entryId: 6824a77dfa804d25ac12d8cf59d10847
+  _triggerEnabled: 1
+  _cooldown: 0
+  _gainMultiplier: 1
+  _verboseLog: 0
 --- !u!1 &200000
 GameObject:
   m_ObjectHideFlags: 0
@@ -173,7 +209,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 200002}
-  - component: {fileID: 200004}
   m_Layer: 0
   m_Name: VRRig
   m_TagString: Untagged
@@ -197,20 +232,6 @@ Transform:
   - {fileID: 200102}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &200004
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 200000}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9fef8f2b7015425848b48a29b4906785, type: 3}
-  m_Name:
-  m_EditorClassIdentifier: Assembly-CSharp::Hapbeat.Samples.VRBasicExample.VRBasicExampleController
-  _panel: {fileID: 300004}
-  _cameraTransform: {fileID: 200102}
 --- !u!1 &200100
 GameObject:
   m_ObjectHideFlags: 0

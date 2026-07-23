@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -14,6 +15,20 @@ namespace Hapbeat
 
         /// <summary>3D panel parented to this GameObject — for VR controllers / world-attached menus.</summary>
         WorldSpace,
+    }
+
+    /// <summary>
+    /// Which stepper row (if any) an external controller currently has "focused" —
+    /// see <see cref="HapbeatAddressOverridePanel.SetFocusedField"/>. Used by
+    /// single-hand VR control schemes where only one row is adjustable at a time
+    /// (e.g. <c>VRConfigExampleController</c>).
+    /// </summary>
+    public enum HapbeatAddressOverrideFocusField
+    {
+        /// <summary>No row highlighted (default — both rows plain).</summary>
+        None,
+        Player,
+        Group,
     }
 
     /// <summary>
@@ -82,6 +97,21 @@ namespace Hapbeat
         private Text _playerValueText;
         private Text _groupValueText;
         private Text _statusText;
+
+        // Row background Images used to highlight the currently-focused row
+        // (see SetFocusedField). Transparent (Color.clear) by default — Color.clear
+        // is invisible, so callers that never call SetFocusedField (e.g. the
+        // Showcase AddressOverrideDemo) see no visual change at all.
+        private Image _playerRowImage;
+        private Image _groupRowImage;
+        private static readonly Color s_focusHighlightColor = new Color(1f, 0.85f, 0.2f, 0.35f);
+
+        // Apply button flash feedback (see Apply()/FlashApplyButton()).
+        private Image _applyButtonImage;
+        private Color _applyButtonBaseColor;
+        private Coroutine _applyFlashCoroutine;
+        private static readonly Color s_applyFlashColor = new Color(0.05f, 0.05f, 0.05f, 0.9f);
+        private const float ApplyFlashSeconds = 0.3f;
 
         private bool _built;
 
@@ -255,14 +285,16 @@ namespace Hapbeat
             steppersLayout.childForceExpandWidth = true;
             steppersLayout.childForceExpandHeight = false;
 
-            _playerValueText = CreateStepperRow(steppersColumn.transform, "Player", PlayerDown, PlayerUp);
-            _groupValueText = CreateStepperRow(steppersColumn.transform, "Group", GroupDown, GroupUp);
+            _playerValueText = CreateStepperRow(steppersColumn.transform, "Player", PlayerDown, PlayerUp, out _playerRowImage);
+            _groupValueText = CreateStepperRow(steppersColumn.transform, "Group", GroupDown, GroupUp, out _groupRowImage);
 
             var applyButton = CreateButton(contentRow.transform, "ApplyButton", "Apply");
             var applyLayoutElement = applyButton.GetComponent<LayoutElement>();
             applyLayoutElement.preferredWidth = 60f;
             applyLayoutElement.preferredHeight = 56f; // matches the two stepper rows' combined height (26 + 4 spacing + 26)
             applyButton.onClick.AddListener(Apply);
+            _applyButtonImage = applyButton.GetComponent<Image>();
+            _applyButtonBaseColor = _applyButtonImage.color;
 
             // Fixed-height, single-line status so editing/applying never shifts
             // the panel size — see workspace layout-shift rule. Never wraps
@@ -279,10 +311,20 @@ namespace Hapbeat
             statusLayoutElement.preferredHeight = 16f;
         }
 
-        private Text CreateStepperRow(Transform parent, string label, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc)
+        private Text CreateStepperRow(Transform parent, string label, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc, out Image rowBackground)
         {
             var row = new GameObject(label + "Row", typeof(RectTransform));
             row.transform.SetParent(parent, false);
+
+            // Focus-highlight background — sibling to the row's own layout group,
+            // not a separate child, so it never participates in the row's own
+            // HorizontalLayoutGroup sizing. Transparent (Color.clear) until
+            // SetFocusedField highlights it. raycastTarget=false: purely visual,
+            // must never intercept clicks meant for the +/- buttons.
+            rowBackground = row.AddComponent<Image>();
+            rowBackground.color = Color.clear;
+            rowBackground.raycastTarget = false;
+
             var rowLayout = row.AddComponent<HorizontalLayoutGroup>();
             rowLayout.spacing = 6f;
             rowLayout.childControlWidth = true;
@@ -444,6 +486,43 @@ namespace Hapbeat
             mgr.SetAddressOverride(_editingPlayer, _editingGroup, persist: true);
             RefreshLabels();
             DeselectEventSystem();
+            FlashApplyButton();
+        }
+
+        /// <summary>
+        /// Highlights the row for <paramref name="field"/> (translucent yellow
+        /// background) and clears the other — <see cref="HapbeatAddressOverrideFocusField.None"/>
+        /// clears both. Always-on (not a transient flash) so the focused row stays
+        /// obviously marked while a single-hand controller scheme steps between
+        /// Player/Group. No-op safe if this panel hasn't finished Build() yet.
+        /// </summary>
+        public void SetFocusedField(HapbeatAddressOverrideFocusField field)
+        {
+            if (_playerRowImage != null)
+                _playerRowImage.color = field == HapbeatAddressOverrideFocusField.Player ? s_focusHighlightColor : Color.clear;
+            if (_groupRowImage != null)
+                _groupRowImage.color = field == HapbeatAddressOverrideFocusField.Group ? s_focusHighlightColor : Color.clear;
+        }
+
+        /// <summary>
+        /// Briefly darkens the Apply button's background (~<see cref="ApplyFlashSeconds"/>s)
+        /// as visual confirmation that Apply actually fired — useful when Apply is
+        /// triggered by a VR controller (e.g. trigger long-press) rather than a
+        /// direct click on the on-screen button, where there's no other feedback.
+        /// </summary>
+        private void FlashApplyButton()
+        {
+            if (_applyButtonImage == null) return;
+            if (_applyFlashCoroutine != null) StopCoroutine(_applyFlashCoroutine);
+            _applyFlashCoroutine = StartCoroutine(ApplyFlashRoutine());
+        }
+
+        private IEnumerator ApplyFlashRoutine()
+        {
+            _applyButtonImage.color = s_applyFlashColor;
+            yield return new WaitForSecondsRealtime(ApplyFlashSeconds);
+            _applyButtonImage.color = _applyButtonBaseColor;
+            _applyFlashCoroutine = null;
         }
 
         private void RefreshLabels()

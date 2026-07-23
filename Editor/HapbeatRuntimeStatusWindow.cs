@@ -54,6 +54,65 @@ namespace Hapbeat.Editor
             // DrawFull already renders its own "Address Override (this device)"
             // bold heading — no separate section header needed here.
             HapbeatAddressOverrideStatusGUI.DrawFull(HapbeatManager.Instance, Repaint);
+
+            EditorGUILayout.Space(6);
+            DrawEditableOverrideRow();
+        }
+
+        // Session-local edit buffer for the "Save to this device" row below.
+        // int.MinValue is the sentinel for "not yet initialized from the saved
+        // value" — see DrawEditableOverrideRow. Lets the user edit Player/Group
+        // directly (works outside Play Mode, unlike the +/- panel which only
+        // exists at runtime) without needing to enter Play Mode first.
+        private int _editPlayerField = int.MinValue;
+        private int _editGroupField = int.MinValue;
+
+        private void DrawEditableOverrideRow()
+        {
+            if (_editPlayerField == int.MinValue || _editGroupField == int.MinValue)
+            {
+                HapbeatManager.TryGetPersistedAddressOverride(out int savedPlayer, out int savedGroup);
+                _editPlayerField = savedPlayer;
+                _editGroupField = savedGroup;
+            }
+
+            EditorGUILayout.LabelField("Edit (works outside Play Mode too)", EditorStyles.miniBoldLabel);
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Player", GUILayout.Width(50));
+            _editPlayerField = EditorGUILayout.IntField(_editPlayerField, GUILayout.Width(50));
+            GUILayout.Space(10);
+            EditorGUILayout.LabelField("Group", GUILayout.Width(50));
+            _editGroupField = EditorGUILayout.IntField(_editGroupField, GUILayout.Width(50));
+            EditorGUILayout.EndHorizontal();
+
+            EditorGUILayout.LabelField("(< 1 = disabled; normalized to -1 outside 1..99 on Save)", EditorStyles.miniLabel);
+
+            if (GUILayout.Button("Save to this device"))
+            {
+                int normPlayer = HapbeatClient.NormalizeOverride(_editPlayerField);
+                int normGroup = HapbeatClient.NormalizeOverride(_editGroupField);
+
+                if (Application.isPlaying && HapbeatManager.Instance != null)
+                {
+                    // Play mode: go through the manager so the live client / any
+                    // connected device (CONNECT_STATUS) picks it up immediately,
+                    // not just PlayerPrefs.
+                    HapbeatManager.Instance.SetAddressOverride(normPlayer, normGroup, persist: true);
+                }
+                else
+                {
+                    PlayerPrefs.SetInt(HapbeatManager.PlayerPrefsKeyOverridePlayer, normPlayer);
+                    PlayerPrefs.SetInt(HapbeatManager.PlayerPrefsKeyOverrideGroup, normGroup);
+                    PlayerPrefs.Save();
+                }
+
+                // Reflect the normalized values back into the edit fields so the
+                // UI doesn't show a stale un-normalized number after Save.
+                _editPlayerField = normPlayer;
+                _editGroupField = normGroup;
+                Repaint();
+            }
         }
 
         // ── App Name ─────────────────────────────────────────────────────
