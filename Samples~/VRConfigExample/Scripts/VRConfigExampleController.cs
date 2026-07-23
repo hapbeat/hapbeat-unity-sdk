@@ -1,6 +1,5 @@
 using System;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.XR;
 using UnityEngine.SceneManagement;
@@ -31,31 +30,41 @@ namespace Hapbeat.Samples.VRConfigExample
     /// </para>
     ///
     /// <para>
-    /// <b>Single-hand-complete controls (L/R symmetric):</b> every action below
-    /// is bound to <i>both</i> hands' equivalent physical control, so a single
-    /// hand — either hand — can operate the whole rig. There is no left-does-X /
-    /// right-does-Y split (that was this sample's previous scheme):
+    /// <b>All-GUI, 2D focus-grid navigation.</b> Every control in this scene —
+    /// Player -/+, Group -/+, Play (test playback), Apply, Exit — lives as a
+    /// button inside <see cref="_panel"/>'s single unified
+    /// <see cref="HapbeatAddressOverridePanel"/>, registered into its 2D focus
+    /// grid (see <see cref="HapbeatAddressOverridePanel.RegisterFocusable"/>).
+    /// This controller only ever does two things to that grid, both
+    /// single-hand-complete (either hand, symmetric — no left-does-X /
+    /// right-does-Y split):
     /// </para>
     ///
     /// <list type="bullet">
-    /// <item>Stick tilt (either hand) — toggle focus between Player / Group
-    /// (focused row highlighted on the panel). Keyboard: Tab.</item>
-    /// <item>A/B or X/Y (either hand) — +/- the focused value. Keyboard: =/-.</item>
-    /// <item>Trigger short press (either hand) — test playback (Keyboard: Space).
-    /// Trigger held &gt; <see cref="LongPressThresholdSeconds"/>s — Apply
-    /// (with a visual flash on the panel's Apply button). Detected by
-    /// <see cref="PollTrigger"/> polling <c>IsPressed()</c> every frame — see the
-    /// remarks below on why this isn't <c>started</c>/<c>canceled</c>-driven.</item>
+    /// <item>Stick tilt (either hand) — <see cref="HapbeatAddressOverridePanel.MoveFocus"/>
+    /// one grid step in the dominant tilt axis; deadzone + edge-detected first
+    /// step, then a <see cref="MoveRepeatIntervalSeconds"/>s repeat while held
+    /// past the deadzone (see <see cref="PollMoveStick"/>). Keyboard: arrow keys.</item>
+    /// <item>Trigger, A/X, or B/Y (either hand, any of the three) —
+    /// <see cref="HapbeatAddressOverridePanel.ActivateFocused"/>, i.e. "press"
+    /// whichever button currently has focus. Keyboard: Enter/Space.</item>
     /// <item>Stick click (either hand) — <see cref="Recenter"/> the panel + guide
     /// in front of the camera. Keyboard: R.</item>
-    /// <item>Left-hand Menu button / Keyboard Esc / on-screen Exit button — return
-    /// to <see cref="_returnSceneName"/>. <b>Not</b> bound to the right controller:
-    /// on Quest, the right Touch controller's "system" button is reserved by the
-    /// OS (opens the Quest system menu) and is never delivered to the app's Input
-    /// System actions — this is why this sample's original Exit binding on the
-    /// right-hand menu button silently never fired on-device. Only the left
-    /// controller's Menu button is actually deliverable to apps.</item>
+    /// <item>Left-hand Menu button / Keyboard Esc — <see cref="ExitToScene"/>
+    /// directly (in addition to the panel's own Exit button, reachable via the
+    /// focus grid). <b>Not</b> bound to the right controller: on Quest, the
+    /// right Touch controller's "system" button is reserved by the OS (opens
+    /// the Quest system menu) and is never delivered to the app's Input System
+    /// actions.</item>
     /// </list>
+    ///
+    /// <para>
+    /// The panel itself has no notion of "test playback" or "scenes" — this
+    /// controller wires <see cref="HapbeatAddressOverridePanel.OnPlayRequested"/>
+    /// to <see cref="PlayTestHaptic"/> and <see cref="HapbeatAddressOverridePanel.OnExitRequested"/>
+    /// to <see cref="ExitToScene"/> in <see cref="OnEnable"/>, so the Play/Exit
+    /// buttons built into the panel actually do something in this scene.
+    /// </para>
     ///
     /// <para>
     /// <b>Binding paths verified against the actual OpenXR device layout</b> (Meta
@@ -73,11 +82,9 @@ namespace Hapbeat.Samples.VRConfigExample
     /// segments against usages when written in <c>{brace}</c> form — confirmed in
     /// Unity's own shipped sample,
     /// <c>com.unity.xr.openxr/Samples~/Controller/ControllerSampleActions.inputactions</c>,
-    /// which binds it as <c>&lt;XRController&gt;{Hand}/{primary2DAxisClick}</c>. This
-    /// sample previously bound the bare (unbraced) form, which silently never
-    /// resolved — the actual bug behind stick-click never firing on-device. Both
+    /// which binds it as <c>&lt;XRController&gt;{Hand}/{primary2DAxisClick}</c>. Both
     /// the corrected name-based binding and the corrected braced-usage binding are
-    /// now registered for redundancy. Menu binds both the exact member name
+    /// registered for redundancy. Menu binds both the exact member name
     /// <c>menu</c> (as Unity's own sample does) and its <c>menuButton</c> alias,
     /// left hand only.
     /// </para>
@@ -120,15 +127,15 @@ namespace Hapbeat.Samples.VRConfigExample
         private Transform _cameraTransform;
 
         [Tooltip("Test-playback trigger — a HapbeatUnityEventTrigger wired to a " +
-            "StreamClip EventMap entry. Fired on trigger short-press. Played via " +
-            "HapbeatManager, same path as BasicExample.")]
+            "StreamClip EventMap entry. Fired when the panel's Play button is " +
+            "activated. Played via HapbeatManager, same path as BasicExample.")]
         [SerializeField]
         private HapbeatUnityEventTrigger _testTrigger;
 
         [Header("Exit / Return")]
         [Tooltip("Scene to load when Exit fires (left-hand menu button / " +
-            "Keyboard Esc / on-screen Exit button). Must be added to Build Settings. " +
-            "Leave empty to disable Exit entirely.")]
+            "Keyboard Esc / the panel's own Exit button). Must be added to " +
+            "Build Settings. Leave empty to disable Exit entirely.")]
         [SerializeField]
         private string _returnSceneName = "";
 
@@ -147,19 +154,13 @@ namespace Hapbeat.Samples.VRConfigExample
 #endif
 
         // --- Tuning ---
-        private const float StickTiltThreshold = 0.6f;
-        private const float LongPressThresholdSeconds = 0.6f;
+        private const float MoveDeadzone = 0.6f;
+        private const float MoveRepeatIntervalSeconds = 0.4f;
         private const float RecenterDistanceMeters = 1.5f;
 
-        // --- Focus state (which panel row +/- currently adjusts) ---
-        private HapbeatAddressOverrideFocusField _focusedField = HapbeatAddressOverrideFocusField.Player;
-
         // --- Shared (either-hand) actions ---
-        private InputAction _focusStickAction;      // Value Vector2 — tilt-debounced toggle
-        private InputAction _focusToggleKeyAction;   // Button — Keyboard Tab alternate
-        private InputAction _incAction;
-        private InputAction _decAction;
-        private InputAction _triggerAction;
+        private InputAction _moveStickAction;  // Value Vector2 — deadzone + edge-detect + repeat drives MoveFocus
+        private InputAction _activateAction;   // Button — trigger/A/B (either hand) drives ActivateFocused
         private InputAction _recenterAction;
         private InputAction _exitAction;
 
@@ -167,12 +168,10 @@ namespace Hapbeat.Samples.VRConfigExample
         private InputAction _rightHandProbeAction;
         private InputAction _leftHandProbeAction;
 
-        private bool _stickPastThreshold;
-
-        // --- Trigger hold state (polled — see PollTrigger) ---
-        private bool _triggerWasPressed;
-        private float _triggerPressStartTime = -1f;
-        private bool _applyFiredThisHold;
+        // --- Move-stick deadzone/edge-detect/repeat state (see PollMoveStick) ---
+        private bool _movePastThreshold;
+        private float _moveRepeatTimer;
+        private Vector2Int _lastMoveDir;
 
         private bool _loggedMissingManager;
         private bool _loggedMissingTestTrigger;
@@ -193,6 +192,11 @@ namespace Hapbeat.Samples.VRConfigExample
         private float _diagnosticTimer;
         private Text _guideText;
 
+        // Fixed single-line action guide — see class doc. Never changes at
+        // runtime, so (like the diagnostic line placeholder) it never causes a
+        // layout shift.
+        private const string GuideActionsText = "Stick: move / Trigger or A: press";
+
         // Guide canvas transform, kept relative to _panel (see BuildGuideText /
         // RepositionGuideRelativeToPanel) so Recenter() can move both together.
         private Transform _guideCanvasTransform;
@@ -209,7 +213,21 @@ namespace Hapbeat.Samples.VRConfigExample
                 _guideBuilt = true;
             }
 
-            if (_panel != null) _panel.SetFocusedField(_focusedField);
+            // The panel has no built-in notion of test playback or scene
+            // transitions — inject both here so its Play/Exit buttons do
+            // something in this scene (see class doc).
+            if (_panel != null)
+            {
+                _panel.OnPlayRequested += PlayTestHaptic;
+                _panel.OnExitRequested += ExitToScene;
+
+                // This is a VR-only rig with no mouse/touch input — the focus
+                // highlight is the only way to see which grid cell will react
+                // to the stick/trigger, so show it immediately rather than
+                // waiting for the first stick tilt (see
+                // HapbeatAddressOverridePanel.ShowFocusHighlight doc).
+                _panel.ShowFocusHighlight();
+            }
 
             // Startup recenter — puts the panel/guide in front of wherever the
             // headset happens to be looking the moment this scene loads, rather
@@ -222,8 +240,7 @@ namespace Hapbeat.Samples.VRConfigExample
 
         private void Update()
         {
-            PollFocusStick();
-            PollTrigger();
+            PollMoveStick();
 
             _diagnosticTimer += Time.deltaTime;
             if (_diagnosticTimer < DiagnosticRefreshIntervalSeconds) return;
@@ -233,20 +250,22 @@ namespace Hapbeat.Samples.VRConfigExample
 
         private void OnDisable()
         {
-            DisposeAction(ref _focusStickAction);
-            DisposeAction(ref _focusToggleKeyAction, OnFocusToggleKey);
-            DisposeAction(ref _incAction, OnInc);
-            DisposeAction(ref _decAction, OnDec);
-            DisposeAction(ref _triggerAction, RecordLastControl); // diagnostic-only subscription — hold/short-press logic is polled, not event-driven (see PollTrigger)
+            DisposeAction(ref _moveStickAction);
+            DisposeAction(ref _activateAction, OnActivate);
             DisposeAction(ref _recenterAction, OnRecenter);
             DisposeAction(ref _exitAction, OnExit);
             DisposeAction(ref _rightHandProbeAction);
             DisposeAction(ref _leftHandProbeAction);
 
-            _triggerWasPressed = false;
-            _triggerPressStartTime = -1f;
-            _applyFiredThisHold = false;
-            _stickPastThreshold = false;
+            if (_panel != null)
+            {
+                _panel.OnPlayRequested -= PlayTestHaptic;
+                _panel.OnExitRequested -= ExitToScene;
+            }
+
+            _movePastThreshold = false;
+            _moveRepeatTimer = 0f;
+            _lastMoveDir = Vector2Int.zero;
         }
 
         // ---------------------------------------------------------------
@@ -291,62 +310,41 @@ namespace Hapbeat.Samples.VRConfigExample
 
         private void BuildSharedActions()
         {
-            _focusStickAction = new InputAction(
-                name: "VRConfigExample/FocusStick",
+            _moveStickAction = new InputAction(
+                name: "VRConfigExample/Move",
                 type: InputActionType.Value,
-                binding: "<XRController>{LeftHand}/primary2DAxis",
                 expectedControlType: "Vector2");
-            _focusStickAction.AddBinding("<XRController>{RightHand}/primary2DAxis");
-            _focusStickAction.Enable();
+            _moveStickAction.AddBinding("<XRController>{LeftHand}/primary2DAxis");
+            _moveStickAction.AddBinding("<XRController>{RightHand}/primary2DAxis");
+            _moveStickAction.AddCompositeBinding("2DVector")
+                .With("Up", "<Keyboard>/upArrow")
+                .With("Down", "<Keyboard>/downArrow")
+                .With("Left", "<Keyboard>/leftArrow")
+                .With("Right", "<Keyboard>/rightArrow");
+            _moveStickAction.Enable();
 
-            _focusToggleKeyAction = new InputAction(
-                name: "VRConfigExample/FocusToggleKey",
-                type: InputActionType.Button,
-                binding: "<Keyboard>/tab");
-            _focusToggleKeyAction.performed += OnFocusToggleKey;
-            _focusToggleKeyAction.Enable();
-
-            _incAction = new InputAction(
-                name: "VRConfigExample/Inc",
-                type: InputActionType.Button,
-                binding: "<XRController>{LeftHand}/primaryButton");
-            _incAction.AddBinding("<XRController>{RightHand}/primaryButton");
-            _incAction.AddBinding("<Keyboard>/equals");
-            _incAction.performed += OnInc;
-            _incAction.Enable();
-
-            _decAction = new InputAction(
-                name: "VRConfigExample/Dec",
-                type: InputActionType.Button,
-                binding: "<XRController>{LeftHand}/secondaryButton");
-            _decAction.AddBinding("<XRController>{RightHand}/secondaryButton");
-            _decAction.AddBinding("<Keyboard>/minus");
-            _decAction.performed += OnDec;
-            _decAction.Enable();
-
-            // Button-type action so IsPressed() reflects the analog trigger's own
-            // press-point threshold — PollTrigger() reads this every frame instead
-            // of subscribing started/canceled (see PollTrigger remarks for why).
-            // performed is still subscribed, but purely for the diagnostic
-            // "last:" line (RecordLastControl) — it has no effect on hold/short-
-            // press behavior.
-            _triggerAction = new InputAction(
-                name: "VRConfigExample/TestOrApply",
+            // Trigger, A/X, or B/Y — either hand, any of the three — all mean
+            // the same thing: "press" whichever grid cell currently has focus.
+            _activateAction = new InputAction(
+                name: "VRConfigExample/Activate",
                 type: InputActionType.Button,
                 binding: "<XRController>{LeftHand}/triggerPressed");
-            _triggerAction.AddBinding("<XRController>{RightHand}/triggerPressed");
-            _triggerAction.AddBinding("<Keyboard>/space");
-            _triggerAction.performed += RecordLastControl;
-            _triggerAction.Enable();
+            _activateAction.AddBinding("<XRController>{RightHand}/triggerPressed");
+            _activateAction.AddBinding("<XRController>{LeftHand}/primaryButton");
+            _activateAction.AddBinding("<XRController>{RightHand}/primaryButton");
+            _activateAction.AddBinding("<XRController>{LeftHand}/secondaryButton");
+            _activateAction.AddBinding("<XRController>{RightHand}/secondaryButton");
+            _activateAction.AddBinding("<Keyboard>/enter");
+            _activateAction.AddBinding("<Keyboard>/space");
+            _activateAction.performed += OnActivate;
+            _activateAction.Enable();
 
             // Stick click — the concrete OpenXR device layout's control member is
             // named "thumbstickClicked" (aliases: JoystickOrPadPressed /
             // thumbstickClick / joystickClicked); "primary2DAxisClick" is only its
             // usage tag, which Input System only matches via the braced
             // "{primary2DAxisClick}" usage-path form. Both are bound below for
-            // redundancy — see the class doc for the source-verified detail (this
-            // sample previously bound the bare, non-matching "primary2DAxisClick"
-            // form, which is why stick-click never fired on-device).
+            // redundancy — see the class doc for the source-verified detail.
             _recenterAction = new InputAction(
                 name: "VRConfigExample/Recenter",
                 type: InputActionType.Button,
@@ -400,12 +398,12 @@ namespace Hapbeat.Samples.VRConfigExample
         /// Records the hand + control name of whatever <c>InputAction</c>
         /// callback last fired, for the guide's trailing "last:" diagnostic
         /// (see <see cref="RefreshDiagnosticLine"/>). Subscribed to every
-        /// shared action's <c>performed</c> callback (in addition to that
-        /// action's own handler) so the diagnostic reflects the actual
-        /// physical control that resolved on-device — the shared either-hand
-        /// actions can't otherwise attribute a firing back to a single
-        /// control/hand from the outside (see <see cref="BuildDiagnosticProbes"/>
-        /// remarks on the same either-hand-merging limitation).
+        /// shared action's <c>performed</c> callback so the diagnostic
+        /// reflects the actual physical control that resolved on-device — the
+        /// shared either-hand actions can't otherwise attribute a firing back
+        /// to a single control/hand from the outside (see
+        /// <see cref="BuildDiagnosticProbes"/> remarks on the same
+        /// either-hand-merging limitation).
         /// </summary>
         private void RecordLastControl(InputAction.CallbackContext ctx)
         {
@@ -441,127 +439,76 @@ namespace Hapbeat.Samples.VRConfigExample
         }
 
         // ---------------------------------------------------------------
-        // Focus stick (tilt-debounced toggle between Player/Group)
-        // ---------------------------------------------------------------
-
-        private void PollFocusStick()
-        {
-            if (_focusStickAction == null) return;
-
-            Vector2 v = _focusStickAction.ReadValue<Vector2>();
-            float mag = Mathf.Max(Mathf.Abs(v.x), Mathf.Abs(v.y));
-            bool past = mag >= StickTiltThreshold;
-
-            // Edge-detect: only toggle the instant the tilt crosses the
-            // threshold, not on every frame it stays held past it.
-            if (past && !_stickPastThreshold)
-                ToggleFocus();
-
-            _stickPastThreshold = past;
-        }
-
-        private void OnFocusToggleKey(InputAction.CallbackContext ctx)
-        {
-            RecordLastControl(ctx);
-            ToggleFocus();
-        }
-
-        private void ToggleFocus()
-        {
-            _focusedField = _focusedField == HapbeatAddressOverrideFocusField.Player
-                ? HapbeatAddressOverrideFocusField.Group
-                : HapbeatAddressOverrideFocusField.Player;
-            if (_panel != null) _panel.SetFocusedField(_focusedField);
-        }
-
-        // ---------------------------------------------------------------
-        // Inc / Dec (applies to whichever field currently has focus)
-        // ---------------------------------------------------------------
-
-        private void OnInc(InputAction.CallbackContext ctx)
-        {
-            RecordLastControl(ctx);
-            AdjustFocusedValue(+1);
-        }
-
-        private void OnDec(InputAction.CallbackContext ctx)
-        {
-            RecordLastControl(ctx);
-            AdjustFocusedValue(-1);
-        }
-
-        private void AdjustFocusedValue(int delta)
-        {
-            if (_panel == null) return;
-            switch (_focusedField)
-            {
-                case HapbeatAddressOverrideFocusField.Player:
-                    if (delta > 0) _panel.PlayerUp(); else _panel.PlayerDown();
-                    break;
-                case HapbeatAddressOverrideFocusField.Group:
-                    if (delta > 0) _panel.GroupUp(); else _panel.GroupDown();
-                    break;
-            }
-        }
-
-        // ---------------------------------------------------------------
-        // Trigger: short press = test playback, long press (>0.6s) = Apply
+        // Move stick — deadzone + edge-detect + repeat drives MoveFocus
         // ---------------------------------------------------------------
 
         /// <summary>
-        /// Polls <see cref="_triggerAction"/>'s <c>IsPressed()</c> every frame
-        /// instead of relying on <c>started</c>/<c>canceled</c> callbacks. On
-        /// Quest 3s + Meta Quest Touch Plus/Pro, the analog trigger's
-        /// started/performed/canceled event sequence was unreliable for a
-        /// sustained hold-to-Apply gesture — a real device symptom this rig
-        /// exists to catch, not an Editor-only quirk (A/B/X/Y and stick tilt,
-        /// which only ever fire a single <c>performed</c>, were unaffected).
-        /// Polling <c>IsPressed()</c> directly sidesteps the callback sequence
-        /// entirely: it's just "is the button down right now", read fresh
-        /// every <see cref="Update"/>.
-        ///
-        /// <para>
-        /// Short-press (test playback) and long-press (Apply) are mutually
-        /// exclusive per press/release cycle: <see cref="_applyFiredThisHold"/>
-        /// latches the instant the hold threshold is crossed, and release only
-        /// fires the short-press test if that latch is still false. A press
-        /// released before <see cref="LongPressThresholdSeconds"/> elapses
-        /// therefore always fires the short-press test — the hold check simply
-        /// never got the chance to fire first.
-        /// </para>
+        /// Polls <see cref="_moveStickAction"/> every frame: below
+        /// <see cref="MoveDeadzone"/> the stick is idle. Crossing the deadzone
+        /// (or changing direction while still held past it) moves focus
+        /// immediately (edge-detected, not fired every frame); holding past
+        /// the deadzone in the same direction repeats the move every
+        /// <see cref="MoveRepeatIntervalSeconds"/>s, like keyboard key-repeat.
+        /// Only the dominant axis (larger magnitude) is used per poll, so a
+        /// diagonal tilt only ever moves one grid step at a time — matching
+        /// <see cref="HapbeatAddressOverridePanel.MoveFocus"/>'s axis-aligned
+        /// (no-diagonal) navigation.
         /// </summary>
-        private void PollTrigger()
+        private void PollMoveStick()
         {
-            if (_triggerAction == null) return;
-            bool pressed = _triggerAction.IsPressed();
+            if (_moveStickAction == null) return;
 
-            if (pressed && !_triggerWasPressed)
+            Vector2 v = _moveStickAction.ReadValue<Vector2>();
+            float mag = Mathf.Max(Mathf.Abs(v.x), Mathf.Abs(v.y));
+
+            if (mag < MoveDeadzone)
             {
-                // Rising edge — press just started.
-                _triggerPressStartTime = Time.unscaledTime;
-                _applyFiredThisHold = false;
-            }
-            else if (pressed && _triggerWasPressed && !_applyFiredThisHold)
-            {
-                // Held past the threshold — fire Apply exactly once for this hold.
-                if (_triggerPressStartTime >= 0f &&
-                    Time.unscaledTime - _triggerPressStartTime >= LongPressThresholdSeconds)
-                {
-                    _applyFiredThisHold = true;
-                    if (_panel != null) _panel.Apply(); // Apply() flashes its own button — no extra feedback needed here.
-                }
-            }
-            else if (!pressed && _triggerWasPressed)
-            {
-                // Released — short-press test only if Apply didn't already
-                // fire during this same hold (mutual exclusion).
-                if (!_applyFiredThisHold)
-                    PlayTestHaptic();
-                _triggerPressStartTime = -1f;
-                _applyFiredThisHold = false;
+                _movePastThreshold = false;
+                _moveRepeatTimer = 0f;
+                return;
             }
 
-            _triggerWasPressed = pressed;
+            // Dominant axis only. Stick "up" (+y) means "move focus up", which
+            // is a decreasing row index in the panel's grid (row 0 = topmost) —
+            // hence the sign flip on the vertical axis.
+            Vector2Int dir = Mathf.Abs(v.x) >= Mathf.Abs(v.y)
+                ? new Vector2Int((int)Mathf.Sign(v.x), 0)
+                : new Vector2Int(0, v.y > 0f ? -1 : 1);
+
+            if (!_movePastThreshold || dir != _lastMoveDir)
+            {
+                // Rising edge (or direction changed while still held past the
+                // deadzone) — move immediately, then start the repeat timer fresh.
+                _movePastThreshold = true;
+                _lastMoveDir = dir;
+                _moveRepeatTimer = 0f;
+                MoveFocusAndRecord(dir);
+                return;
+            }
+
+            _moveRepeatTimer += Time.deltaTime;
+            if (_moveRepeatTimer >= MoveRepeatIntervalSeconds)
+            {
+                _moveRepeatTimer = 0f;
+                MoveFocusAndRecord(dir);
+            }
+        }
+
+        private void MoveFocusAndRecord(Vector2Int dir)
+        {
+            if (_panel == null) return;
+            _panel.MoveFocus(dir);
+            _lastControlName = $"Stick/{dir}";
+        }
+
+        // ---------------------------------------------------------------
+        // Activate (trigger / A/X / B/Y) — presses whichever button has focus
+        // ---------------------------------------------------------------
+
+        private void OnActivate(InputAction.CallbackContext ctx)
+        {
+            RecordLastControl(ctx);
+            if (_panel != null) _panel.ActivateFocused();
         }
 
         private void PlayTestHaptic()
@@ -644,8 +591,9 @@ namespace Hapbeat.Samples.VRConfigExample
         /// Loads <see cref="_returnSceneName"/>, returning to whatever scene
         /// launched this one. No-op (with a warning) if the name is empty or
         /// the scene isn't in Build Settings — wireable from UnityEvents /
-        /// the on-screen Exit button in addition to the controller/keyboard
-        /// bindings in <see cref="BuildSharedActions"/>.
+        /// the panel's own Exit button (see <see cref="HapbeatAddressOverridePanel.OnExitRequested"/>)
+        /// in addition to the controller/keyboard bindings in
+        /// <see cref="BuildSharedActions"/>.
         /// </summary>
         public void ExitToScene()
         {
@@ -669,38 +617,18 @@ namespace Hapbeat.Samples.VRConfigExample
         }
 
         // ---------------------------------------------------------------
-        // Guide text (world-space, always 6 fixed lines — never shifts layout)
+        // Guide text (world-space, fixed 2 lines — never shifts layout)
         // ---------------------------------------------------------------
-
-        // One action per line, verbatim. The Exit line's target changes if
-        // _returnSceneName is edited at authoring time, so this is built once
-        // (cached in _guideActionsTextCached) rather than a compile-time const —
-        // it never changes again at runtime, so this still never causes a
-        // layout shift.
-        private string _guideActionsTextCached;
-
-        private string BuildGuideActionsText()
-        {
-            string exitLine = string.IsNullOrEmpty(_returnSceneName)
-                ? "Exit: (no scene set)"
-                : $"Exit → {_returnSceneName}";
-            return
-                "Stick: focus Player/Group\n" +
-                "A/B (X/Y): focused +/-\n" +
-                "Trigger tap: test | hold: apply\n" +
-                "Stick-click: recenter\n" +
-                "L-Menu/Esc: " + exitLine;
-        }
 
         private void BuildGuideText()
         {
-            // Scale matches the enlarged HapbeatAddressOverridePanel default
-            // (world-space physical size = worldWidth/worldHeight regardless
-            // of scale — scale only trades off UI-pixel canvas resolution
-            // against how large each fixed-pixel-sized font/element renders).
+            // Scale matches the HapbeatAddressOverridePanel default (world-space
+            // physical size = worldWidth/worldHeight regardless of scale — scale
+            // only trades off UI-pixel canvas resolution against how large each
+            // fixed-pixel-sized font/element renders).
             const float scale = 0.0018f;
             const float worldWidth = 1.0f;
-            const float worldHeight = 0.55f;
+            const float worldHeight = 0.22f; // 2 fixed lines — see GuideActionsText / RefreshDiagnosticLine
 
             var canvasGo = new GameObject("VRConfigExampleGuideCanvas");
             canvasGo.transform.SetParent(transform, false);
@@ -756,14 +684,10 @@ namespace Hapbeat.Samples.VRConfigExample
             textRt.offsetMax = Vector2.zero;
 
             _guideText = text;
-            _guideActionsTextCached = BuildGuideActionsText();
-            // Fixed 6-line block (5 static action lines, incl. Exit, + 1
-            // diagnostic line): only the diagnostic line's content ever changes
-            // at runtime (see RefreshDiagnosticLine), so this never causes a
-            // layout shift.
-            _guideText.text = _guideActionsTextCached + "\n" + DiagnosticPlaceholder;
-
-            BuildExitButton(canvasGo);
+            // Fixed 2-line block (1 static action line + 1 diagnostic line):
+            // only the diagnostic line's content ever changes at runtime (see
+            // RefreshDiagnosticLine), so this never causes a layout shift.
+            _guideText.text = GuideActionsText + "\n" + DiagnosticPlaceholder;
         }
 
         /// <summary>
@@ -777,64 +701,6 @@ namespace Hapbeat.Samples.VRConfigExample
             if (_guideCanvasTransform == null || _panel == null) return;
             _guideCanvasTransform.position = _panel.transform.position + new Vector3(0f, -0.5f, 0f);
             _guideCanvasTransform.rotation = _panel.transform.rotation;
-        }
-
-        /// <summary>
-        /// Adds a clickable "Exit" Button to the guide canvas alongside the
-        /// controller/keyboard bindings in <see cref="BuildSharedActions"/> —
-        /// lets this "settings check" scene be exited with a mouse click too
-        /// (e.g. desktop Editor testing without a headset attached). Requires a
-        /// <see cref="GraphicRaycaster"/> + <see cref="Canvas.worldCamera"/> on
-        /// this world-space canvas (added here); actually clicking it via a VR
-        /// laser pointer would additionally need an XR ray interactor, which is
-        /// out of scope for this minimal verification rig — the controller
-        /// menu-button and keyboard Esc bindings remain the primary way to
-        /// exit in a headset.
-        /// </summary>
-        private void BuildExitButton(GameObject canvasGo)
-        {
-            if (EventSystem.current == null)
-            {
-                Debug.LogWarning("[Hapbeat] VRConfigExampleController: No EventSystem found in scene — " +
-                    "the on-screen Exit button will not receive clicks (controller menu button and " +
-                    "Keyboard Esc still work).");
-            }
-
-            if (canvasGo.GetComponent<GraphicRaycaster>() == null)
-                canvasGo.AddComponent<GraphicRaycaster>();
-
-            var canvas = canvasGo.GetComponent<Canvas>();
-            if (canvas.worldCamera == null)
-                canvas.worldCamera = _cameraTransform != null ? _cameraTransform.GetComponent<Camera>() : Camera.main;
-
-            var buttonGo = new GameObject("ExitButton", typeof(RectTransform));
-            buttonGo.transform.SetParent(canvasGo.transform, false);
-            var buttonRt = buttonGo.GetComponent<RectTransform>();
-            buttonRt.anchorMin = new Vector2(1f, 0f);
-            buttonRt.anchorMax = new Vector2(1f, 0f);
-            buttonRt.pivot = new Vector2(1f, 0f);
-            buttonRt.sizeDelta = new Vector2(140f, 50f);
-            buttonRt.anchoredPosition = new Vector2(-10f, 10f);
-
-            var buttonImage = buttonGo.AddComponent<Image>();
-            buttonImage.color = new Color(0.55f, 0.15f, 0.15f, 0.9f);
-            var button = buttonGo.AddComponent<Button>();
-            button.onClick.AddListener(ExitToScene);
-
-            var labelGo = new GameObject("Label", typeof(RectTransform));
-            labelGo.transform.SetParent(buttonGo.transform, false);
-            var labelRt = labelGo.GetComponent<RectTransform>();
-            labelRt.anchorMin = Vector2.zero;
-            labelRt.anchorMax = Vector2.one;
-            labelRt.offsetMin = Vector2.zero;
-            labelRt.offsetMax = Vector2.zero;
-            var label = labelGo.AddComponent<Text>();
-            label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            label.fontSize = 22;
-            label.alignment = TextAnchor.MiddleCenter;
-            label.color = Color.white;
-            label.text = "Exit";
-            label.raycastTarget = false;
         }
 
         // ---------------------------------------------------------------
@@ -863,7 +729,7 @@ namespace Hapbeat.Samples.VRConfigExample
             if (!rightOk && !leftOk)
                 diagnostic += $" ({EnableOculusTouchHint})";
 
-            _guideText.text = _guideActionsTextCached + "\n" + diagnostic;
+            _guideText.text = GuideActionsText + "\n" + diagnostic;
         }
     }
 }

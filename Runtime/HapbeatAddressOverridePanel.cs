@@ -1,4 +1,6 @@
+using System;
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -18,20 +20,6 @@ namespace Hapbeat
     }
 
     /// <summary>
-    /// Which stepper row (if any) an external controller currently has "focused" —
-    /// see <see cref="HapbeatAddressOverridePanel.SetFocusedField"/>. Used by
-    /// single-hand VR control schemes where only one row is adjustable at a time
-    /// (e.g. <c>VRConfigExampleController</c>).
-    /// </summary>
-    public enum HapbeatAddressOverrideFocusField
-    {
-        /// <summary>No row highlighted (default — both rows plain).</summary>
-        None,
-        Player,
-        Group,
-    }
-
-    /// <summary>
     /// Runtime UI for the global Player / Group address override
     /// (<see cref="HapbeatManager.SetAddressOverride"/>). Builds a small
     /// self-contained uGUI panel entirely at runtime (no scene wiring beyond
@@ -39,21 +27,48 @@ namespace Hapbeat
     /// without hand-editing UI hierarchy in the scene.
     ///
     /// <para>
-    /// Demonstrates the "one identical build, many HMDs" flow: +/- steppers
-    /// pick a Player / Group number (1..99, or below 1 = disabled), Apply
-    /// calls <see cref="HapbeatManager.SetAddressOverride(int, int, bool)"/>
-    /// with <c>persist: true</c>, and a single status line shows a live
-    /// preview of what <c>player_1/pos_chest/group_1</c> resolves to via
-    /// <see cref="HapbeatClient.ResolveTarget(string, int, int)"/> for the
-    /// currently-edited values — highlighted while it differs from what's
+    /// The panel is a single all-GUI control surface: +/- steppers pick a
+    /// Player / Group number (1..99, or below 1 = disabled), a Play button
+    /// fires whatever test-playback callback an external controller wires to
+    /// <see cref="OnPlayRequested"/>, Apply calls
+    /// <see cref="HapbeatManager.SetAddressOverride(int, int, bool)"/> with
+    /// <c>persist: true</c>, and Exit fires whatever scene-transition callback
+    /// is wired to <see cref="OnExitRequested"/> — the panel itself has no
+    /// notion of test triggers or scenes, that logic is injected by the
+    /// caller (see <c>VRConfigExampleController</c>). A single status line
+    /// shows a live preview of what <c>player_1/pos_chest/group_1</c> resolves
+    /// to via <see cref="HapbeatClient.ResolveTarget(string, int, int)"/> for
+    /// the currently-edited values — highlighted while it differs from what's
     /// actually applied, plain once Apply catches it up.
     /// </para>
     ///
     /// <para>
+    /// <b>2D focus-navigation grid.</b> Every button the panel builds (the
+    /// four steppers, Play, Apply, Exit) is registered into a shared
+    /// column/row grid via <see cref="RegisterFocusable"/> — external buttons
+    /// can be added to the same grid the same way. <see cref="MoveFocus"/>
+    /// steps the focused cell by one grid unit in a cardinal direction (no
+    /// diagonals — callers should resolve a dominant axis first), and
+    /// <see cref="ActivateFocused"/> invokes whichever button currently holds
+    /// focus. The first button registered is focused immediately (internal
+    /// state only), but the yellow focus <i>highlight</i> itself stays hidden
+    /// until focus-grid navigation is actually in use — see
+    /// <see cref="ShowFocusHighlight"/> — so mouse/touch-only consumers (e.g.
+    /// Showcase's AddressOverrideDemo) never see a stray highlight that
+    /// nothing is driving. VR-style callers that want the highlight visible
+    /// from the very first frame (e.g. <c>VRConfigExampleController</c>) call
+    /// <see cref="ShowFocusHighlight"/> once at startup instead of waiting for
+    /// the first nav input.
+    /// Activating any button briefly flashes it near-white
+    /// (<see cref="ActionFlashSeconds"/>s) as confirmation, which matters most
+    /// for VR controller input where there's no other click feedback.
+    /// </para>
+    ///
+    /// <para>
     /// <see cref="PlayerUp"/> / <see cref="PlayerDown"/> / <see cref="GroupUp"/> /
-    /// <see cref="GroupDown"/> / <see cref="Apply"/> are public so external
+    /// <see cref="GroupDown"/> / <see cref="Apply"/> remain public so external
     /// controllers (VR input bindings, custom UI, UnityEvents) can drive this
-    /// panel without touching the built-in stepper buttons.
+    /// panel directly in addition to the focus-grid path.
     /// </para>
     /// </summary>
     [AddComponentMenu("Hapbeat/Hapbeat Address Override Panel")]
@@ -74,6 +89,19 @@ namespace Hapbeat
         // changed relative to PreviewTarget (see RefreshLabels / BuildDiffHighlightedRichText).
         private static readonly string s_variableColorHex = ColorUtility.ToHtmlStringRGB(s_variableColor);
 
+        // Focused-button background tint (see ApplyFocusVisual). Translucent
+        // yellow, distinct from the buttons' plain translucent-white base so
+        // the focused cell reads clearly against the dark panel backdrop.
+        private static readonly Color s_focusHighlightColor = new Color(1f, 0.85f, 0.2f, 0.55f);
+
+        // Activation flash — near-white rather than the old near-black flash
+        // so it stands out against the panel's dark backdrop instead of
+        // blending into it. Fires whenever any registered button's onClick
+        // runs (see RegisterFocusable), regardless of whether it was clicked
+        // directly or activated via ActivateFocused.
+        private static readonly Color s_actionFlashColor = new Color(1f, 1f, 1f, 0.95f);
+        private const float ActionFlashSeconds = 0.2f;
+
         [Header("Layout")]
         [Tooltip("ScreenSpaceOverlay = fixed 2D HUD (top-center). WorldSpace = 3D panel parented to this GameObject (e.g. for VR).")]
         [SerializeField]
@@ -81,7 +109,7 @@ namespace Hapbeat
 
         [Tooltip("World-space panel size in meters (ignored in ScreenSpaceOverlay). Default ~0.5m wide.")]
         [SerializeField]
-        private Vector2 _worldSize = new Vector2(0.5f, 0.18f);
+        private Vector2 _worldSize = new Vector2(0.5f, 0.28f);
 
         [Tooltip("World-space local position offset relative to this GameObject (ignored in ScreenSpaceOverlay).")]
         [SerializeField]
@@ -98,21 +126,6 @@ namespace Hapbeat
         private Text _groupValueText;
         private Text _statusText;
 
-        // Row background Images used to highlight the currently-focused row
-        // (see SetFocusedField). Transparent (Color.clear) by default — Color.clear
-        // is invisible, so callers that never call SetFocusedField (e.g. the
-        // Showcase AddressOverrideDemo) see no visual change at all.
-        private Image _playerRowImage;
-        private Image _groupRowImage;
-        private static readonly Color s_focusHighlightColor = new Color(1f, 0.85f, 0.2f, 0.35f);
-
-        // Apply button flash feedback (see Apply()/FlashApplyButton()).
-        private Image _applyButtonImage;
-        private Color _applyButtonBaseColor;
-        private Coroutine _applyFlashCoroutine;
-        private static readonly Color s_applyFlashColor = new Color(0.05f, 0.05f, 0.05f, 0.9f);
-        private const float ApplyFlashSeconds = 0.3f;
-
         private bool _built;
 
         // The Canvas this panel builds at runtime. Kept as a field (rather than
@@ -120,6 +133,44 @@ namespace Hapbeat
         // scene root — see the nested-Canvas guard below — which decouples it
         // from this component's own transform hierarchy.
         private GameObject _canvasGo;
+
+        // --- 2D focus-navigation grid ---
+
+        private struct FocusEntry
+        {
+            public Button Button;
+            public Image Image;
+            public Color BaseColor;
+        }
+
+        // Column (x) / row (y) → registered button. Row 0 is topmost. See
+        // RegisterFocusable / MoveFocus / ActivateFocused.
+        private readonly Dictionary<Vector2Int, FocusEntry> _focusEntries = new Dictionary<Vector2Int, FocusEntry>();
+        private Vector2Int _focusedCoord;
+        private bool _hasFocus;
+
+        // Gates the *visible* highlight independently of _hasFocus (see
+        // ShowFocusHighlight) — focus is always tracked internally from the
+        // moment the first button is registered, but nothing is painted with
+        // s_focusHighlightColor until this is set, so desktop/mouse-only usage
+        // (no focus-grid nav) never shows a highlight nothing is driving.
+        private bool _focusHighlightVisible;
+        private Coroutine _flashCoroutine;
+
+        /// <summary>
+        /// Invoked when the Play button is activated (click or
+        /// <see cref="ActivateFocused"/>). The panel has no built-in notion of
+        /// "test playback" — an external controller wires this to whatever
+        /// test-trigger logic its scene uses.
+        /// </summary>
+        public event Action OnPlayRequested;
+
+        /// <summary>
+        /// Invoked when the Exit button is activated. As with
+        /// <see cref="OnPlayRequested"/>, scene-transition logic is injected
+        /// by the external controller — the panel itself has no notion of scenes.
+        /// </summary>
+        public event Action OnExitRequested;
 
         private void OnEnable()
         {
@@ -146,6 +197,11 @@ namespace Hapbeat
             }
 
             RefreshLabels();
+
+            // Every (re-)activation starts focus back on the first button —
+            // there is no "remembered" focus across enable/disable cycles.
+            if (_focusEntries.Count > 0)
+                SetFocusedCoord(new Vector2Int(0, 0));
         }
 
         private void OnDisable()
@@ -221,7 +277,7 @@ namespace Hapbeat
 
             // --- Panel ---
             // raycastTarget = false: this backdrop only exists to visually
-            // frame the panel. Only the +/-/Apply Buttons' own Images need to
+            // frame the panel. Only the Buttons' own Images need to
             // intercept clicks — every other Graphic here (background, labels,
             // value/status text) must stay non-blocking so it can never
             // shadow-raycast over UI that happens to render at the same
@@ -241,11 +297,11 @@ namespace Hapbeat
             {
                 // Screen-space: top-center, fixed size, doesn't overlap other
                 // top-anchored HUD elements (guide text top-left, connection
-                // status top-right). Kept small/compact so it never covers them.
+                // status top-right). Kept compact so it never covers them.
                 panelRt.anchorMin = new Vector2(0.5f, 1f);
                 panelRt.anchorMax = new Vector2(0.5f, 1f);
                 panelRt.pivot = new Vector2(0.5f, 1f);
-                panelRt.sizeDelta = new Vector2(300f, 110f);
+                panelRt.sizeDelta = new Vector2(300f, 180f);
                 // Top-anchored pivot: y is measured downward from the anchor, so a
                 // small negative offset nudges the panel just below the screen edge.
                 panelRt.anchoredPosition = new Vector2(0f, -8f);
@@ -264,37 +320,20 @@ namespace Hapbeat
             titleLayoutElement.minHeight = 14f;
             titleLayoutElement.preferredHeight = 14f;
 
-            // Content row: Player/Group steppers stacked on the left, a single
-            // Apply button spanning both rows' height on the right (roughly
-            // square, not a full-width bar) — keeps the whole panel short.
-            var contentRow = new GameObject("ContentRow", typeof(RectTransform));
-            contentRow.transform.SetParent(panel.transform, false);
-            var contentLayout = contentRow.AddComponent<HorizontalLayoutGroup>();
-            contentLayout.spacing = 8f;
-            contentLayout.childControlWidth = true;
-            contentLayout.childControlHeight = true;
-            contentLayout.childForceExpandWidth = false;
-            contentLayout.childForceExpandHeight = false;
+            // Grid layout (column = x, row = y):
+            //   row 0: Player -   Player +
+            //   row 1: Group -    Group +
+            //   row 2: Play       Apply
+            //   row 3: Exit
+            _playerValueText = CreateStepperRow(panel.transform, "Player", 0, PlayerDown, PlayerUp);
+            _groupValueText = CreateStepperRow(panel.transform, "Group", 1, GroupDown, GroupUp);
 
-            var steppersColumn = new GameObject("SteppersColumn", typeof(RectTransform));
-            steppersColumn.transform.SetParent(contentRow.transform, false);
-            var steppersLayout = steppersColumn.AddComponent<VerticalLayoutGroup>();
-            steppersLayout.spacing = 4f;
-            steppersLayout.childControlWidth = true;
-            steppersLayout.childControlHeight = true;
-            steppersLayout.childForceExpandWidth = true;
-            steppersLayout.childForceExpandHeight = false;
+            var actionRow = CreateFullWidthRow(panel.transform, "ActionRow");
+            CreateRowButton(actionRow, "PlayButton", "Play", new Vector2Int(0, 2), () => OnPlayRequested?.Invoke());
+            CreateRowButton(actionRow, "ApplyButton", "Apply", new Vector2Int(1, 2), Apply);
 
-            _playerValueText = CreateStepperRow(steppersColumn.transform, "Player", PlayerDown, PlayerUp, out _playerRowImage);
-            _groupValueText = CreateStepperRow(steppersColumn.transform, "Group", GroupDown, GroupUp, out _groupRowImage);
-
-            var applyButton = CreateButton(contentRow.transform, "ApplyButton", "Apply");
-            var applyLayoutElement = applyButton.GetComponent<LayoutElement>();
-            applyLayoutElement.preferredWidth = 60f;
-            applyLayoutElement.preferredHeight = 56f; // matches the two stepper rows' combined height (26 + 4 spacing + 26)
-            applyButton.onClick.AddListener(Apply);
-            _applyButtonImage = applyButton.GetComponent<Image>();
-            _applyButtonBaseColor = _applyButtonImage.color;
+            var exitRow = CreateFullWidthRow(panel.transform, "ExitRow");
+            CreateRowButton(exitRow, "ExitButton", "Exit", new Vector2Int(0, 3), () => OnExitRequested?.Invoke());
 
             // Fixed-height, single-line status so editing/applying never shifts
             // the panel size — see workspace layout-shift rule. Never wraps
@@ -311,34 +350,26 @@ namespace Hapbeat
             statusLayoutElement.preferredHeight = 16f;
         }
 
-        private Text CreateStepperRow(Transform parent, string label, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc, out Image rowBackground)
+        private Text CreateStepperRow(Transform parent, string label, int row, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc)
         {
-            var row = new GameObject(label + "Row", typeof(RectTransform));
-            row.transform.SetParent(parent, false);
+            var rowGo = new GameObject(label + "Row", typeof(RectTransform));
+            rowGo.transform.SetParent(parent, false);
 
-            // Focus-highlight background — sibling to the row's own layout group,
-            // not a separate child, so it never participates in the row's own
-            // HorizontalLayoutGroup sizing. Transparent (Color.clear) until
-            // SetFocusedField highlights it. raycastTarget=false: purely visual,
-            // must never intercept clicks meant for the +/- buttons.
-            rowBackground = row.AddComponent<Image>();
-            rowBackground.color = Color.clear;
-            rowBackground.raycastTarget = false;
-
-            var rowLayout = row.AddComponent<HorizontalLayoutGroup>();
+            var rowLayout = rowGo.AddComponent<HorizontalLayoutGroup>();
             rowLayout.spacing = 6f;
             rowLayout.childControlWidth = true;
             rowLayout.childControlHeight = true;
             rowLayout.childForceExpandWidth = false;
             rowLayout.childForceExpandHeight = false;
-            var rowElement = row.AddComponent<LayoutElement>();
+            var rowElement = rowGo.AddComponent<LayoutElement>();
             rowElement.preferredHeight = 26f;
 
-            var labelText = CreateText(row.transform, "Label", label + ":", 13, FontStyle.Normal, TextAnchor.MiddleLeft);
+            var labelText = CreateText(rowGo.transform, "Label", label + ":", 13, FontStyle.Normal, TextAnchor.MiddleLeft);
             var labelLayoutElement = labelText.gameObject.AddComponent<LayoutElement>();
             labelLayoutElement.preferredWidth = 60f;
 
-            CreateSmallButton(row.transform, "Dec", "-", onDec);
+            var decButton = CreateSmallButton(rowGo.transform, "Dec", "-", onDec);
+            RegisterFocusable(new Vector2Int(0, row), decButton);
 
             // Value label toggles between a short digit ("3") and the longer
             // word "disabled". Both states share one fixed alignment
@@ -350,7 +381,7 @@ namespace Hapbeat
             // which is what actually read as "vertical center shifts between
             // states". Widening the column and forcing Overflow (never Wrap)
             // keeps every state single-line so MiddleCenter centers identically.
-            var valueText = CreateText(row.transform, "Value", "-", 13, FontStyle.Bold, TextAnchor.MiddleCenter);
+            var valueText = CreateText(rowGo.transform, "Value", "-", 13, FontStyle.Bold, TextAnchor.MiddleCenter);
             valueText.color = s_variableColor; // the variable part — always highlighted, unlike the "Player:"/"Group:" label
             valueText.horizontalOverflow = HorizontalWrapMode.Overflow;
             valueText.verticalOverflow = VerticalWrapMode.Overflow;
@@ -358,9 +389,35 @@ namespace Hapbeat
             valueLayoutElement.preferredWidth = 70f;
             valueLayoutElement.preferredHeight = 26f; // fixed rect height in both states, matches the row height
 
-            CreateSmallButton(row.transform, "Inc", "+", onInc);
+            var incButton = CreateSmallButton(rowGo.transform, "Inc", "+", onInc);
+            RegisterFocusable(new Vector2Int(1, row), incButton);
 
             return valueText;
+        }
+
+        /// <summary>Full-width horizontal row (its buttons share the row's width equally) — used for the Play/Apply and Exit rows.</summary>
+        private static Transform CreateFullWidthRow(Transform parent, string name)
+        {
+            var rowGo = new GameObject(name, typeof(RectTransform));
+            rowGo.transform.SetParent(parent, false);
+            var rowLayout = rowGo.AddComponent<HorizontalLayoutGroup>();
+            rowLayout.spacing = 6f;
+            rowLayout.childControlWidth = true;
+            rowLayout.childControlHeight = true;
+            rowLayout.childForceExpandWidth = true;
+            rowLayout.childForceExpandHeight = false;
+            var rowElement = rowGo.AddComponent<LayoutElement>();
+            rowElement.preferredHeight = 26f;
+            return rowGo.transform;
+        }
+
+        /// <summary>Creates a full-width row button, wires <paramref name="onClick"/>, and registers it into the focus grid at <paramref name="coord"/>.</summary>
+        private Button CreateRowButton(Transform rowParent, string name, string label, Vector2Int coord, UnityEngine.Events.UnityAction onClick)
+        {
+            var button = CreateButton(rowParent, name, label);
+            button.onClick.AddListener(onClick);
+            RegisterFocusable(coord, button);
+            return button;
         }
 
         private static GameObject CreatePanel(Transform parent, string name, Color color)
@@ -423,6 +480,178 @@ namespace Hapbeat
             return button;
         }
 
+        // ---------------------------------------------------------------
+        // 2D focus-navigation grid
+        // ---------------------------------------------------------------
+
+        /// <summary>
+        /// Registers <paramref name="button"/> into the panel's 2D
+        /// focus-navigation grid at <paramref name="coord"/> (column = x, row
+        /// = y — row 0 is topmost). External controllers can register their
+        /// own buttons here so <see cref="MoveFocus"/> / <see cref="ActivateFocused"/>
+        /// drive them the same way as the panel's own steppers/Play/Apply/Exit.
+        /// The first button ever registered becomes focused immediately, but
+        /// that's internal state only — see <see cref="ShowFocusHighlight"/>
+        /// for when the visible highlight itself turns on.
+        /// Re-registering an existing coord replaces its entry. No-op if
+        /// <paramref name="button"/> is null.
+        /// </summary>
+        public void RegisterFocusable(Vector2Int coord, Button button)
+        {
+            if (button == null) return;
+
+            var image = button.GetComponent<Image>();
+            bool wasEmpty = _focusEntries.Count == 0;
+
+            _focusEntries[coord] = new FocusEntry
+            {
+                Button = button,
+                Image = image,
+                BaseColor = image != null ? image.color : Color.white,
+            };
+
+            // Flash feedback on every activation of this button, regardless of
+            // whether it was reached via a direct click or via ActivateFocused —
+            // added once at registration time, not per-activation.
+            button.onClick.AddListener(() => FlashButton(coord));
+
+            if (wasEmpty)
+                SetFocusedCoord(coord);
+        }
+
+        /// <summary>
+        /// Steps the focused grid cell by exactly one unit in a cardinal
+        /// direction (e.g. <c>Vector2Int.up</c>/<c>down</c>/<c>left</c>/<c>right</c>).
+        /// Diagonals aren't resolved specially — pass a single dominant axis
+        /// per call (callers driving an analog stick should pick whichever
+        /// axis has the larger magnitude). Vertical moves jump to the nearest
+        /// row that has an entry in the pressed direction, preferring the
+        /// column closest to the current one (so moving down from a
+        /// single-column row like Exit still lands somewhere sensible).
+        /// Horizontal moves stay within the current row. No-op if there's
+        /// nothing to move to in that direction, or if the grid is empty.
+        /// </summary>
+        public void MoveFocus(Vector2Int dir)
+        {
+            if (_focusEntries.Count == 0 || dir == Vector2Int.zero) return;
+
+            // Real nav-grid usage has begun — reveal the highlight (no-op if
+            // already visible, e.g. via an explicit ShowFocusHighlight() call).
+            ShowFocusHighlight();
+
+            Vector2Int? best = null;
+            int bestPrimaryDist = int.MaxValue;
+            int bestSecondaryDist = int.MaxValue;
+
+            foreach (var coord in _focusEntries.Keys)
+            {
+                if (coord == _focusedCoord) continue;
+
+                if (dir.x != 0)
+                {
+                    // Horizontal: same row only, strictly in the pressed direction.
+                    if (coord.y != _focusedCoord.y) continue;
+                    int dx = coord.x - _focusedCoord.x;
+                    if (Mathf.Sign(dx) != Mathf.Sign(dir.x)) continue;
+                    int dist = Mathf.Abs(dx);
+                    if (dist < bestPrimaryDist)
+                    {
+                        bestPrimaryDist = dist;
+                        best = coord;
+                    }
+                }
+                else
+                {
+                    // Vertical: any row strictly in the pressed direction; nearest
+                    // row first, then nearest column within that row.
+                    int dy = coord.y - _focusedCoord.y;
+                    if (Mathf.Sign(dy) != Mathf.Sign(dir.y)) continue;
+                    int rowDist = Mathf.Abs(dy);
+                    int colDist = Mathf.Abs(coord.x - _focusedCoord.x);
+                    if (rowDist < bestPrimaryDist || (rowDist == bestPrimaryDist && colDist < bestSecondaryDist))
+                    {
+                        bestPrimaryDist = rowDist;
+                        bestSecondaryDist = colDist;
+                        best = coord;
+                    }
+                }
+            }
+
+            if (best.HasValue)
+                SetFocusedCoord(best.Value);
+        }
+
+        /// <summary>Invokes whichever button currently holds focus (see <see cref="MoveFocus"/>), same as a direct click. No-op if nothing is focused yet.</summary>
+        public void ActivateFocused()
+        {
+            // Real nav-grid usage has begun — reveal the highlight (no-op if
+            // already visible, e.g. via an explicit ShowFocusHighlight() call).
+            ShowFocusHighlight();
+
+            if (_hasFocus && _focusEntries.TryGetValue(_focusedCoord, out var entry) && entry.Button != null)
+                entry.Button.onClick.Invoke();
+        }
+
+        /// <summary>
+        /// Reveals the 2D focus-navigation grid's yellow highlight (see class
+        /// doc and <see cref="ApplyFocusVisual"/>). Focus is always tracked
+        /// internally from the moment the first button is registered (so
+        /// <see cref="ActivateFocused"/> always has a valid target), but no
+        /// button is painted with the highlight color until this is called —
+        /// this keeps mouse/touch-only consumers (e.g. Showcase's
+        /// AddressOverrideDemo) free of a highlight nothing is driving.
+        /// <see cref="MoveFocus"/> and <see cref="ActivateFocused"/> both call
+        /// this on first use, so most focus-grid controllers never need to
+        /// call it directly; VR-style callers that want the highlight visible
+        /// from the very first frame (e.g. <c>VRConfigExampleController</c>)
+        /// should call it explicitly at startup instead of waiting for the
+        /// first nav input. Idempotent — safe to call more than once.
+        /// </summary>
+        public void ShowFocusHighlight()
+        {
+            if (_focusHighlightVisible) return;
+            _focusHighlightVisible = true;
+            ApplyFocusVisual();
+        }
+
+        private void SetFocusedCoord(Vector2Int coord)
+        {
+            if (!_focusEntries.ContainsKey(coord)) return;
+            _focusedCoord = coord;
+            _hasFocus = true;
+            ApplyFocusVisual();
+        }
+
+        private void ApplyFocusVisual()
+        {
+            foreach (var kvp in _focusEntries)
+            {
+                if (kvp.Value.Image == null) continue;
+                bool showHighlight = _focusHighlightVisible && _hasFocus && kvp.Key == _focusedCoord;
+                kvp.Value.Image.color = showHighlight ? s_focusHighlightColor : kvp.Value.BaseColor;
+            }
+        }
+
+        private void FlashButton(Vector2Int coord)
+        {
+            if (!_focusEntries.TryGetValue(coord, out var entry) || entry.Image == null) return;
+            if (_flashCoroutine != null) StopCoroutine(_flashCoroutine);
+            _flashCoroutine = StartCoroutine(FlashRoutine(entry.Image));
+        }
+
+        private IEnumerator FlashRoutine(Image image)
+        {
+            image.color = s_actionFlashColor;
+            yield return new WaitForSecondsRealtime(ActionFlashSeconds);
+            // Restore via ApplyFocusVisual (not the captured base color) so the
+            // right end-state applies whether or not this button is still
+            // focused (e.g. a mouse click on a non-focused button shouldn't
+            // end up looking focused, and a focused button should return to
+            // its highlight, not its plain base color).
+            ApplyFocusVisual();
+            _flashCoroutine = null;
+        }
+
         /// <summary>Step the editing Player number down. Wireable from UnityEvents / external controllers.</summary>
         public void PlayerDown() { _editingPlayer = StepDown(_editingPlayer); RefreshLabels(); DeselectEventSystem(); }
 
@@ -440,9 +669,9 @@ namespace Hapbeat
         /// buttons are clicked. Every other interactive control in the Showcase (e.g.
         /// GainSlider/PanSlider — see <c>UiDeselectOnPointerUp</c>) already deselects
         /// itself on pointer-up so a clicked Selectable never keeps UI focus; these
-        /// +/-/Apply buttons were the one exception, leaving a stepper/Apply button
-        /// selected indefinitely after use (Unity's default Button behavior). A
-        /// lingering selection is exactly the state <c>UiDeselectOnPointerUp</c> exists
+        /// stepper/Apply buttons were the one exception, leaving a button selected
+        /// indefinitely after use (Unity's default Button behavior). A lingering
+        /// selection is exactly the state <c>UiDeselectOnPointerUp</c> exists
         /// to avoid elsewhere in this scene — with the Input System's UI module, a
         /// stale <c>currentSelectedGameObject</c> can absorb/redirect subsequent
         /// pointer input intended for other UI (e.g. the Z4 Gain/Pan sliders) instead
@@ -486,43 +715,6 @@ namespace Hapbeat
             mgr.SetAddressOverride(_editingPlayer, _editingGroup, persist: true);
             RefreshLabels();
             DeselectEventSystem();
-            FlashApplyButton();
-        }
-
-        /// <summary>
-        /// Highlights the row for <paramref name="field"/> (translucent yellow
-        /// background) and clears the other — <see cref="HapbeatAddressOverrideFocusField.None"/>
-        /// clears both. Always-on (not a transient flash) so the focused row stays
-        /// obviously marked while a single-hand controller scheme steps between
-        /// Player/Group. No-op safe if this panel hasn't finished Build() yet.
-        /// </summary>
-        public void SetFocusedField(HapbeatAddressOverrideFocusField field)
-        {
-            if (_playerRowImage != null)
-                _playerRowImage.color = field == HapbeatAddressOverrideFocusField.Player ? s_focusHighlightColor : Color.clear;
-            if (_groupRowImage != null)
-                _groupRowImage.color = field == HapbeatAddressOverrideFocusField.Group ? s_focusHighlightColor : Color.clear;
-        }
-
-        /// <summary>
-        /// Briefly darkens the Apply button's background (~<see cref="ApplyFlashSeconds"/>s)
-        /// as visual confirmation that Apply actually fired — useful when Apply is
-        /// triggered by a VR controller (e.g. trigger long-press) rather than a
-        /// direct click on the on-screen button, where there's no other feedback.
-        /// </summary>
-        private void FlashApplyButton()
-        {
-            if (_applyButtonImage == null) return;
-            if (_applyFlashCoroutine != null) StopCoroutine(_applyFlashCoroutine);
-            _applyFlashCoroutine = StartCoroutine(ApplyFlashRoutine());
-        }
-
-        private IEnumerator ApplyFlashRoutine()
-        {
-            _applyButtonImage.color = s_applyFlashColor;
-            yield return new WaitForSecondsRealtime(ApplyFlashSeconds);
-            _applyButtonImage.color = _applyButtonBaseColor;
-            _applyFlashCoroutine = null;
         }
 
         private void RefreshLabels()
