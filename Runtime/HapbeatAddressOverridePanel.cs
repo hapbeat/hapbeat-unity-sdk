@@ -190,7 +190,14 @@ namespace Hapbeat
             canvasGo.AddComponent<GraphicRaycaster>();
 
             // --- Panel ---
+            // raycastTarget = false: this backdrop only exists to visually
+            // frame the panel. Only the +/-/Apply Buttons' own Images need to
+            // intercept clicks — every other Graphic here (background, labels,
+            // value/status text) must stay non-blocking so it can never
+            // shadow-raycast over UI that happens to render at the same
+            // screen position (see CreateText's raycastTarget default below).
             var panel = CreatePanel(canvasGo.transform, "Panel", new Color(0f, 0f, 0f, 0.6f));
+            panel.GetComponent<Image>().raycastTarget = false;
             var panelRt = panel.GetComponent<RectTransform>();
             if (worldSpace)
             {
@@ -323,6 +330,12 @@ namespace Hapbeat
             return go;
         }
 
+        // raycastTarget = false by default: every label/value/status Text this
+        // panel creates is purely informational, never itself the target of a
+        // click. Unity's Text component defaults raycastTarget to true, which
+        // would otherwise let a Text's rect silently intercept a pointer event
+        // meant for whatever renders at that same screen position (see the
+        // Build()-time comment above the Panel background Image).
         private static Text CreateText(Transform parent, string name, string content, int size, FontStyle style, TextAnchor anchor)
         {
             var go = new GameObject(name, typeof(RectTransform));
@@ -334,6 +347,7 @@ namespace Hapbeat
             text.alignment = anchor;
             text.color = Color.white;
             text.text = content;
+            text.raycastTarget = false;
             return text;
         }
 
@@ -368,16 +382,37 @@ namespace Hapbeat
         }
 
         /// <summary>Step the editing Player number down. Wireable from UnityEvents / external controllers.</summary>
-        public void PlayerDown() { _editingPlayer = StepDown(_editingPlayer); RefreshLabels(); }
+        public void PlayerDown() { _editingPlayer = StepDown(_editingPlayer); RefreshLabels(); DeselectEventSystem(); }
 
         /// <summary>Step the editing Player number up. Wireable from UnityEvents / external controllers.</summary>
-        public void PlayerUp() { _editingPlayer = StepUp(_editingPlayer); RefreshLabels(); }
+        public void PlayerUp() { _editingPlayer = StepUp(_editingPlayer); RefreshLabels(); DeselectEventSystem(); }
 
         /// <summary>Step the editing Group number down. Wireable from UnityEvents / external controllers.</summary>
-        public void GroupDown() { _editingGroup = StepDown(_editingGroup); RefreshLabels(); }
+        public void GroupDown() { _editingGroup = StepDown(_editingGroup); RefreshLabels(); DeselectEventSystem(); }
 
         /// <summary>Step the editing Group number up. Wireable from UnityEvents / external controllers.</summary>
-        public void GroupUp() { _editingGroup = StepUp(_editingGroup); RefreshLabels(); }
+        public void GroupUp() { _editingGroup = StepUp(_editingGroup); RefreshLabels(); DeselectEventSystem(); }
+
+        /// <summary>
+        /// Clears the EventSystem's <c>currentSelectedGameObject</c> after this panel's
+        /// buttons are clicked. Every other interactive control in the Showcase (e.g.
+        /// GainSlider/PanSlider — see <c>UiDeselectOnPointerUp</c>) already deselects
+        /// itself on pointer-up so a clicked Selectable never keeps UI focus; these
+        /// +/-/Apply buttons were the one exception, leaving a stepper/Apply button
+        /// selected indefinitely after use (Unity's default Button behavior). A
+        /// lingering selection is exactly the state <c>UiDeselectOnPointerUp</c> exists
+        /// to avoid elsewhere in this scene — with the Input System's UI module, a
+        /// stale <c>currentSelectedGameObject</c> can absorb/redirect subsequent
+        /// pointer input intended for other UI (e.g. the Z4 Gain/Pan sliders) instead
+        /// of just being a keyboard-navigation nuisance. Clearing it here keeps this
+        /// panel consistent with the rest of the zone and removes that residue as a
+        /// possible cause entirely, regardless of exact Input System internals.
+        /// </summary>
+        private static void DeselectEventSystem()
+        {
+            var es = EventSystem.current;
+            if (es != null) es.SetSelectedGameObject(null);
+        }
 
         /// <summary>1..99 clamped stepper: 1 → "-" → -1 (disabled). Values are never
         /// clamped/wrapped beyond that — mirrors HapbeatClient.NormalizeOverride's
@@ -408,6 +443,7 @@ namespace Hapbeat
             }
             mgr.SetAddressOverride(_editingPlayer, _editingGroup, persist: true);
             RefreshLabels();
+            DeselectEventSystem();
         }
 
         private void RefreshLabels()

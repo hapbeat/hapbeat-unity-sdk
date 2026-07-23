@@ -1,5 +1,8 @@
+using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace Hapbeat.Samples.VRBasicExample
@@ -27,7 +30,18 @@ namespace Hapbeat.Samples.VRBasicExample
     /// <item>Left Y (<c>secondaryButton</c>) / Keyboard H — Group -</item>
     /// <item>Right Trigger / Keyboard Space — Apply + test haptic</item>
     /// <item>Left Trigger / Keyboard T — test haptic only (no Apply)</item>
+    /// <item>Right Stick-click / Menu / Keyboard Esc / on-screen Exit button — return to <see cref="_returnSceneName"/></item>
     /// </list>
+    ///
+    /// <para>
+    /// Doubles as a "settings check" scene: wire <see cref="_returnSceneName"/>
+    /// (or drag a Scene asset into the Editor-only helper field) to whatever
+    /// scene launched this one, then Exit returns there once the address
+    /// override has been confirmed. Leave it empty to disable Exit entirely.
+    /// Intended usage: import this sample into your own project, add both
+    /// scenes to Build Settings, and <c>SceneManager.LoadScene("VRBasicExample")</c>
+    /// from your own scene to enter — Exit is the way back out.
+    /// </para>
     /// </summary>
     [AddComponentMenu("Hapbeat/Samples/VR Basic Example Controller")]
     public class VRBasicExampleController : MonoBehaviour
@@ -44,6 +58,27 @@ namespace Hapbeat.Samples.VRBasicExample
         [SerializeField]
         private Transform _cameraTransform;
 
+        [Header("Exit / Return")]
+        [Tooltip("Scene to load when Exit fires (right stick-click / menu button / " +
+            "Keyboard Esc / on-screen Exit button). Must be added to Build Settings. " +
+            "Leave empty to disable Exit entirely.")]
+        [SerializeField]
+        private string _returnSceneName = "";
+
+#if UNITY_EDITOR
+        [Tooltip("Editor-only convenience: drag a Scene asset here and Return Scene Name " +
+            "above is kept in sync automatically (OnValidate). Optional — you can type " +
+            "the scene name directly instead.")]
+        [SerializeField]
+        private UnityEditor.SceneAsset _returnSceneAsset;
+
+        private void OnValidate()
+        {
+            if (_returnSceneAsset != null)
+                _returnSceneName = _returnSceneAsset.name;
+        }
+#endif
+
         // --- HMD pose ---
         private InputAction _hmdPositionAction;
         private InputAction _hmdRotationAction;
@@ -57,6 +92,9 @@ namespace Hapbeat.Samples.VRBasicExample
         private InputAction _leftGroupUpAction;
         private InputAction _leftGroupDownAction;
         private InputAction _leftTestOnlyAction;
+
+        // --- Exit ---
+        private InputAction _exitAction;
 
         private bool _loggedMissingManager;
         private bool _guideBuilt;
@@ -74,6 +112,7 @@ namespace Hapbeat.Samples.VRBasicExample
             BuildHmdPoseActions();
             BuildRightHandActions();
             BuildLeftHandActions();
+            BuildExitAction();
 
             if (!_guideBuilt)
             {
@@ -105,6 +144,8 @@ namespace Hapbeat.Samples.VRBasicExample
             DisposeAction(ref _leftGroupUpAction, OnLeftGroupUp);
             DisposeAction(ref _leftGroupDownAction, OnLeftGroupDown);
             DisposeAction(ref _leftTestOnlyAction, OnLeftTestOnly);
+
+            DisposeAction(ref _exitAction, OnExit);
         }
 
         private void LateUpdate()
@@ -187,6 +228,26 @@ namespace Hapbeat.Samples.VRBasicExample
             _leftTestOnlyAction.Enable();
         }
 
+        /// <summary>
+        /// Exit binding, kept separate from <see cref="BuildRightHandActions"/> /
+        /// <see cref="BuildLeftHandActions"/> since it isn't hand-specific: right
+        /// stick-click and menu button are both bound as alternates (controller
+        /// layouts vary in which one is free/reachable), plus Keyboard Esc for
+        /// desktop testing. Always built regardless of <see cref="_returnSceneName"/>
+        /// being empty — <see cref="ExitToScene"/> is what actually gates on that.
+        /// </summary>
+        private void BuildExitAction()
+        {
+            _exitAction = new InputAction(
+                name: "VRBasicExample/Exit",
+                type: InputActionType.Button,
+                binding: "<XRController>{RightHand}/primary2DAxisClick");
+            _exitAction.AddBinding("<XRController>{RightHand}/menuButton");
+            _exitAction.AddBinding("<Keyboard>/escape");
+            _exitAction.performed += OnExit;
+            _exitAction.Enable();
+        }
+
         private static void DisposeAction(ref InputAction action)
         {
             if (action == null) return;
@@ -258,6 +319,36 @@ namespace Hapbeat.Samples.VRBasicExample
             PlayTestHaptic();
         }
 
+        private void OnExit(InputAction.CallbackContext ctx) => ExitToScene();
+
+        /// <summary>
+        /// Loads <see cref="_returnSceneName"/>, returning to whatever scene
+        /// launched this one. No-op (with a warning) if the name is empty or
+        /// the scene isn't in Build Settings — wireable from UnityEvents /
+        /// the on-screen Exit button in addition to the controller/keyboard
+        /// bindings in <see cref="BuildExitAction"/>.
+        /// </summary>
+        public void ExitToScene()
+        {
+            if (string.IsNullOrEmpty(_returnSceneName))
+            {
+                Debug.LogWarning("[Hapbeat] VRBasicExampleController: Exit requested but no return scene is " +
+                    "set. Set \"Return Scene Name\" in the Inspector (or drag a Scene asset into the Editor-only " +
+                    "field) to enable Exit.");
+                return;
+            }
+
+            try
+            {
+                SceneManager.LoadScene(_returnSceneName);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Hapbeat] VRBasicExampleController: failed to load return scene " +
+                    $"\"{_returnSceneName}\" — is it added to Build Settings? ({ex.Message})");
+            }
+        }
+
         private void PlayTestHaptic()
         {
             var mgr = HapbeatManager.Instance;
@@ -275,16 +366,29 @@ namespace Hapbeat.Samples.VRBasicExample
         }
 
         // ---------------------------------------------------------------
-        // Guide text (world-space, always 5 fixed lines — never shifts layout)
+        // Guide text (world-space, always 6 fixed lines — never shifts layout)
         // ---------------------------------------------------------------
 
         // One action per line, verbatim — replaces the old 3-line combined
         // layout so each control reads unambiguously at a glance from 1.5m out.
-        private const string GuideActionsText =
-            "R-A/B: player +/-\n" +
-            "L-X/Y: group +/-\n" +
-            "R-Trigger: apply + test\n" +
-            "L-Trigger: test";
+        // The Exit line's target changes if _returnSceneName is edited at
+        // authoring time, so this is built once (cached in _guideActionsTextCached)
+        // rather than a compile-time const like before — it never changes again
+        // at runtime, so this still never causes a layout shift.
+        private string _guideActionsTextCached;
+
+        private string BuildGuideActionsText()
+        {
+            string exitLine = string.IsNullOrEmpty(_returnSceneName)
+                ? "Exit: (no scene set)"
+                : $"Exit → {_returnSceneName}";
+            return
+                "R-A/B: player +/-\n" +
+                "L-X/Y: group +/-\n" +
+                "R-Trigger: apply + test\n" +
+                "L-Trigger: test\n" +
+                "R-Stick/Menu/Esc: " + exitLine;
+        }
 
         private void BuildGuideText()
         {
@@ -294,10 +398,10 @@ namespace Hapbeat.Samples.VRBasicExample
             // against how large each fixed-pixel-sized font/element renders).
             // Bumped ~1.8x over the original 0.7m/0.001 pair for comfortable
             // reading at the rig's 1.5m panel distance, and widened/heightened
-            // to fit the diagnostic line added below (5 lines total).
+            // to fit the diagnostic + Exit lines added below (6 lines total).
             const float scale = 0.0018f;
             const float worldWidth = 1.0f;
-            const float worldHeight = 0.46f;
+            const float worldHeight = 0.55f;
 
             var canvasGo = new GameObject("VRBasicExampleGuideCanvas");
             canvasGo.transform.SetParent(transform, false);
@@ -343,6 +447,7 @@ namespace Hapbeat.Samples.VRBasicExample
             text.color = Color.white;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
+            text.raycastTarget = false; // purely informational — never the click target
             var textRt = textGo.GetComponent<RectTransform>();
             textRt.anchorMin = Vector2.zero;
             textRt.anchorMax = Vector2.one;
@@ -350,10 +455,72 @@ namespace Hapbeat.Samples.VRBasicExample
             textRt.offsetMax = Vector2.zero;
 
             _guideText = text;
-            // Fixed 5-line block (4 static action lines + 1 diagnostic line):
-            // only the diagnostic line's content ever changes at runtime (see
-            // RefreshDiagnosticLine), so this never causes a layout shift.
-            _guideText.text = GuideActionsText + "\n" + DiagnosticPlaceholder;
+            _guideActionsTextCached = BuildGuideActionsText();
+            // Fixed 6-line block (5 static action lines, incl. Exit, + 1
+            // diagnostic line): only the diagnostic line's content ever changes
+            // at runtime (see RefreshDiagnosticLine), so this never causes a
+            // layout shift.
+            _guideText.text = _guideActionsTextCached + "\n" + DiagnosticPlaceholder;
+
+            BuildExitButton(canvasGo);
+        }
+
+        /// <summary>
+        /// Adds a clickable "Exit" Button to the guide canvas alongside the
+        /// controller/keyboard bindings in <see cref="BuildExitAction"/> — lets
+        /// this "settings check" scene be exited with a mouse click too (e.g.
+        /// desktop Editor testing without a headset attached). Requires a
+        /// <see cref="GraphicRaycaster"/> + <see cref="Canvas.worldCamera"/> on
+        /// this world-space canvas (added here); actually clicking it via a VR
+        /// laser pointer would additionally need an XR ray interactor, which is
+        /// out of scope for this minimal verification rig — the controller
+        /// stick-click/menu and keyboard Esc bindings remain the primary way to
+        /// exit in a headset.
+        /// </summary>
+        private void BuildExitButton(GameObject canvasGo)
+        {
+            if (EventSystem.current == null)
+            {
+                Debug.LogWarning("[Hapbeat] VRBasicExampleController: No EventSystem found in scene — " +
+                    "the on-screen Exit button will not receive clicks (controller stick-click/menu and " +
+                    "Keyboard Esc still work).");
+            }
+
+            if (canvasGo.GetComponent<GraphicRaycaster>() == null)
+                canvasGo.AddComponent<GraphicRaycaster>();
+
+            var canvas = canvasGo.GetComponent<Canvas>();
+            if (canvas.worldCamera == null)
+                canvas.worldCamera = _cameraTransform != null ? _cameraTransform.GetComponent<Camera>() : Camera.main;
+
+            var buttonGo = new GameObject("ExitButton", typeof(RectTransform));
+            buttonGo.transform.SetParent(canvasGo.transform, false);
+            var buttonRt = buttonGo.GetComponent<RectTransform>();
+            buttonRt.anchorMin = new Vector2(1f, 0f);
+            buttonRt.anchorMax = new Vector2(1f, 0f);
+            buttonRt.pivot = new Vector2(1f, 0f);
+            buttonRt.sizeDelta = new Vector2(140f, 50f);
+            buttonRt.anchoredPosition = new Vector2(-10f, 10f);
+
+            var buttonImage = buttonGo.AddComponent<Image>();
+            buttonImage.color = new Color(0.55f, 0.15f, 0.15f, 0.9f);
+            var button = buttonGo.AddComponent<Button>();
+            button.onClick.AddListener(ExitToScene);
+
+            var labelGo = new GameObject("Label", typeof(RectTransform));
+            labelGo.transform.SetParent(buttonGo.transform, false);
+            var labelRt = labelGo.GetComponent<RectTransform>();
+            labelRt.anchorMin = Vector2.zero;
+            labelRt.anchorMax = Vector2.one;
+            labelRt.offsetMin = Vector2.zero;
+            labelRt.offsetMax = Vector2.zero;
+            var label = labelGo.AddComponent<Text>();
+            label.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            label.fontSize = 22;
+            label.alignment = TextAnchor.MiddleCenter;
+            label.color = Color.white;
+            label.text = "Exit";
+            label.raycastTarget = false;
         }
 
         // ---------------------------------------------------------------
@@ -384,7 +551,7 @@ namespace Hapbeat.Samples.VRBasicExample
             if (!rightOk && !leftOk)
                 diagnostic += $" ({EnableOculusTouchHint})";
 
-            _guideText.text = GuideActionsText + "\n" + diagnostic;
+            _guideText.text = _guideActionsTextCached + "\n" + diagnostic;
         }
     }
 }
