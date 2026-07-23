@@ -348,9 +348,9 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatAddressOverridePanel
   _space: 1
-  _worldSize: {x: 0.5, y: 0.28}
+  _worldSize: {x: 0.9, y: 0.5}
   _worldLocalPosition: {x: 0, y: 0, z: 0}
-  _worldScale: 0.001
+  _worldScale: 0.0018
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

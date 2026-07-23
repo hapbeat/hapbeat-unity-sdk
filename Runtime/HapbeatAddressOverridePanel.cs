@@ -54,6 +54,11 @@ namespace Hapbeat
         // "edited/not-yet-applied" throughout the panel.
         private static readonly Color s_variableColor = new Color(1f, 0.85f, 0.2f);
 
+        // Rich-text hex form of s_variableColor, used to highlight only the
+        // segments of the status line's resolved-target preview that actually
+        // changed relative to PreviewTarget (see RefreshLabels / BuildDiffHighlightedRichText).
+        private static readonly string s_variableColorHex = ColorUtility.ToHtmlStringRGB(s_variableColor);
+
         [Header("Layout")]
         [Tooltip("ScreenSpaceOverlay = fixed 2D HUD (top-center). WorldSpace = 3D panel parented to this GameObject (e.g. for VR).")]
         [SerializeField]
@@ -258,6 +263,10 @@ namespace Hapbeat
             _statusText = CreateText(panel.transform, "Status", "", 12, FontStyle.Normal, TextAnchor.UpperLeft);
             _statusText.horizontalOverflow = HorizontalWrapMode.Overflow;
             _statusText.verticalOverflow = VerticalWrapMode.Overflow;
+            // Per-segment diff highlighting (RefreshLabels) wraps only the
+            // changed segments in <color=#...> tags — the arrow's left side
+            // (PreviewTarget) is never wrapped, so it always renders plain white.
+            _statusText.supportRichText = true;
             var statusLayoutElement = _statusText.gameObject.AddComponent<LayoutElement>();
             statusLayoutElement.minHeight = 16f;
             statusLayoutElement.preferredHeight = 16f;
@@ -282,10 +291,23 @@ namespace Hapbeat
 
             CreateSmallButton(row.transform, "Dec", "-", onDec);
 
+            // Value label toggles between a short digit ("3") and the longer
+            // word "disabled". Both states share one fixed alignment
+            // (MiddleCenter) and one fixed rect/font size (no bestFit) so the
+            // glyphs never move — but that alone isn't enough: "disabled" is
+            // wide enough to wrap onto a 2nd line at the old 48px width, and a
+            // wrapped 2-line block centered (MiddleCenter) in a fixed-height
+            // rect renders at a different vertical offset than a 1-line block,
+            // which is what actually read as "vertical center shifts between
+            // states". Widening the column and forcing Overflow (never Wrap)
+            // keeps every state single-line so MiddleCenter centers identically.
             var valueText = CreateText(row.transform, "Value", "-", 13, FontStyle.Bold, TextAnchor.MiddleCenter);
             valueText.color = s_variableColor; // the variable part — always highlighted, unlike the "Player:"/"Group:" label
+            valueText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            valueText.verticalOverflow = VerticalWrapMode.Overflow;
             var valueLayoutElement = valueText.gameObject.AddComponent<LayoutElement>();
-            valueLayoutElement.preferredWidth = 48f;
+            valueLayoutElement.preferredWidth = 70f;
+            valueLayoutElement.preferredHeight = 26f; // fixed rect height in both states, matches the row height
 
             CreateSmallButton(row.transform, "Inc", "+", onInc);
 
@@ -400,17 +422,52 @@ namespace Hapbeat
             string editingResolved = HapbeatClient.ResolveTarget(PreviewTarget, _editingPlayer, _editingGroup);
 
             // A single status line showing where the currently-*edited* values
-            // would resolve to. Colored yellow (same as the variable labels)
-            // while the edited values haven't been Applied yet, white once they
-            // match what's actually active — never a second line, so Apply
-            // never shifts the panel size (see workspace layout-shift rule).
+            // would resolve to. The left side (PreviewTarget) is always plain
+            // white. On the right side, only the segments that actually
+            // differ from PreviewTarget are highlighted yellow — not the
+            // whole line — so it's obvious at a glance exactly which slot(s)
+            // Apply would change. Once the edited values match what's already
+            // applied, the whole line renders plain (no highlighting). Never a
+            // second line, so Apply never shifts the panel size (see workspace
+            // layout-shift rule).
             bool pendingApply = _editingPlayer != appliedPlayer || _editingGroup != appliedGroup;
 
             if (_statusText != null)
             {
-                _statusText.text = $"{PreviewTarget} → {editingResolved}";
-                _statusText.color = pendingApply ? s_variableColor : Color.white;
+                string rightSide = pendingApply
+                    ? BuildDiffHighlightedRichText(PreviewTarget, editingResolved)
+                    : editingResolved;
+                _statusText.text = $"{PreviewTarget} → {rightSide}";
+                _statusText.color = Color.white; // base color; per-segment <color> tags do the highlighting
             }
+        }
+
+        /// <summary>
+        /// Builds a rich-text version of <paramref name="resolved"/> where only the
+        /// '/'-separated segments that differ from the segment at the same position
+        /// in <paramref name="original"/> (including segments <paramref name="resolved"/>
+        /// has that <paramref name="original"/> doesn't) are wrapped in
+        /// <c>&lt;color=#...&gt;</c> tags using <see cref="s_variableColor"/>.
+        /// Requires the target <c>Text</c> to have <c>supportRichText = true</c>.
+        /// </summary>
+        private static string BuildDiffHighlightedRichText(string original, string resolved)
+        {
+            string[] originalSegs = (original ?? string.Empty).Split('/');
+            string[] resolvedSegs = (resolved ?? string.Empty).Split('/');
+
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < resolvedSegs.Length; i++)
+            {
+                if (i > 0) sb.Append('/');
+
+                string seg = resolvedSegs[i];
+                bool changed = i >= originalSegs.Length || originalSegs[i] != seg;
+                if (changed)
+                    sb.Append("<color=#").Append(s_variableColorHex).Append('>').Append(seg).Append("</color>");
+                else
+                    sb.Append(seg);
+            }
+            return sb.ToString();
         }
 
         private static string LabelFor(int value) => value >= 1 ? value.ToString() : "disabled";

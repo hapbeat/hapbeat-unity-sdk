@@ -27,9 +27,24 @@ namespace Hapbeat.Tests
         }
 
         // ---- overridePlayer=-1, overrideGroup=7 ----
-        [TestCase("", "group_7")]
+        // Firmware/spec matching is positional (device-addressing.md §2): the
+        // i-th target segment is only ever compared against the i-th address
+        // segment, so group_ must land in the 3rd (post-position) slot, not
+        // simply at the end of whatever segments happen to already exist.
+        // Targets that don't already occupy the player/position slots get
+        // "*" placeholders inserted ahead of group_ so the slot alignment
+        // survives firmware's positional match.
+        [TestCase("", "*/*/group_7")]
+        [TestCase("*", "*/*/group_7")]
+        [TestCase("player_3", "player_3/*/group_7")]
         [TestCase("player_1/pos_chest", "player_1/pos_chest/group_7")]
         [TestCase("player_1/pos_chest/group_5", "player_1/pos_chest/group_7")]
+        [TestCase("red/player_1/pos_neck", "red/player_1/pos_neck/group_7")]
+        // Bare prefix target (spec §4.2: "red" matches red/player_1/pos_neck).
+        // Group must land after the (padded) player+position slots so it stays
+        // in its grammar position and the prefix is preserved ahead of it —
+        // NOT prepended-with-dangling-prefix ("*/*/group_7/red").
+        [TestCase("red", "red/*/*/group_7")]
         public void GroupOverrideOnly_AppendsOrReplacesGroupSegment(string input, string expected)
         {
             string result = HapbeatClient.ResolveTarget(input, overridePlayer: -1, overrideGroup: 7);
@@ -41,6 +56,24 @@ namespace Hapbeat.Tests
         {
             string result = HapbeatClient.ResolveTarget("player_1/pos_chest/group_5", overridePlayer: 3, overrideGroup: 7);
             Assert.AreEqual("player_3/pos_chest/group_7", result);
+        }
+
+        // ---- both overrides active, no existing pos_/group_ segment: group
+        // placement must still apply the positional-padding rule from
+        // GroupOverrideOnly_AppendsOrReplacesGroupSegment on top of whatever
+        // player-override processing already produced. ----
+        [TestCase("", "player_3/*/group_7")]
+        [TestCase("player_1", "player_3/*/group_7")]
+        // Regression: bare "*". The player-override step turns "*" into
+        // "player_3/*" (the original "*" now sits in the position slot), so the
+        // group-override step must NOT pad a second position placeholder — that
+        // produced "player_3/*/group_7/*" (4 segments, group misplaced), which
+        // is longer than any real device address and matches nothing.
+        [TestCase("*", "player_3/*/group_7")]
+        public void BothOverridesActive_NoExistingPositionOrGroup_PadsPositionSlot(string input, string expected)
+        {
+            string result = HapbeatClient.ResolveTarget(input, overridePlayer: 3, overrideGroup: 7);
+            Assert.AreEqual(expected, result);
         }
 
         // ---- both disabled (-1/-1): exact passthrough, including null. This is

@@ -61,6 +61,14 @@ namespace Hapbeat.Samples.VRBasicExample
         private bool _loggedMissingManager;
         private bool _guideBuilt;
 
+        // Diagnostic line ("R:OK L:--" etc.) refreshes once per second, not
+        // every frame — see Update()/RefreshDiagnosticLine(). It always
+        // occupies the same fixed line at the end of the guide text block, so
+        // its content changing never shifts the guide's layout/size.
+        private const float DiagnosticRefreshIntervalSeconds = 1f;
+        private float _diagnosticTimer;
+        private Text _guideText;
+
         private void OnEnable()
         {
             BuildHmdPoseActions();
@@ -72,6 +80,17 @@ namespace Hapbeat.Samples.VRBasicExample
                 BuildGuideText();
                 _guideBuilt = true;
             }
+
+            _diagnosticTimer = 0f;
+            RefreshDiagnosticLine(); // don't wait a full second for the first reading
+        }
+
+        private void Update()
+        {
+            _diagnosticTimer += Time.deltaTime;
+            if (_diagnosticTimer < DiagnosticRefreshIntervalSeconds) return;
+            _diagnosticTimer = 0f;
+            RefreshDiagnosticLine();
         }
 
         private void OnDisable()
@@ -256,14 +275,29 @@ namespace Hapbeat.Samples.VRBasicExample
         }
 
         // ---------------------------------------------------------------
-        // Guide text (world-space, always 3 lines — never shifts layout)
+        // Guide text (world-space, always 5 fixed lines — never shifts layout)
         // ---------------------------------------------------------------
+
+        // One action per line, verbatim — replaces the old 3-line combined
+        // layout so each control reads unambiguously at a glance from 1.5m out.
+        private const string GuideActionsText =
+            "R-A/B: player +/-\n" +
+            "L-X/Y: group +/-\n" +
+            "R-Trigger: apply + test\n" +
+            "L-Trigger: test";
 
         private void BuildGuideText()
         {
-            const float scale = 0.001f; // 1 UI pixel = 1mm, matches HapbeatAddressOverridePanel default.
-            const float worldWidth = 0.7f;
-            const float worldHeight = 0.24f;
+            // Scale matches the enlarged HapbeatAddressOverridePanel default
+            // (world-space physical size = worldWidth/worldHeight regardless
+            // of scale — scale only trades off UI-pixel canvas resolution
+            // against how large each fixed-pixel-sized font/element renders).
+            // Bumped ~1.8x over the original 0.7m/0.001 pair for comfortable
+            // reading at the rig's 1.5m panel distance, and widened/heightened
+            // to fit the diagnostic line added below (5 lines total).
+            const float scale = 0.0018f;
+            const float worldWidth = 1.0f;
+            const float worldHeight = 0.46f;
 
             var canvasGo = new GameObject("VRBasicExampleGuideCanvas");
             canvasGo.transform.SetParent(transform, false);
@@ -277,10 +311,12 @@ namespace Hapbeat.Samples.VRBasicExample
 
             // Anchor just below the Address Override panel so both stay
             // legible together in-headset; fall back to a spot in front of
-            // this rig if no panel is wired.
+            // this rig if no panel is wired. Offset grown along with both
+            // panels' larger footprints so there's still a clear gap between
+            // them (was -0.2 when the panel was half this height).
             if (_panel != null)
             {
-                canvasGo.transform.position = _panel.transform.position + new Vector3(0f, -0.2f, 0f);
+                canvasGo.transform.position = _panel.transform.position + new Vector3(0f, -0.5f, 0f);
                 canvasGo.transform.rotation = _panel.transform.rotation;
             }
             else
@@ -302,22 +338,53 @@ namespace Hapbeat.Samples.VRBasicExample
             textGo.transform.SetParent(canvasGo.transform, false);
             var text = textGo.AddComponent<Text>();
             text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            text.fontSize = 28;
+            text.fontSize = 30;
             text.alignment = TextAnchor.MiddleCenter;
             text.color = Color.white;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
-            // Fixed 3-line block — content never changes at runtime, so this
-            // never causes a layout shift.
-            text.text =
-                "R-A/B player+-   L-X/Y group+-\n" +
-                "R-Trig apply+test   L-Trig test\n" +
-                "kit: deploy sample-kit via Studio";
             var textRt = textGo.GetComponent<RectTransform>();
             textRt.anchorMin = Vector2.zero;
             textRt.anchorMax = Vector2.one;
             textRt.offsetMin = Vector2.zero;
             textRt.offsetMax = Vector2.zero;
+
+            _guideText = text;
+            // Fixed 5-line block (4 static action lines + 1 diagnostic line):
+            // only the diagnostic line's content ever changes at runtime (see
+            // RefreshDiagnosticLine), so this never causes a layout shift.
+            _guideText.text = GuideActionsText + "\n" + DiagnosticPlaceholder;
+        }
+
+        // ---------------------------------------------------------------
+        // Diagnostic line (right/left controller bind resolution)
+        // ---------------------------------------------------------------
+
+        private const string DiagnosticPlaceholder = "R:-- L:--";
+        private const string EnableOculusTouchHint = "enable Oculus Touch profile (OpenXR)";
+
+        /// <summary>
+        /// Refreshes the guide's trailing diagnostic line with whether the
+        /// right/left controller bindings currently resolve to a device
+        /// (<see cref="InputAction.controls"/> non-empty). Each hand is
+        /// checked via one representative action for that hand's physical
+        /// device binding (<c>&lt;XRController&gt;{RightHand/LeftHand}/...</c>)
+        /// — if that resolves, the other actions on the same hand/device do
+        /// too. Always writes the same fixed line (text only, no line
+        /// added/removed) so this never shifts the guide's layout.
+        /// </summary>
+        private void RefreshDiagnosticLine()
+        {
+            if (_guideText == null) return;
+
+            bool rightOk = _rightPlayerUpAction != null && _rightPlayerUpAction.controls.Count > 0;
+            bool leftOk = _leftGroupUpAction != null && _leftGroupUpAction.controls.Count > 0;
+
+            string diagnostic = $"R:{(rightOk ? "OK" : "--")} L:{(leftOk ? "OK" : "--")}";
+            if (!rightOk && !leftOk)
+                diagnostic += $" ({EnableOculusTouchHint})";
+
+            _guideText.text = GuideActionsText + "\n" + diagnostic;
         }
     }
 }

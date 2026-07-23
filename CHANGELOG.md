@@ -30,6 +30,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Fixed（修正）
 
+- **`HapbeatClient.ResolveTarget` の group override 挿入位置バグ** — firmware/spec の target 照合は位置ベース（i 番目セグメント同士のみ比較、`*` は 1 セグメント消費）。既存の `group_` セグメントが無い target に対し、単純に末尾へ `group_<M>` を追加していたため、player/position スロットを省略した target（`""` / `"*"` / `"player_3"` 等）では group が本来の position スロットにずれ込み、firmware 側で絶対に一致しなくなっていた（触覚が一切発火しない）。position セグメントが無い場合は player スロット直後に `"*"`（position プレースホルダー）を補ってから group を挿入するよう修正（例: `"" → "*/*/group_2"`、`"player_3" → "player_3/*/group_2"`）。`pos_` セグメントが既にある target は従来どおりその直後に挿入（挙動不変）。
 - **`HapbeatAddressOverridePanel` のネスト Canvas バグ** — 自身が別の Canvas（例: 既存のスクリーンスペース HUD）の子として配置されている場合、生成した Canvas も入れ子になり、`RenderMode` やスクリーンアンカー設定が Unity の仕様で無視され、意図しない位置（親パネル基準）に描画されていた問題を修正。`Build()` が祖先 Canvas の有無を検出し、検出時は自分の Canvas をシーンルートへ退避して独立させる。退避後も `OnEnable`/`OnDisable`/`OnDestroy` でこの Canvas の表示・生存をコンポーネント自身と同期する。
   - Showcase サンプルの `AddressOverrideDemo`（Z4_Stream ゾーン）が実際にこの構成（`StreamPanelHud` → `StreamCanvas` の子として配置）になっていたため、`Samples~/Showcase/Showcase.unity` を修正し、`Z4_Stream` 直下（`StreamCanvas` の外）の独立 GameObject に配線し直した。
 - `HapbeatAddressOverridePanel` のパネルサイズを大幅圧縮 (340×190 → 300×110px 相当)。ScreenSpaceOverlay で左上のガイドテキストと視覚的に被っていたレイアウトを、Player/Group ステッパーを左 2 行・Apply ボタンをその右に 2 行分の高さの正方形に近いボタンとして配置し直すことで解消。ステータス行も「編集中/適用済み」の 2 行常時表示から、編集中の解決プレビュー 1 行（例: `player_1/pos_chest → player_3/pos_chest`）に縮小し、行の出し入れなしで解決結果のみ差し替える（workspace レイアウトシフト禁止ルール準拠）。

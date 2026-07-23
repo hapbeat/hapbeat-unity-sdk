@@ -224,9 +224,61 @@ namespace Hapbeat
                 string groupSeg = "group_" + overrideGroup;
                 int k = segs.FindIndex(s => s.StartsWith("group_", StringComparison.Ordinal));
                 if (k >= 0)
+                {
                     segs[k] = groupSeg;
+                }
                 else
-                    segs.Add(groupSeg);
+                {
+                    // Firmware/spec matching is positional (device-addressing.md §2):
+                    // the i-th target segment is compared against the i-th address
+                    // segment only, with "*" consuming exactly one slot. group_
+                    // must therefore land in its grammar slot (immediately after
+                    // {position}); a naive Add() at the end lands it in whatever
+                    // slot happens to be next, so firmware never matches.
+                    int posIdx = segs.FindIndex(s => s.StartsWith("pos_", StringComparison.Ordinal));
+                    if (posIdx >= 0)
+                    {
+                        segs.Insert(posIdx + 1, groupSeg);
+                    }
+                    else
+                    {
+                        // No explicit position segment. Locate the player slot:
+                        // an explicit player_ segment, or a leading bare "*"
+                        // acting as the player wildcard.
+                        int playerIdx = segs.FindIndex(s => s.StartsWith("player_", StringComparison.Ordinal));
+                        if (playerIdx < 0 && segs.Count > 0 && segs[0] == "*")
+                            playerIdx = 0; // leading wildcard occupies the player slot
+
+                        if (playerIdx >= 0)
+                        {
+                            // Position slot is the segment right after the player
+                            // slot. Only pad a "*" placeholder when that slot is
+                            // actually empty — if the target already occupies it
+                            // (e.g. a bare "*" that the player-override step left
+                            // in the position slot for a target like "*"), reuse
+                            // it so group_ stays in the 3rd slot instead of being
+                            // pushed to a 4th, which would make the target longer
+                            // than the device address and break the positional
+                            // match entirely.
+                            int posSlot = playerIdx + 1;
+                            if (posSlot >= segs.Count)
+                                segs.Insert(posSlot, "*"); // no position segment yet — pad it
+                            segs.Insert(posSlot + 1, groupSeg);
+                        }
+                        else
+                        {
+                            // Everything present (if anything) is a free prefix
+                            // with no player/position slot. Append player and
+                            // position placeholders, then group, so group stays
+                            // after position and the prefix is preserved ahead
+                            // of it (e.g. "" -> "*/*/group_M",
+                            // "red" -> "red/*/*/group_M").
+                            segs.Add("*");
+                            segs.Add("*");
+                            segs.Add(groupSeg);
+                        }
+                    }
+                }
             }
 
             return string.Join("/", segs);
