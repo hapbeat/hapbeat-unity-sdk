@@ -25,6 +25,6 @@ MonoBehaviour:
     target:
     delayOffsetSeconds: 0
     notes: Test-play clip for VRConfigExample — StreamClip mode, no Kit required on device.
-    manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: -1
+    manifestOverride: {fileID: 4900000, guid: 2e3a8e73ba1245bf8a2a79022874d58c, type: 3}
+    _cachedManifestIntensity: 1
   revertPlayModeChanges: 0

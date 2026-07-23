@@ -30,6 +30,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - `HapbeatRuntimeStatusWindow` の Address Override 節に、Player/Group を直接編集して "Save to this device" で保存できる行を追加。Play Mode に入らなくても（`PlayerPrefs` に直接書き込む）、Play Mode 中は `HapbeatManager.SetAddressOverride` 経由で保存できる。
 - `HapbeatAddressOverridePanel.SetFocusedField(HapbeatAddressOverrideFocusField)` を追加。Player/Group いずれかの行を半透明の黄色背景で常時ハイライトできる（デフォルトは非表示・呼ばなければ見た目は変わらない）。単一コントローラーで両フィールドを操作する `VRConfigExample` 向け。
 - `HapbeatAddressOverridePanel.Apply()` が Apply ボタン背景を ~0.3 秒暗色化するフラッシュフィードバックを追加。VR コントローラーのトリガー長押しなど、ボタンを直接クリックしない経路から Apply を呼んだ場合の視覚確認用。
+- `Samples~/VRConfigExample/sample-kit-manifest.json` を追加（`BasicExample` の `basic-exam-kit-manifest.json` と同じ運用: `manifestOverride` 経由の Editor 上 intensity プレビュー専用、実機への Kit インストールは不要）。`VRConfigExampleEventMap` の StreamClip エントリ（`sample-kit.sine_100hz`）に配線し、intensity は contracts 標準の `sample-kit`（`fixtures/sample-kit-manifest.json`）と同じ `1.0` を踏襲。
 
 ### Fixed（修正）
 
@@ -41,6 +42,11 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - 新サンプル `VRConfigExample`（`VRConfigExampleController`）に Exit 機能を追加。`_returnSceneName`（Editor では `SceneAsset` フィールドからも自動同期）を設定すると、左手メニューボタン/Keyboard Esc/画面上の Exit ボタンのいずれでも指定シーンへ `SceneManager.LoadScene` で戻れる。未設定時は警告ログのみで無効化（既定 = 空文字）。ガイドテキストに Exit 用の固定 1 行を追加（6 行構成に、パネルサイズも追従）。想定運用: このサンプルを自プロジェクトへ import → 両シーンを Build Settings に追加 → 自シーンから `SceneManager.LoadScene("VRConfigExample")` で入場 → Address Override を確認・設定 → Exit で復帰。
 - **`VRConfigExample` の world-fixed UI 微振動を根治** — HMD 姿勢をコード内の手書き `LateUpdate` で毎フレーム 1 回だけ Transform に適用していたため、XR コンポジタ側の遅延ラッチ/reprojection パスと基準タイミングがずれ、パネル/ガイドテキストが目に見えて微振動していた。手書き適用を廃止し、`_cameraTransform` に実行時 `AddComponent<UnityEngine.InputSystem.XR.TrackedPoseDriver>()` してコードで構成（`positionInput`/`rotationInput` を `<XRHMD>/centerEyePosition` / `centerEyeRotation` にバインド、`updateType = UpdateAndBeforeRender`）。Input System 自身のレンダー直前サンプリングに揃うため、コンポジタと同じタイミングで姿勢を取得するようになる。
 - **`VRConfigExample` の Exit バインドが右手メニューボタンで不発だった原因を特定** — Quest では右 Touch コントローラーの「システム」ボタンは OS 側で予約されており（Quest システムメニューを開く）、アプリの Input System アクションには一切配信されない。左 Touch コントローラーの Menu ボタンのみアプリから利用可能。旧 Exit バインド（右手 `menuButton` + 右スティック押し込み）はこれが原因で実機発火しなかった。Exit を左手 `menuButton` のみに変更（右手は削除）。
+- **`VRConfigExample` の実機不発 3 件（スティック押し込み / Menu / トリガー長押し Apply）を修正** — Quest 3s + Meta Quest Touch Plus/Pro 実機検証で、A/B/X/Y・トリガー・スティック傾きは効くのに上記 3 つだけ不発と判明。`com.unity.xr.openxr` の `OculusTouchControllerProfile` / `MetaQuestTouchPlusControllerProfile` / `MetaQuestTouchProControllerProfile` 実ソースを確認して原因を特定・修正した。
+  - スティック押し込み: 旧バインド `<XRController>{Hand}/primary2DAxisClick` は、`primary2DAxisClick` がそのコントロールの OpenXR *usage* タグに過ぎず control 名/エイリアスではないため一致しない、実質デッドバインドだった（Input System が usage をパスセグメントとして照合するのは `{primary2DAxisClick}` の brace 表記のみ — Unity 公式サンプル `com.unity.xr.openxr/Samples~/Controller/ControllerSampleActions.inputactions` で確認）。control の実名は `thumbstickClicked`（エイリアス: `JoystickOrPadPressed` / `thumbstickClick` / `joystickClicked`）。両手 × 名前バインド + braced usage バインドの計 4 本を冗長登録。
+  - Menu: 左手 `menuButton`（エイリアス）のみのバインドに加え、control の実名 `menu`（Unity 公式サンプルが使う表記）も冗長登録。
+  - トリガー長押し Apply: `started`/`canceled` コールバックのシーケンスが実機の長押しジェスチャーに対して不安定だった（A/B/X/Y・スティック傾きのような単発 `performed` は影響を受けなかった）。`Update()` で `InputAction.IsPressed()` を毎フレーム読む `PollTrigger()` に一元化し、`started`/`canceled` 購読を廃止。長押し閾値到達（Apply）と解放時の未到達（テスト再生）を 1 回のホールドにつき排他的に発火するようラッチ管理。
+  - 診断行末尾に最後に検知したコントロール名を `last: RightHand/thumbstickClicked` 形式で常時表示（`RecordLastControl`）。全 shared action の `performed` に配線し、on-device でどの物理コントロールが実際に解決したかを即座に確認できる。
 
 ### Changed（変更）
 
@@ -53,6 +59,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - `VRConfigExample` のテスト再生を、直接 `HapbeatManager.Play(eventId)`（Command モード、Kit 必須）で呼んでいたものから、`BasicExample` と同じ経路（`HapbeatUnityEventTrigger` → EventMap の StreamClip エントリ）に変更。新設 `VRConfigExampleEventMap.asset`（100Hz sine、1 エントリ）を同梱し、デバイスに Kit を配備しなくても振動確認できる。
 - `VRConfigExample` の診断行を `Controllers: R OK / L --` 形式に整理（旧: `R:OK L:--`）。
 - シーン構成: `Hapbeat` GameObject を `ConfigSceneController` に改名し、`VRConfigExampleController`（旧 `VRBasicExampleController`）を `VRRig` から `ConfigSceneController` へ移設（`VRRig` は Main Camera の親としてのみ残る）。
+- `HapbeatAddressOverridePanel` のステータス行プレビュー例を `player_1/pos_chest` → `player_1/pos_chest/group_1` に変更（`PreviewTarget` 定数）。group override 適用時の解決結果も一目で確認できるよう、position に加えて group セグメントを含む例に揃えた。
 
 ### Removed（削除）
 

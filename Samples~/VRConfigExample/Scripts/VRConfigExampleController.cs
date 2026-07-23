@@ -43,7 +43,9 @@ namespace Hapbeat.Samples.VRConfigExample
     /// <item>A/B or X/Y (either hand) — +/- the focused value. Keyboard: =/-.</item>
     /// <item>Trigger short press (either hand) — test playback (Keyboard: Space).
     /// Trigger held &gt; <see cref="LongPressThresholdSeconds"/>s — Apply
-    /// (with a visual flash on the panel's Apply button).</item>
+    /// (with a visual flash on the panel's Apply button). Detected by
+    /// <see cref="PollTrigger"/> polling <c>IsPressed()</c> every frame — see the
+    /// remarks below on why this isn't <c>started</c>/<c>canceled</c>-driven.</item>
     /// <item>Stick click (either hand) — <see cref="Recenter"/> the panel + guide
     /// in front of the camera. Keyboard: R.</item>
     /// <item>Left-hand Menu button / Keyboard Esc / on-screen Exit button — return
@@ -54,6 +56,38 @@ namespace Hapbeat.Samples.VRConfigExample
     /// right-hand menu button silently never fired on-device. Only the left
     /// controller's Menu button is actually deliverable to apps.</item>
     /// </list>
+    ///
+    /// <para>
+    /// <b>Binding paths verified against the actual OpenXR device layout</b> (Meta
+    /// Quest Touch Plus/Pro and the base Oculus Touch profile all expose the exact
+    /// same <c>InputControl</c> member names/aliases — see
+    /// <c>com.unity.xr.openxr</c>'s <c>OculusTouchControllerProfile.cs</c> /
+    /// <c>MetaQuestTouchPlusControllerProfile.cs</c> / <c>MetaQuestTouchProControllerProfile.cs</c>):
+    /// stick <b>tilt</b> binds to <c>primary2DAxis</c>, which matches only because
+    /// it happens to be a literal alias of the <c>thumbstick</c> control. Stick
+    /// <b>click</b>'s control member is named <c>thumbstickClicked</c> — its
+    /// aliases are <c>JoystickOrPadPressed</c> / <c>thumbstickClick</c> /
+    /// <c>joystickClicked</c>, none of which is <c>primary2DAxisClick</c>. A bare
+    /// <c>primary2DAxisClick</c> path segment is only that control's OpenXR
+    /// <i>usage</i> tag, not a name/alias, and Input System only matches path
+    /// segments against usages when written in <c>{brace}</c> form — confirmed in
+    /// Unity's own shipped sample,
+    /// <c>com.unity.xr.openxr/Samples~/Controller/ControllerSampleActions.inputactions</c>,
+    /// which binds it as <c>&lt;XRController&gt;{Hand}/{primary2DAxisClick}</c>. This
+    /// sample previously bound the bare (unbraced) form, which silently never
+    /// resolved — the actual bug behind stick-click never firing on-device. Both
+    /// the corrected name-based binding and the corrected braced-usage binding are
+    /// now registered for redundancy. Menu binds both the exact member name
+    /// <c>menu</c> (as Unity's own sample does) and its <c>menuButton</c> alias,
+    /// left hand only.
+    /// </para>
+    ///
+    /// <para>
+    /// The trailing guide line also reports the most recently detected control's
+    /// hand + name (e.g. <c>last: RightHand/thumbstickClicked</c>) — see
+    /// <see cref="RecordLastControl"/> — for on-device triage of which physical
+    /// control an input actually resolved to.
+    /// </para>
     ///
     /// <para>
     /// Test playback fires <see cref="_testTrigger"/> — a
@@ -134,12 +168,22 @@ namespace Hapbeat.Samples.VRConfigExample
         private InputAction _leftHandProbeAction;
 
         private bool _stickPastThreshold;
+
+        // --- Trigger hold state (polled — see PollTrigger) ---
+        private bool _triggerWasPressed;
         private float _triggerPressStartTime = -1f;
-        private bool _applyFiredThisPress;
+        private bool _applyFiredThisHold;
 
         private bool _loggedMissingManager;
         private bool _loggedMissingTestTrigger;
         private bool _guideBuilt;
+
+        // Last control that actually resolved and fired a performed callback
+        // (hand + control name), refreshed by RecordLastControl and shown on the
+        // guide's trailing diagnostic line — see BuildDiagnosticProbes remarks
+        // for why the shared either-hand actions can't attribute this on their
+        // own.
+        private string _lastControlName = "(none yet)";
 
         // Diagnostic line ("Controllers: R OK / L --" etc.) refreshes once per
         // second, not every frame — see Update()/RefreshDiagnosticLine(). It
@@ -179,7 +223,7 @@ namespace Hapbeat.Samples.VRConfigExample
         private void Update()
         {
             PollFocusStick();
-            PollTriggerHold();
+            PollTrigger();
 
             _diagnosticTimer += Time.deltaTime;
             if (_diagnosticTimer < DiagnosticRefreshIntervalSeconds) return;
@@ -193,13 +237,15 @@ namespace Hapbeat.Samples.VRConfigExample
             DisposeAction(ref _focusToggleKeyAction, OnFocusToggleKey);
             DisposeAction(ref _incAction, OnInc);
             DisposeAction(ref _decAction, OnDec);
-            DisposeAction(ref _triggerAction, OnTriggerStarted, OnTriggerCanceled);
+            DisposeAction(ref _triggerAction, RecordLastControl); // diagnostic-only subscription — hold/short-press logic is polled, not event-driven (see PollTrigger)
             DisposeAction(ref _recenterAction, OnRecenter);
             DisposeAction(ref _exitAction, OnExit);
             DisposeAction(ref _rightHandProbeAction);
             DisposeAction(ref _leftHandProbeAction);
 
+            _triggerWasPressed = false;
             _triggerPressStartTime = -1f;
+            _applyFiredThisHold = false;
             _stickPastThreshold = false;
         }
 
@@ -278,32 +324,51 @@ namespace Hapbeat.Samples.VRConfigExample
             _decAction.performed += OnDec;
             _decAction.Enable();
 
+            // Button-type action so IsPressed() reflects the analog trigger's own
+            // press-point threshold — PollTrigger() reads this every frame instead
+            // of subscribing started/canceled (see PollTrigger remarks for why).
+            // performed is still subscribed, but purely for the diagnostic
+            // "last:" line (RecordLastControl) — it has no effect on hold/short-
+            // press behavior.
             _triggerAction = new InputAction(
                 name: "VRConfigExample/TestOrApply",
                 type: InputActionType.Button,
                 binding: "<XRController>{LeftHand}/triggerPressed");
             _triggerAction.AddBinding("<XRController>{RightHand}/triggerPressed");
             _triggerAction.AddBinding("<Keyboard>/space");
-            _triggerAction.started += OnTriggerStarted;
-            _triggerAction.canceled += OnTriggerCanceled;
+            _triggerAction.performed += RecordLastControl;
             _triggerAction.Enable();
 
+            // Stick click — the concrete OpenXR device layout's control member is
+            // named "thumbstickClicked" (aliases: JoystickOrPadPressed /
+            // thumbstickClick / joystickClicked); "primary2DAxisClick" is only its
+            // usage tag, which Input System only matches via the braced
+            // "{primary2DAxisClick}" usage-path form. Both are bound below for
+            // redundancy — see the class doc for the source-verified detail (this
+            // sample previously bound the bare, non-matching "primary2DAxisClick"
+            // form, which is why stick-click never fired on-device).
             _recenterAction = new InputAction(
                 name: "VRConfigExample/Recenter",
                 type: InputActionType.Button,
-                binding: "<XRController>{LeftHand}/primary2DAxisClick");
-            _recenterAction.AddBinding("<XRController>{RightHand}/primary2DAxisClick");
+                binding: "<XRController>{LeftHand}/thumbstickClicked");
+            _recenterAction.AddBinding("<XRController>{RightHand}/thumbstickClicked");
+            _recenterAction.AddBinding("<XRController>{LeftHand}/{primary2DAxisClick}");
+            _recenterAction.AddBinding("<XRController>{RightHand}/{primary2DAxisClick}");
             _recenterAction.AddBinding("<Keyboard>/r");
             _recenterAction.performed += OnRecenter;
             _recenterAction.Enable();
 
             // Left-hand Menu button only — see the class doc for why the right
             // controller's equivalent button is deliberately excluded (Quest
-            // reserves it for the system menu; it never reaches app input).
+            // reserves it for the system menu; it never reaches app input). Both
+            // the exact control member name ("menu" — as Unity's own OpenXR
+            // Controller sample binds it) and its "menuButton" alias are bound,
+            // left hand only, for redundancy.
             _exitAction = new InputAction(
                 name: "VRConfigExample/Exit",
                 type: InputActionType.Button,
-                binding: "<XRController>{LeftHand}/menuButton");
+                binding: "<XRController>{LeftHand}/menu");
+            _exitAction.AddBinding("<XRController>{LeftHand}/menuButton");
             _exitAction.AddBinding("<Keyboard>/escape");
             _exitAction.performed += OnExit;
             _exitAction.Enable();
@@ -331,6 +396,33 @@ namespace Hapbeat.Samples.VRConfigExample
             _leftHandProbeAction.Enable();
         }
 
+        /// <summary>
+        /// Records the hand + control name of whatever <c>InputAction</c>
+        /// callback last fired, for the guide's trailing "last:" diagnostic
+        /// (see <see cref="RefreshDiagnosticLine"/>). Subscribed to every
+        /// shared action's <c>performed</c> callback (in addition to that
+        /// action's own handler) so the diagnostic reflects the actual
+        /// physical control that resolved on-device — the shared either-hand
+        /// actions can't otherwise attribute a firing back to a single
+        /// control/hand from the outside (see <see cref="BuildDiagnosticProbes"/>
+        /// remarks on the same either-hand-merging limitation).
+        /// </summary>
+        private void RecordLastControl(InputAction.CallbackContext ctx)
+        {
+            var control = ctx.control;
+            if (control == null) return;
+
+            string hand = "?";
+            var device = control.device;
+            if (device != null)
+            {
+                if (device is Keyboard) hand = "Keyboard";
+                else if (device.usages.Count > 0) hand = device.usages[0].ToString();
+                else hand = device.displayName;
+            }
+            _lastControlName = $"{hand}/{control.name}";
+        }
+
         private static void DisposeAction(ref InputAction action)
         {
             if (action == null) return;
@@ -343,18 +435,6 @@ namespace Hapbeat.Samples.VRConfigExample
         {
             if (action == null) return;
             action.performed -= performedHandler;
-            action.Disable();
-            action.Dispose();
-            action = null;
-        }
-
-        private static void DisposeAction(ref InputAction action,
-            System.Action<InputAction.CallbackContext> startedHandler,
-            System.Action<InputAction.CallbackContext> canceledHandler)
-        {
-            if (action == null) return;
-            action.started -= startedHandler;
-            action.canceled -= canceledHandler;
             action.Disable();
             action.Dispose();
             action = null;
@@ -380,7 +460,11 @@ namespace Hapbeat.Samples.VRConfigExample
             _stickPastThreshold = past;
         }
 
-        private void OnFocusToggleKey(InputAction.CallbackContext ctx) => ToggleFocus();
+        private void OnFocusToggleKey(InputAction.CallbackContext ctx)
+        {
+            RecordLastControl(ctx);
+            ToggleFocus();
+        }
 
         private void ToggleFocus()
         {
@@ -394,8 +478,17 @@ namespace Hapbeat.Samples.VRConfigExample
         // Inc / Dec (applies to whichever field currently has focus)
         // ---------------------------------------------------------------
 
-        private void OnInc(InputAction.CallbackContext ctx) => AdjustFocusedValue(+1);
-        private void OnDec(InputAction.CallbackContext ctx) => AdjustFocusedValue(-1);
+        private void OnInc(InputAction.CallbackContext ctx)
+        {
+            RecordLastControl(ctx);
+            AdjustFocusedValue(+1);
+        }
+
+        private void OnDec(InputAction.CallbackContext ctx)
+        {
+            RecordLastControl(ctx);
+            AdjustFocusedValue(-1);
+        }
 
         private void AdjustFocusedValue(int delta)
         {
@@ -415,28 +508,60 @@ namespace Hapbeat.Samples.VRConfigExample
         // Trigger: short press = test playback, long press (>0.6s) = Apply
         // ---------------------------------------------------------------
 
-        private void OnTriggerStarted(InputAction.CallbackContext ctx)
+        /// <summary>
+        /// Polls <see cref="_triggerAction"/>'s <c>IsPressed()</c> every frame
+        /// instead of relying on <c>started</c>/<c>canceled</c> callbacks. On
+        /// Quest 3s + Meta Quest Touch Plus/Pro, the analog trigger's
+        /// started/performed/canceled event sequence was unreliable for a
+        /// sustained hold-to-Apply gesture — a real device symptom this rig
+        /// exists to catch, not an Editor-only quirk (A/B/X/Y and stick tilt,
+        /// which only ever fire a single <c>performed</c>, were unaffected).
+        /// Polling <c>IsPressed()</c> directly sidesteps the callback sequence
+        /// entirely: it's just "is the button down right now", read fresh
+        /// every <see cref="Update"/>.
+        ///
+        /// <para>
+        /// Short-press (test playback) and long-press (Apply) are mutually
+        /// exclusive per press/release cycle: <see cref="_applyFiredThisHold"/>
+        /// latches the instant the hold threshold is crossed, and release only
+        /// fires the short-press test if that latch is still false. A press
+        /// released before <see cref="LongPressThresholdSeconds"/> elapses
+        /// therefore always fires the short-press test — the hold check simply
+        /// never got the chance to fire first.
+        /// </para>
+        /// </summary>
+        private void PollTrigger()
         {
-            _triggerPressStartTime = Time.unscaledTime;
-            _applyFiredThisPress = false;
-        }
+            if (_triggerAction == null) return;
+            bool pressed = _triggerAction.IsPressed();
 
-        private void OnTriggerCanceled(InputAction.CallbackContext ctx)
-        {
-            // Only fire the short-press test if the long-press Apply hasn't
-            // already fired for this same press (avoids double-firing on release).
-            if (_triggerPressStartTime >= 0f && !_applyFiredThisPress)
-                PlayTestHaptic();
-            _triggerPressStartTime = -1f;
-        }
+            if (pressed && !_triggerWasPressed)
+            {
+                // Rising edge — press just started.
+                _triggerPressStartTime = Time.unscaledTime;
+                _applyFiredThisHold = false;
+            }
+            else if (pressed && _triggerWasPressed && !_applyFiredThisHold)
+            {
+                // Held past the threshold — fire Apply exactly once for this hold.
+                if (_triggerPressStartTime >= 0f &&
+                    Time.unscaledTime - _triggerPressStartTime >= LongPressThresholdSeconds)
+                {
+                    _applyFiredThisHold = true;
+                    if (_panel != null) _panel.Apply(); // Apply() flashes its own button — no extra feedback needed here.
+                }
+            }
+            else if (!pressed && _triggerWasPressed)
+            {
+                // Released — short-press test only if Apply didn't already
+                // fire during this same hold (mutual exclusion).
+                if (!_applyFiredThisHold)
+                    PlayTestHaptic();
+                _triggerPressStartTime = -1f;
+                _applyFiredThisHold = false;
+            }
 
-        private void PollTriggerHold()
-        {
-            if (_triggerPressStartTime < 0f || _applyFiredThisPress) return;
-            if (Time.unscaledTime - _triggerPressStartTime < LongPressThresholdSeconds) return;
-
-            _applyFiredThisPress = true;
-            if (_panel != null) _panel.Apply(); // Apply() flashes its own button — no extra feedback needed here.
+            _triggerWasPressed = pressed;
         }
 
         private void PlayTestHaptic()
@@ -468,7 +593,11 @@ namespace Hapbeat.Samples.VRConfigExample
         // Recenter (stick click) — panel + guide move to camera-front, yaw only
         // ---------------------------------------------------------------
 
-        private void OnRecenter(InputAction.CallbackContext ctx) => Recenter();
+        private void OnRecenter(InputAction.CallbackContext ctx)
+        {
+            RecordLastControl(ctx);
+            Recenter();
+        }
 
         /// <summary>
         /// Moves the Address Override panel (and the guide text, which follows
@@ -505,7 +634,11 @@ namespace Hapbeat.Samples.VRConfigExample
         // Exit
         // ---------------------------------------------------------------
 
-        private void OnExit(InputAction.CallbackContext ctx) => ExitToScene();
+        private void OnExit(InputAction.CallbackContext ctx)
+        {
+            RecordLastControl(ctx);
+            ExitToScene();
+        }
 
         /// <summary>
         /// Loads <see cref="_returnSceneName"/>, returning to whatever scene
@@ -726,7 +859,7 @@ namespace Hapbeat.Samples.VRConfigExample
             bool rightOk = _rightHandProbeAction != null && _rightHandProbeAction.controls.Count > 0;
             bool leftOk = _leftHandProbeAction != null && _leftHandProbeAction.controls.Count > 0;
 
-            string diagnostic = $"Controllers: R {(rightOk ? "OK" : "--")} / L {(leftOk ? "OK" : "--")}";
+            string diagnostic = $"Controllers: R {(rightOk ? "OK" : "--")} / L {(leftOk ? "OK" : "--")} | last: {_lastControlName}";
             if (!rightOk && !leftOk)
                 diagnostic += $" ({EnableOculusTouchHint})";
 

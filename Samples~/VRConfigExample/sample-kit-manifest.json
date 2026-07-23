@@ -1,0 +1,21 @@
+{
+  "schema_version": "2.0.0",
+  "version": "1.0.0",
+  "name": "sample-kit",
+  "description": "Hapbeat Unity SDK の VRConfigExample サンプル用 manifestOverride。StreamClip モードのテスト再生 (sample-kit.sine_100hz) の EventMap Window 上の intensity プレビュー専用で、実機への Kit インストールは不要 (contracts の標準 sample-kit と同じ intensity=1.0 を踏襲)。",
+  "author": "",
+  "created_at": "2026-07-24T00:00:00Z",
+  "target_device": {
+    "firmware_version_min": "0.1.0"
+  },
+  "stream_events": {
+    "sample-kit.sine_100hz": {
+      "clip": "sine_100hz_1s.wav",
+      "description": "100 Hz 純音 (canonical sample-kit イベントの StreamClip 版、VRConfigExample のテスト再生用)",
+      "parameters": {
+        "intensity": 1.0,
+        "loop": false
+      }
+    }
+  }
+}

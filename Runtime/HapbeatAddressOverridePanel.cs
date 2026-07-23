@@ -43,7 +43,7 @@ namespace Hapbeat
     /// pick a Player / Group number (1..99, or below 1 = disabled), Apply
     /// calls <see cref="HapbeatManager.SetAddressOverride(int, int, bool)"/>
     /// with <c>persist: true</c>, and a single status line shows a live
-    /// preview of what <c>player_1/pos_chest</c> resolves to via
+    /// preview of what <c>player_1/pos_chest/group_1</c> resolves to via
     /// <see cref="HapbeatClient.ResolveTarget(string, int, int)"/> for the
     /// currently-edited values — highlighted while it differs from what's
     /// actually applied, plain once Apply catches it up.
@@ -59,7 +59,7 @@ namespace Hapbeat
     [AddComponentMenu("Hapbeat/Hapbeat Address Override Panel")]
     public class HapbeatAddressOverridePanel : MonoBehaviour
     {
-        private const string PreviewTarget = "player_1/pos_chest";
+        private const string PreviewTarget = "player_1/pos_chest/group_1";
 
         // Player/Group value labels are always highlighted in this color so
         // they read as "the variable part" at a glance — distinct from their
