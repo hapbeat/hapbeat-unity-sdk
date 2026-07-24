@@ -32,6 +32,9 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - `HapbeatAddressOverridePanel` に Play（テスト再生）/ Exit（シーン遷移）ボタンを追加し、Apply と合わせて 1 パネルに統合。パネル自体はテストトリガーやシーンの概念を持たず、`OnPlayRequested` / `OnExitRequested`（`event Action`）を外部コントローラーが購読して実際の動作を注入する。
 - ボタン活性化時の視覚フィードバックを、Apply 専用の ~0.3 秒暗色フラッシュから、登録済みの全ボタン共通の ~0.2 秒明色（白寄り）フラッシュに変更 — パネルの暗い背景に埋もれず視認できる。クリック経由・`ActivateFocused` 経由のどちらで押下されても同じフィードバックが出る。
 - `Samples~/VRConfigExample/sample-kit-manifest.json` を追加（`BasicExample` の `basic-exam-kit-manifest.json` と同じ運用: `manifestOverride` 経由の Editor 上 intensity プレビュー専用、実機への Kit インストールは不要）。`VRConfigExampleEventMap` の StreamClip エントリ（`sample-kit.sine_100hz`）に配線し、intensity は contracts 標準の `sample-kit`（`fixtures/sample-kit-manifest.json`）と同じ `1.0` を踏襲。
+- **`streamUnicast`（StreamClip のユニキャスト送信）** — Wi-Fi broadcast の DTIM 省電力バッチングによる周期的な触覚途切れ（~170ms 前後で観測、送信側計測ではジッタなしを確認済み）の検証兼対処。`HapbeatConfig.streamUnicast`（既定 `true`）を追加。broadcast モードで PONG 済みの既知デバイスが 1 台以上いる場合、`STREAM_BEGIN`/`STREAM_DATA`/`STREAM_END` をそれらの IP へ直接ユニキャスト送信する（各デバイスへの複製送信。target 文字列によるデバイス側フィルタリングは変わらない）。既知デバイスが 0 台、または Bridge モードでは自動的に broadcast へフォールバックする。`Play`/`Stop`/`StopAll` は対象外で常に broadcast のまま。
+  - `HapbeatClient.SetStreamUnicastTargets(IReadOnlyCollection<IPAddress>)` を追加。ストリームセッション開始時（`HapbeatManager.StreamAudioClip` の新規セッション時）に一度だけ既知デバイス IP をスナップショットし、以後は背景ミキサースレッドからロックフリーで参照する（セッション途中で新規に PONG が返ってきたデバイスは次セッションから対象）。
+  - Settings ウィンドウ（`Hapbeat > Open Settings`）に `Stream Unicast` トグルを追加。
 
 ### Fixed（修正）
 

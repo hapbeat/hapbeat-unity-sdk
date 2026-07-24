@@ -51,6 +51,14 @@ namespace Hapbeat
         private int _overridePlayer = -1;
         private int _overrideGroup = -1;
 
+        // Unicast destinations for STREAM_BEGIN/DATA/END, or null to use broadcast
+        // (the default _targetEndPoint). Snapshotted once per stream session by
+        // HapbeatManager (see SetStreamUnicastTargets) from known device PONG
+        // endpoints. Read from the background stream mixer thread (SendStreamData)
+        // without locking — array reference assignment is atomic, and the array
+        // itself is never mutated in place after being published, only replaced.
+        private volatile IPEndPoint[] _streamUnicastTargets;
+
         // Queue for dispatching callbacks to the main thread
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
 
@@ -166,6 +174,35 @@ namespace Hapbeat
         {
             _overridePlayer = NormalizeOverride(player);
             _overrideGroup = NormalizeOverride(group);
+        }
+
+        /// <summary>
+        /// Sets (or clears) the unicast destination list used by STREAM_BEGIN/DATA/END
+        /// while broadcast mode is active. Pass null or an empty collection to revert
+        /// streaming to broadcast. Intended to be called once per stream session, from
+        /// the main thread, before the session's first STREAM_BEGIN — see
+        /// HapbeatManager.StreamAudioClip / StopStream.
+        /// <para>
+        /// Devices that join after the snapshot is taken (e.g. their first PONG arrives
+        /// mid-session) are not added retroactively; they'll be picked up starting with
+        /// the next session. This keeps the hot path (SendStreamData, called every
+        /// ~10 ms from the background mixer thread) lock-free.
+        /// </para>
+        /// </summary>
+        public void SetStreamUnicastTargets(IReadOnlyCollection<IPAddress> deviceIps)
+        {
+            if (deviceIps == null || deviceIps.Count == 0)
+            {
+                _streamUnicastTargets = null;
+                return;
+            }
+
+            int port = _targetEndPoint != null ? _targetEndPoint.Port : 0;
+            var targets = new IPEndPoint[deviceIps.Count];
+            int i = 0;
+            foreach (var ip in deviceIps)
+                targets[i++] = new IPEndPoint(ip, port);
+            _streamUnicastTargets = targets;
         }
 
         /// <summary>
@@ -336,7 +373,7 @@ namespace Hapbeat
             target = ResolveTarget(target);
             byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(
                 sampleRate, channels, format, totalSamples, gain, target);
-            SendPacket(HapbeatProtocol.CMD_STREAM_BEGIN, payload);
+            SendStreamPacket(HapbeatProtocol.CMD_STREAM_BEGIN, payload);
         }
 
         /// <summary>
@@ -347,7 +384,7 @@ namespace Hapbeat
             if (!IsConnected || _udpClient == null) return;
             ushort seq = GetNextSequenceNumber();
             byte[] packet = HapbeatProtocol.BuildStreamDataPacket(seq, byteOffset, audioData, dataOffset, dataLength);
-            SendRaw(packet);
+            SendStreamRaw(packet);
         }
 
         /// <summary>
@@ -355,7 +392,7 @@ namespace Hapbeat
         /// </summary>
         public void SendStreamEnd()
         {
-            SendPacket(HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
+            SendStreamPacket(HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
         }
 
         /// <summary>
@@ -445,6 +482,56 @@ namespace Hapbeat
             catch (ObjectDisposedException)
             {
                 HandleDisconnection();
+            }
+        }
+
+        // Stream-only send path (STREAM_BEGIN/DATA/END). Identical to
+        // SendPacket/SendRaw except it fans out to the per-session unicast
+        // target list (see SetStreamUnicastTargets) instead of the broadcast
+        // _targetEndPoint, when one is set. Falls back to SendRaw's normal
+        // broadcast/bridge-unicast behavior when no targets are set (nobody has
+        // PONGed yet, or we're not in broadcast mode to begin with).
+        private void SendStreamPacket(byte commandType, byte[] payload)
+        {
+            ushort seq = GetNextSequenceNumber();
+            byte[] packet = HapbeatProtocol.BuildPacket(commandType, seq, payload);
+            SendStreamRaw(packet);
+        }
+
+        private void SendStreamRaw(byte[] data)
+        {
+            if (!IsConnected || _udpClient == null)
+                return;
+
+            // Read the volatile field once — the array itself is only ever
+            // replaced wholesale (never mutated in place), so a single local
+            // snapshot is safe even if another thread swaps it mid-loop below.
+            IPEndPoint[] targets = _streamUnicastTargets;
+            if (!IsBroadcast || targets == null || targets.Length == 0)
+            {
+                SendRaw(data);
+                return;
+            }
+
+            for (int i = 0; i < targets.Length; i++)
+            {
+                try
+                {
+                    _udpClient.Send(data, data.Length, targets[i]);
+                }
+                catch (SocketException ex)
+                {
+                    // A single unreachable/offline target shouldn't tear down the
+                    // whole session (other targets may still be fine) — log and
+                    // keep sending to the rest.
+                    UnityEngine.Debug.LogWarning(
+                        $"[Hapbeat] Stream unicast send to {targets[i]} failed: {ex.Message}");
+                }
+                catch (ObjectDisposedException)
+                {
+                    HandleDisconnection();
+                    return;
+                }
             }
         }
 

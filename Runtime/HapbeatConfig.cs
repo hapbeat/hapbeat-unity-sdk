@@ -43,6 +43,15 @@ namespace Hapbeat
         [Range(0.01f, 0.2f)]
         public float streamSendAheadSeconds = 0.05f;
 
+        [Tooltip("Send StreamClip's STREAM_BEGIN/DATA/END directly (unicast) to each device " +
+                 "already known from a PONG response, instead of UDP broadcast. Wi-Fi AP power-save " +
+                 "(DTIM) batching can hold broadcast frames for one beacon interval, showing up as " +
+                 "periodic ~100-200 ms stutter in streamed haptics; unicast avoids that batching. " +
+                 "Falls back to broadcast automatically when no device has responded yet or in " +
+                 "Bridge mode. Other commands (Play/Stop/StopAll) are unaffected and always broadcast. " +
+                 "Default: enabled.")]
+        public bool streamUnicast = true;
+
         [Header("Latency Compensation")]
         [Tooltip("Global delay (seconds) added to every Play / StreamClip call to match the audio output latency " +
                  "(e.g. Bluetooth headphones). Hapbeat haptics go out over UDP with very low latency (~10 ms), " +

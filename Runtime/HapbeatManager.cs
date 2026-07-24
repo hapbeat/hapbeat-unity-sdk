@@ -67,6 +67,23 @@ namespace Hapbeat
         /// <summary>True if at least one device is responsive.</summary>
         public bool IsAlive => AliveDeviceCount > 0;
 
+        /// <summary>
+        /// Snapshot of currently-alive device IPs (same liveness window as
+        /// <see cref="AliveDeviceCount"/>). Used to seed <see cref="HapbeatClient.SetStreamUnicastTargets"/>
+        /// once per stream session — see <see cref="StreamAudioClip(AudioClip, float, float, string, bool)"/>.
+        /// </summary>
+        private List<System.Net.IPAddress> GetAliveDeviceIPs()
+        {
+            float timeout = AliveTimeoutSeconds;
+            float now = Time.realtimeSinceStartup;
+            var result = new List<System.Net.IPAddress>(_devicePongTimes.Count);
+            foreach (var kv in _devicePongTimes)
+            {
+                if (now - kv.Value <= timeout) result.Add(kv.Key);
+            }
+            return result;
+        }
+
         private float AliveTimeoutSeconds =>
             Mathf.Max(5f, (_config != null ? _config.pingInterval : 5f) * 3f);
 
@@ -677,6 +694,28 @@ namespace Hapbeat
 
             if (startNewSession)
             {
+                // Unicast STREAM_BEGIN/DATA/END to already-known devices instead of
+                // broadcast, when enabled \u2014 broadcast frames can sit in the AP's
+                // DTIM power-save queue for a whole beacon interval, which shows up
+                // as periodic ~100-200ms stutter in streamed haptics. Snapshotted
+                // once here (session start), not re-evaluated mid-session, so the
+                // background mixer thread's SendStreamData stays lock-free; a
+                // device whose first PONG arrives after this point is picked up
+                // starting with the next session instead. Falls back to broadcast
+                // when nobody has PONGed yet or we're not in plain broadcast mode
+                // (e.g. Bridge/ESP-NOW already unicasts to the bridge host).
+                if (_client.IsBroadcast && _config != null && _config.streamUnicast)
+                {
+                    var aliveIps = GetAliveDeviceIPs();
+                    _client.SetStreamUnicastTargets(aliveIps);
+                    if (aliveIps.Count > 0)
+                        Log($"\u266a Stream unicast: targeting {aliveIps.Count} known device(s) (broadcast fallback if none respond).");
+                }
+                else
+                {
+                    _client.SetStreamUnicastTargets(null);
+                }
+
                 // Send gain=1.0 so the device passes through, and pre-multiply
                 // each source's gain in the SDK (sample \u00d7 gain) to avoid the
                 // device applying it twice. totalSamples=0 means "unknown".
@@ -764,6 +803,13 @@ namespace Hapbeat
 
             if (wasActive && TrySendStreamEnd("Stream session stopped (all sources)."))
                 LogStreamDiagSummary("stopped");
+
+            // Clear the per-session unicast snapshot *after* the closing STREAM_END
+            // above (which must still reach this session's unicast targets) so
+            // anything sent afterward — including StopStreamWithFlush's own
+            // BEGIN+END pair, documented to broadcast — doesn't reuse a now-stale
+            // device list.
+            _client?.SetStreamUnicastTargets(null);
         }
 
         /// <summary>
