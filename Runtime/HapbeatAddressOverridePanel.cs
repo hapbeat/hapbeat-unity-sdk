@@ -114,24 +114,26 @@ namespace Hapbeat
         // could blend into the panel's own dark (black, 0.6 alpha) backdrop —
         // a dark grey at high alpha (#555555, 0.9 alpha) reads clearly as
         // "activated" against that backdrop, against the buttons' own base
-        // colors (translucent white for steppers; blue/green/red accents for
-        // Apply/Play/Exit — see s_applyBaseColor/s_playBaseColor/s_exitBaseColor),
-        // and against the white/yellow text palette, without matching any of
-        // them or washing out into the backdrop the way a low-alpha grey
-        // would. Fires whenever any registered button's onClick runs (see
-        // RegisterFocusable), regardless of whether it was clicked directly
-        // or activated via ActivateFocused.
+        // colors (translucent white, shared by steppers/Apply/Play — see
+        // s_applyBaseColor/s_playBaseColor — and the red Exit accent, see
+        // s_exitBaseColor), and against the white/yellow text palette,
+        // without matching any of them or washing out into the backdrop the
+        // way a low-alpha grey would. Fires whenever any registered button's
+        // onClick runs (see RegisterFocusable), regardless of whether it was
+        // clicked directly or activated via ActivateFocused.
         private static readonly Color s_actionFlashColor = new Color(0x55 / 255f, 0x55 / 255f, 0x55 / 255f, 0.9f);
         private const float ActionFlashSeconds = 0.2f;
 
-        // Apply/Play/Exit non-focused, non-flashing base colors (see
-        // CreateActionColumnButton) — each action reads at a glance from its
-        // color alone, not just its label. Alpha kept below 1 so they still
-        // read as part of the panel's translucent style rather than fully
-        // opaque swatches; labels stay white (CreateText's default) for
-        // contrast against all three.
-        private static readonly Color s_applyBaseColor = new Color(0x2F / 255f, 0x6F / 255f, 0xB5 / 255f, 0.85f);
-        private static readonly Color s_playBaseColor = new Color(0x2E / 255f, 0x8B / 255f, 0x57 / 255f, 0.85f);
+        // Apply/Play non-focused, non-flashing base color (see
+        // CreateActionColumnButton) — deliberately the SAME translucent white
+        // as every other button (steppers — see CreateButton's literal),
+        // not a distinct accent. A blue/green tint here used to sit close
+        // enough to the yellow focus highlight (s_focusHighlightColor) to
+        // read as "already focused" at a glance, which was misleading. Only
+        // Exit keeps a distinct accent (red, s_exitBaseColor below) — leaving
+        // the panel is the one action worth visually singling out.
+        private static readonly Color s_applyBaseColor = new Color(1f, 1f, 1f, 0.15f);
+        private static readonly Color s_playBaseColor = new Color(1f, 1f, 1f, 0.15f);
         private static readonly Color s_exitBaseColor = new Color(0xB0 / 255f, 0x3A / 255f, 0x3A / 255f, 0.85f);
 
         [Header("Layout")]
@@ -334,11 +336,11 @@ namespace Hapbeat
                 panelRt.anchorMax = new Vector2(0.5f, 1f);
                 panelRt.pivot = new Vector2(0.5f, 1f);
                 // Sized for the 2-row layout (see Build() below): a 200px
-                // left stepper column + an 8px mainRow gap (see mainRowLayout.spacing
+                // left stepper column + a 4px mainRow gap (see mainRowLayout.spacing
                 // below) + a 180px right action-button column + 20px panel
-                // padding (10 left + 10 right) = 408px wide, ~106px tall
+                // padding (10 left + 10 right) = 404px wide, ~106px tall
                 // (title + 2 stepper rows + status line).
-                panelRt.sizeDelta = new Vector2(408f, 108f);
+                panelRt.sizeDelta = new Vector2(404f, 108f);
                 // Top-anchored pivot: y is measured downward from the anchor, so a
                 // small negative offset nudges the panel just below the screen edge.
                 panelRt.anchoredPosition = new Vector2(0f, -8f);
@@ -373,11 +375,11 @@ namespace Hapbeat
             mainRow.transform.SetParent(panel.transform, false);
             var mainRowLayout = mainRow.AddComponent<HorizontalLayoutGroup>();
             // Gap between the left stepper block and the right action-button
-            // column — kept tight (was 10f) so the two blocks read as one
-            // compact control cluster rather than two separately-floating
-            // groups. See the panelRt.sizeDelta comment above for how this
-            // feeds into the panel's total width.
-            mainRowLayout.spacing = 8f;
+            // column — kept tight (was 10f, then 8f) so the two blocks read
+            // as one compact control cluster rather than two
+            // separately-floating groups. See the panelRt.sizeDelta comment
+            // above for how this feeds into the panel's total width.
+            mainRowLayout.spacing = 4f;
             mainRowLayout.childControlWidth = true;
             mainRowLayout.childControlHeight = true;
             mainRowLayout.childForceExpandWidth = false;
