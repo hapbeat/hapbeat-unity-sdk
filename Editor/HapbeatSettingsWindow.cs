@@ -116,16 +116,6 @@ namespace Hapbeat.Editor
                     "Range 10–200 ms, default 50 ms."));
 
             EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("streamBufferMs"),
-                new GUIContent(
-                    "Device Stream Buffer (ms)",
-                    "Device-side jitter-buffer depth for CLIP playback (sent via TCP " +
-                    "set_stream_buffer). 0 = device default (low-latency, re-primes on " +
-                    "underrun, don't send). >0 = continuous mode (hold-decay + drift " +
-                    "correction, no re-prime) — fewer dropouts on flaky Wi-Fi, more latency. " +
-                    "Range 0–500 ms, default 30 ms."));
-
-            EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("enableLogging"),
                 new GUIContent("Enable Logging", "Log Play / Stop / Connect / errors to the Unity console."));
 
