@@ -666,6 +666,10 @@ namespace Hapbeat
                     _sessionActive = true;
                     _streamStopRequested = false;
                     Interlocked.Exchange(ref _streamEndSentFlag, 0);
+                    // Reset diagnostics before the mixer thread starts recording.
+                    _diagSendCount = 0;
+                    _diagBeginCount = 0;
+                    Interlocked.Exchange(ref _diagEndCount, 0);
                     _sources.Add(source);
                     startNewSession = true;
                 }
@@ -678,6 +682,7 @@ namespace Hapbeat
                 // device applying it twice. totalSamples=0 means "unknown".
                 _client.SendStreamBegin(_sessionSampleRate, _sessionChannels,
                     HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1.0f, target);
+                _diagBeginCount++;
                 Log($"\u266a Stream session begin: {_sessionSampleRate}Hz, {_sessionChannels}ch, " +
                     $"target={(string.IsNullOrEmpty(target) ? "broadcast" : target)}");
 
@@ -757,8 +762,8 @@ namespace Hapbeat
                 _streamStopRequested = false;
             }
 
-            if (wasActive)
-                TrySendStreamEnd("Stream session stopped (all sources).");
+            if (wasActive && TrySendStreamEnd("Stream session stopped (all sources)."))
+                LogStreamDiagSummary("stopped");
         }
 
         /// <summary>
@@ -868,20 +873,86 @@ namespace Hapbeat
         private string _sessionTarget;
         private volatile bool _sessionActive;
 
+        // ---- Lightweight stream-send diagnostics (see LogStreamDiagSummary) ----
+        // Pre-allocated so recording adds zero per-chunk GC pressure (recording is
+        // the thing we're measuring, so it must not perturb the allocation profile).
+        // _diagSendTicks is written only by the mixer thread (single writer) and read
+        // once at session end — either on the mixer thread itself (natural completion)
+        // or on the main thread after Join() (forced stop) — so it needs no lock.
+        private const int StreamDiagCapacity = 8192; // ~80s at 10ms chunks; overflow just stops recording
+        private readonly long[] _diagSendTicks = new long[StreamDiagCapacity];
+        private int _diagSendCount;   // mixer-thread writer
+        private int _diagBeginCount;  // main-thread writer (StreamAudioClip)
+        private int _diagEndCount;    // Interlocked (TrySendStreamEnd, either thread)
+
         /// <summary>
         /// Sends STREAM_END at most once per session — see <see cref="_streamEndSentFlag"/>.
         /// Callable from either the main thread (StopStream) or the mixer thread
         /// (StreamThreadLoop's natural-completion path).
         /// </summary>
-        private void TrySendStreamEnd(string logMessage)
+        /// <returns>True if THIS call owns end-of-session (won the flag flip) — the
+        /// caller should emit the one-shot diagnostics summary. False if the other
+        /// path already closed the session (it owns the summary).</returns>
+        private bool TrySendStreamEnd(string logMessage)
         {
             if (Interlocked.Exchange(ref _streamEndSentFlag, 1) != 0)
-                return; // the other path already sent it
+                return false; // the other path already sent it (and owns the diag summary)
             if (_client != null && _client.IsConnected)
             {
                 _client.SendStreamEnd();
+                Interlocked.Increment(ref _diagEndCount);
                 Log(logMessage);
             }
+            return true;
+        }
+
+        /// <summary>
+        /// One-shot per-session summary of the streaming send cadence. Called
+        /// exactly once per session by whichever path won <see cref="TrySendStreamEnd"/>,
+        /// after the mixer thread has stopped writing <see cref="_diagSendTicks"/>
+        /// (so no lock is needed). Gated by <c>enableLogging</c> like <see cref="Log"/>,
+        /// so it is inert in normal operation. Lets a single playback reproduce +
+        /// paste the log to pinpoint intra-session send gaps (e.g. GC stop-the-world
+        /// suspending the mixer thread) vs. device-visible re-triggering (BEGIN/END &gt; 1).
+        /// </summary>
+        private void LogStreamDiagSummary(string reason)
+        {
+            if (_config == null || !_config.enableLogging) return;
+
+            int n = _diagSendCount;
+            int begins = _diagBeginCount;
+            int ends = _diagEndCount;
+            if (n <= 0)
+            {
+                Log($"Stream diag ({reason}): sends=0 BEGIN={begins} END={ends}");
+                return;
+            }
+
+            double freq = Stopwatch.Frequency;
+            long t0 = _diagSendTicks[0];
+            double maxGapMs = 0.0;
+            int bigGaps = 0;
+            var gapTimes = new System.Text.StringBuilder(160);
+            for (int i = 1; i < n; i++)
+            {
+                double gapMs = (_diagSendTicks[i] - _diagSendTicks[i - 1]) * 1000.0 / freq;
+                if (gapMs > maxGapMs) maxGapMs = gapMs;
+                if (gapMs > 20.0)
+                {
+                    bigGaps++;
+                    if (bigGaps <= 40)
+                    {
+                        double atMs = (_diagSendTicks[i] - t0) * 1000.0 / freq;
+                        if (gapTimes.Length > 0) gapTimes.Append(", ");
+                        gapTimes.Append(atMs.ToString("F0")).Append("ms(+").Append(gapMs.ToString("F0")).Append(')');
+                    }
+                }
+            }
+            double spanMs = (_diagSendTicks[n - 1] - t0) * 1000.0 / freq;
+
+            Log($"Stream diag ({reason}): sends={n} span={spanMs:F0}ms " +
+                $"maxGap={maxGapMs:F1}ms gaps>20ms={bigGaps} BEGIN={begins} END={ends}" +
+                (bigGaps > 0 ? $" @[{gapTimes}{(bigGaps > 40 ? ", …" : "")}]" : ""));
         }
 
         /// <summary>
@@ -1033,6 +1104,9 @@ namespace Hapbeat
                     if (client == null || !client.IsConnected) { naturalCompletion = false; break; }
                     client.SendStreamData(globalByteOffset, pcmChunk, 0, chunkBytes);
                     globalByteOffset += (uint)chunkBytes;
+                    // Diagnostics: stamp each actual wire send (single-writer, pre-allocated).
+                    if (_diagSendCount < StreamDiagCapacity)
+                        _diagSendTicks[_diagSendCount++] = Stopwatch.GetTimestamp();
 
                     if (!anySources) break; // natural completion — no more sources; last chunk already sent above
 
@@ -1079,8 +1153,8 @@ namespace Hapbeat
                     _streamThread = null;
                     _streamStopRequested = false;
 
-                    if (naturalCompletion)
-                        TrySendStreamEnd($"Stream session ended ({globalByteOffset} bytes sent).");
+                    if (naturalCompletion && TrySendStreamEnd($"Stream session ended ({globalByteOffset} bytes sent)."))
+                        LogStreamDiagSummary("natural");
                 }
             }
         }
