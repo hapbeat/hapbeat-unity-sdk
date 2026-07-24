@@ -90,10 +90,12 @@ namespace Hapbeat.Samples.VRConfigExample
     /// </para>
     ///
     /// <para>
-    /// The trailing guide line also reports the most recently detected control's
+    /// Controller-detection status and the most recently detected control's
     /// hand + name (e.g. <c>last: RightHand/thumbstickClicked</c>) — see
-    /// <see cref="RecordLastControl"/> — for on-device triage of which physical
-    /// control an input actually resolved to.
+    /// <see cref="RecordLastControl"/> — go to <c>Debug.Log</c> (only when
+    /// the message changes, not on a timer) rather than the in-headset guide
+    /// text, so the guide stays a single fixed line. See
+    /// <see cref="PollControllerDiagnostics"/>.
     /// </para>
     ///
     /// <para>
@@ -178,23 +180,26 @@ namespace Hapbeat.Samples.VRConfigExample
         private bool _guideBuilt;
 
         // Last control that actually resolved and fired a performed callback
-        // (hand + control name), refreshed by RecordLastControl and shown on the
-        // guide's trailing diagnostic line — see BuildDiagnosticProbes remarks
-        // for why the shared either-hand actions can't attribute this on their
-        // own.
+        // (hand + control name), refreshed by RecordLastControl and reported
+        // via Debug.Log (PollControllerDiagnostics) — see BuildDiagnosticProbes
+        // remarks for why the shared either-hand actions can't attribute this
+        // on their own.
         private string _lastControlName = "(none yet)";
 
-        // Diagnostic line ("Controllers: R OK / L --" etc.) refreshes once per
-        // second, not every frame — see Update()/RefreshDiagnosticLine(). It
-        // always occupies the same fixed line at the end of the guide text
-        // block, so its content changing never shifts the guide's layout/size.
+        // Controller-detection diagnostics ("Controllers: R OK / L --", plus
+        // the last-fired control) used to be a 2nd line appended to the
+        // in-headset guide text; it's now Debug.Log-only (see
+        // PollControllerDiagnostics), logged only when its content changes —
+        // not once a second — so it never spams the console while the rig is
+        // idle. The guide text itself is back to a single, never-changing
+        // line (GuideActionsText) with no per-frame/per-second updates.
         private const float DiagnosticRefreshIntervalSeconds = 1f;
         private float _diagnosticTimer;
         private Text _guideText;
+        private string _lastLoggedDiagnostic = "";
 
         // Fixed single-line action guide — see class doc. Never changes at
-        // runtime, so (like the diagnostic line placeholder) it never causes a
-        // layout shift.
+        // runtime, so it never causes a layout shift.
         private const string GuideActionsText = "Stick: move / Trigger or A: press";
 
         // Guide canvas transform, kept relative to _panel (see BuildGuideText /
@@ -235,7 +240,7 @@ namespace Hapbeat.Samples.VRConfigExample
             Recenter();
 
             _diagnosticTimer = 0f;
-            RefreshDiagnosticLine(); // don't wait a full second for the first reading
+            PollControllerDiagnostics(); // don't wait a full second for the first reading
         }
 
         private void Update()
@@ -245,7 +250,7 @@ namespace Hapbeat.Samples.VRConfigExample
             _diagnosticTimer += Time.deltaTime;
             if (_diagnosticTimer < DiagnosticRefreshIntervalSeconds) return;
             _diagnosticTimer = 0f;
-            RefreshDiagnosticLine();
+            PollControllerDiagnostics();
         }
 
         private void OnDisable()
@@ -374,7 +379,7 @@ namespace Hapbeat.Samples.VRConfigExample
 
         /// <summary>
         /// Diagnostic-only probes: one representative binding per hand (not
-        /// wired to any handler), purely so <see cref="RefreshDiagnosticLine"/>
+        /// wired to any handler), purely so <see cref="PollControllerDiagnostics"/>
         /// can report per-hand controller presence independently of the shared
         /// either-hand action objects above (which merge both hands' controls
         /// into one action and can't attribute resolution back to a single hand).
@@ -396,8 +401,8 @@ namespace Hapbeat.Samples.VRConfigExample
 
         /// <summary>
         /// Records the hand + control name of whatever <c>InputAction</c>
-        /// callback last fired, for the guide's trailing "last:" diagnostic
-        /// (see <see cref="RefreshDiagnosticLine"/>). Subscribed to every
+        /// callback last fired, for the "last:" Debug.Log diagnostic
+        /// (see <see cref="PollControllerDiagnostics"/>). Subscribed to every
         /// shared action's <c>performed</c> callback so the diagnostic
         /// reflects the actual physical control that resolved on-device — the
         /// shared either-hand actions can't otherwise attribute a firing back
@@ -617,7 +622,7 @@ namespace Hapbeat.Samples.VRConfigExample
         }
 
         // ---------------------------------------------------------------
-        // Guide text (world-space, fixed 2 lines — never shifts layout)
+        // Guide text (world-space, fixed 1 line — never shifts layout)
         // ---------------------------------------------------------------
 
         private void BuildGuideText()
@@ -628,7 +633,7 @@ namespace Hapbeat.Samples.VRConfigExample
             // fixed-pixel-sized font/element renders).
             const float scale = 0.0018f;
             const float worldWidth = 1.0f;
-            const float worldHeight = 0.22f; // 2 fixed lines — see GuideActionsText / RefreshDiagnosticLine
+            const float worldHeight = 0.12f; // 1 fixed line — see GuideActionsText
 
             var canvasGo = new GameObject("VRConfigExampleGuideCanvas");
             canvasGo.transform.SetParent(transform, false);
@@ -684,10 +689,11 @@ namespace Hapbeat.Samples.VRConfigExample
             textRt.offsetMax = Vector2.zero;
 
             _guideText = text;
-            // Fixed 2-line block (1 static action line + 1 diagnostic line):
-            // only the diagnostic line's content ever changes at runtime (see
-            // RefreshDiagnosticLine), so this never causes a layout shift.
-            _guideText.text = GuideActionsText + "\n" + DiagnosticPlaceholder;
+            // Fixed single line, set once — never updated at runtime, so it
+            // can never cause a layout shift. Controller-detection status and
+            // the last-fired control (formerly a 2nd line here) now go to
+            // Debug.Log instead — see PollControllerDiagnostics.
+            _guideText.text = GuideActionsText;
         }
 
         /// <summary>
@@ -704,24 +710,25 @@ namespace Hapbeat.Samples.VRConfigExample
         }
 
         // ---------------------------------------------------------------
-        // Diagnostic line ("Controllers: R OK / L --")
+        // Controller diagnostics ("Controllers: R OK / L --") — Debug.Log only
         // ---------------------------------------------------------------
 
-        private const string DiagnosticPlaceholder = "Controllers: R -- / L --";
         private const string EnableOculusTouchHint = "enable Oculus Touch profile (OpenXR)";
 
         /// <summary>
-        /// Refreshes the guide's trailing diagnostic line with whether the
-        /// right/left controller bindings currently resolve to a device
-        /// (<see cref="InputAction.controls"/> non-empty), via the dedicated
-        /// per-hand probes built in <see cref="BuildDiagnosticProbes"/>. Always
-        /// writes the same fixed line (text only, no line added/removed) so
-        /// this never shifts the guide's layout.
+        /// Logs whether the right/left controller bindings currently resolve
+        /// to a device (<see cref="InputAction.controls"/> non-empty, via the
+        /// dedicated per-hand probes built in <see cref="BuildDiagnosticProbes"/>)
+        /// plus the most recently fired control (<see cref="_lastControlName"/>).
+        /// This used to be rendered as a 2nd line in the in-headset guide text,
+        /// refreshed once a second regardless of whether anything changed; it's
+        /// Debug.Log-only now, and only logs when the message actually differs
+        /// from the last one logged — so it reflects real events (a controller
+        /// connecting/disconnecting, a new control firing) instead of ticking
+        /// once a second even while idle.
         /// </summary>
-        private void RefreshDiagnosticLine()
+        private void PollControllerDiagnostics()
         {
-            if (_guideText == null) return;
-
             bool rightOk = _rightHandProbeAction != null && _rightHandProbeAction.controls.Count > 0;
             bool leftOk = _leftHandProbeAction != null && _leftHandProbeAction.controls.Count > 0;
 
@@ -729,7 +736,9 @@ namespace Hapbeat.Samples.VRConfigExample
             if (!rightOk && !leftOk)
                 diagnostic += $" ({EnableOculusTouchHint})";
 
-            _guideText.text = GuideActionsText + "\n" + diagnostic;
+            if (diagnostic == _lastLoggedDiagnostic) return;
+            _lastLoggedDiagnostic = diagnostic;
+            Debug.Log($"[Hapbeat] VRConfigExampleController: {diagnostic}");
         }
     }
 }

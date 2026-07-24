@@ -43,10 +43,23 @@ namespace Hapbeat
     /// </para>
     ///
     /// <para>
-    /// <b>2D focus-navigation grid.</b> Every button the panel builds (the
-    /// four steppers, Play, Apply, Exit) is registered into a shared
-    /// column/row grid via <see cref="RegisterFocusable"/> — external buttons
-    /// can be added to the same grid the same way. <see cref="MoveFocus"/>
+    /// <b>Layout.</b> Two rows on the left (Player -/value/+, Group -/value/+),
+    /// and to their right, spanning both rows' combined height, three
+    /// square-ish action buttons in this order: Apply, Play, Exit.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>2D focus-navigation grid.</b> Every button the panel builds is
+    /// registered into a shared column/row grid via
+    /// <see cref="RegisterFocusable"/> — external buttons can be added to the
+    /// same grid the same way. The grid is conceptually 2 rows × 5 columns:
+    /// row 0 is Player-/Player+/Apply/Play/Exit, row 1 is
+    /// Group-/Group+/Apply/Play/Exit — Apply/Play/Exit are each registered at
+    /// BOTH row coordinates (same button, two grid entries) so they're
+    /// reachable via a rightward move from either stepper row, and an
+    /// up/down move while one of them is focused toggles which row's
+    /// coordinate is current (no visible change) so a subsequent leftward
+    /// move returns to the row it was entered from. <see cref="MoveFocus"/>
     /// steps the focused cell by one grid unit in a cardinal direction (no
     /// diagonals — callers should resolve a dominant axis first), and
     /// <see cref="ActivateFocused"/> invokes whichever button currently holds
@@ -59,7 +72,8 @@ namespace Hapbeat
     /// from the very first frame (e.g. <c>VRConfigExampleController</c>) call
     /// <see cref="ShowFocusHighlight"/> once at startup instead of waiting for
     /// the first nav input.
-    /// Activating any button briefly flashes it near-white
+    /// Activating any button briefly flashes it a color distinct from both
+    /// the panel's dark backdrop and its white/yellow text
     /// (<see cref="ActionFlashSeconds"/>s) as confirmation, which matters most
     /// for VR controller input where there's no other click feedback.
     /// </para>
@@ -94,12 +108,17 @@ namespace Hapbeat
         // the focused cell reads clearly against the dark panel backdrop.
         private static readonly Color s_focusHighlightColor = new Color(1f, 0.85f, 0.2f, 0.55f);
 
-        // Activation flash — near-white rather than the old near-black flash
-        // so it stands out against the panel's dark backdrop instead of
-        // blending into it. Fires whenever any registered button's onClick
-        // runs (see RegisterFocusable), regardless of whether it was clicked
-        // directly or activated via ActivateFocused.
-        private static readonly Color s_actionFlashColor = new Color(1f, 1f, 1f, 0.95f);
+        // Activation flash. Deliberately not white or near-white (the old
+        // value) — a white flash erases the button's own white label text
+        // for the flash's duration, and it also collides with the panel's
+        // white/yellow text palette in general. This blue (#3D7EC9) reads
+        // clearly as "activated" against both the panel's dark (black,
+        // 0.6 alpha) backdrop and the buttons' own text (white labels,
+        // yellow value/status highlights) without matching either. Fires
+        // whenever any registered button's onClick runs (see
+        // RegisterFocusable), regardless of whether it was clicked directly
+        // or activated via ActivateFocused.
+        private static readonly Color s_actionFlashColor = new Color(0x3D / 255f, 0x7E / 255f, 0xC9 / 255f, 0.9f);
         private const float ActionFlashSeconds = 0.2f;
 
         [Header("Layout")]
@@ -107,9 +126,9 @@ namespace Hapbeat
         [SerializeField]
         private HapbeatAddressOverridePanelSpace _space = HapbeatAddressOverridePanelSpace.ScreenSpaceOverlay;
 
-        [Tooltip("World-space panel size in meters (ignored in ScreenSpaceOverlay). Default ~0.5m wide.")]
+        [Tooltip("World-space panel size in meters (ignored in ScreenSpaceOverlay). Default ~0.5m wide, aspect-matched to the 2-row layout (see Build()).")]
         [SerializeField]
-        private Vector2 _worldSize = new Vector2(0.5f, 0.28f);
+        private Vector2 _worldSize = new Vector2(0.5f, 0.13f);
 
         [Tooltip("World-space local position offset relative to this GameObject (ignored in ScreenSpaceOverlay).")]
         [SerializeField]
@@ -301,7 +320,10 @@ namespace Hapbeat
                 panelRt.anchorMin = new Vector2(0.5f, 1f);
                 panelRt.anchorMax = new Vector2(0.5f, 1f);
                 panelRt.pivot = new Vector2(0.5f, 1f);
-                panelRt.sizeDelta = new Vector2(300f, 180f);
+                // Sized for the 2-row layout (see Build() below): a 200px
+                // left stepper column + a 180px right action-button column,
+                // ~106px tall (title + 2 stepper rows + status line).
+                panelRt.sizeDelta = new Vector2(410f, 108f);
                 // Top-anchored pivot: y is measured downward from the anchor, so a
                 // small negative offset nudges the panel just below the screen edge.
                 panelRt.anchoredPosition = new Vector2(0f, -8f);
@@ -321,19 +343,50 @@ namespace Hapbeat
             titleLayoutElement.preferredHeight = 14f;
 
             // Grid layout (column = x, row = y):
-            //   row 0: Player -   Player +
-            //   row 1: Group -    Group +
-            //   row 2: Play       Apply
-            //   row 3: Exit
-            _playerValueText = CreateStepperRow(panel.transform, "Player", 0, PlayerDown, PlayerUp);
-            _groupValueText = CreateStepperRow(panel.transform, "Group", 1, GroupDown, GroupUp);
+            //   row 0: Player -   Player +   Apply   Play   Exit
+            //   row 1: Group -    Group +    Apply   Play   Exit
+            // Apply/Play/Exit are each a single square-ish button spanning
+            // both rows visually (see CreateActionColumnButton), but are registered
+            // into the focus grid at BOTH row coordinates (see
+            // RegisterFocusableAlias) so they're reachable via a rightward
+            // move from either the Player or the Group row, and an up/down
+            // move while focused on one of them toggles which row's
+            // coordinate is "current" (same button, no visible change) so a
+            // subsequent leftward move returns to the row it was entered
+            // from rather than always snapping back to Player.
+            var mainRow = new GameObject("MainRow", typeof(RectTransform));
+            mainRow.transform.SetParent(panel.transform, false);
+            var mainRowLayout = mainRow.AddComponent<HorizontalLayoutGroup>();
+            mainRowLayout.spacing = 10f;
+            mainRowLayout.childControlWidth = true;
+            mainRowLayout.childControlHeight = true;
+            mainRowLayout.childForceExpandWidth = false;
+            mainRowLayout.childForceExpandHeight = false;
 
-            var actionRow = CreateFullWidthRow(panel.transform, "ActionRow");
-            CreateRowButton(actionRow, "PlayButton", "Play", new Vector2Int(0, 2), () => OnPlayRequested?.Invoke());
-            CreateRowButton(actionRow, "ApplyButton", "Apply", new Vector2Int(1, 2), Apply);
+            var leftColumn = new GameObject("Steppers", typeof(RectTransform));
+            leftColumn.transform.SetParent(mainRow.transform, false);
+            var leftColumnLayout = leftColumn.AddComponent<VerticalLayoutGroup>();
+            leftColumnLayout.spacing = 4f;
+            leftColumnLayout.childControlWidth = true;
+            leftColumnLayout.childControlHeight = true;
+            leftColumnLayout.childForceExpandWidth = true;
+            leftColumnLayout.childForceExpandHeight = false;
 
-            var exitRow = CreateFullWidthRow(panel.transform, "ExitRow");
-            CreateRowButton(exitRow, "ExitButton", "Exit", new Vector2Int(0, 3), () => OnExitRequested?.Invoke());
+            _playerValueText = CreateStepperRow(leftColumn.transform, "Player", 0, PlayerDown, PlayerUp);
+            _groupValueText = CreateStepperRow(leftColumn.transform, "Group", 1, GroupDown, GroupUp);
+
+            var rightColumn = new GameObject("Actions", typeof(RectTransform));
+            rightColumn.transform.SetParent(mainRow.transform, false);
+            var rightColumnLayout = rightColumn.AddComponent<HorizontalLayoutGroup>();
+            rightColumnLayout.spacing = 6f;
+            rightColumnLayout.childControlWidth = true;
+            rightColumnLayout.childControlHeight = true;
+            rightColumnLayout.childForceExpandWidth = false;
+            rightColumnLayout.childForceExpandHeight = false;
+
+            CreateActionColumnButton(rightColumn.transform, "ApplyButton", "Apply", 2, Apply);
+            CreateActionColumnButton(rightColumn.transform, "PlayButton", "Play", 3, () => OnPlayRequested?.Invoke());
+            CreateActionColumnButton(rightColumn.transform, "ExitButton", "Exit", 4, () => OnExitRequested?.Invoke());
 
             // Fixed-height, single-line status so editing/applying never shifts
             // the panel size — see workspace layout-shift rule. Never wraps
@@ -395,28 +448,31 @@ namespace Hapbeat
             return valueText;
         }
 
-        /// <summary>Full-width horizontal row (its buttons share the row's width equally) — used for the Play/Apply and Exit rows.</summary>
-        private static Transform CreateFullWidthRow(Transform parent, string name)
-        {
-            var rowGo = new GameObject(name, typeof(RectTransform));
-            rowGo.transform.SetParent(parent, false);
-            var rowLayout = rowGo.AddComponent<HorizontalLayoutGroup>();
-            rowLayout.spacing = 6f;
-            rowLayout.childControlWidth = true;
-            rowLayout.childControlHeight = true;
-            rowLayout.childForceExpandWidth = true;
-            rowLayout.childForceExpandHeight = false;
-            var rowElement = rowGo.AddComponent<LayoutElement>();
-            rowElement.preferredHeight = 26f;
-            return rowGo.transform;
-        }
+        // Apply/Play/Exit are visually one square-ish button spanning both
+        // stepper rows' combined height (2 * 26px row + the left column's
+        // 4px inter-row spacing) — see CreateActionColumnButton.
+        private const float ActionButtonSize = 56f;
 
-        /// <summary>Creates a full-width row button, wires <paramref name="onClick"/>, and registers it into the focus grid at <paramref name="coord"/>.</summary>
-        private Button CreateRowButton(Transform rowParent, string name, string label, Vector2Int coord, UnityEngine.Events.UnityAction onClick)
+        /// <summary>
+        /// Creates one of the Apply/Play/Exit action buttons: square-ish
+        /// (<see cref="ActionButtonSize"/> on both axes, spanning the combined
+        /// height of the two stepper rows), and registered into the focus
+        /// grid at BOTH row 0 and row 1 of <paramref name="column"/> (see the
+        /// grid-layout comment in <see cref="Build"/>) so it's reachable via
+        /// a rightward move from either the Player or the Group row, and an
+        /// up/down move while it's focused toggles which row's coordinate is
+        /// current without any visible change.
+        /// </summary>
+        private Button CreateActionColumnButton(Transform parent, string name, string label, int column, UnityEngine.Events.UnityAction onClick)
         {
-            var button = CreateButton(rowParent, name, label);
+            var button = CreateButton(parent, name, label);
+            var layoutElement = button.GetComponent<LayoutElement>();
+            layoutElement.preferredWidth = ActionButtonSize;
+            layoutElement.preferredHeight = ActionButtonSize;
             button.onClick.AddListener(onClick);
-            RegisterFocusable(coord, button);
+
+            RegisterFocusable(new Vector2Int(column, 0), button);
+            RegisterFocusableAlias(new Vector2Int(column, 1), button);
             return button;
         }
 
@@ -489,7 +545,7 @@ namespace Hapbeat
         /// focus-navigation grid at <paramref name="coord"/> (column = x, row
         /// = y — row 0 is topmost). External controllers can register their
         /// own buttons here so <see cref="MoveFocus"/> / <see cref="ActivateFocused"/>
-        /// drive them the same way as the panel's own steppers/Play/Apply/Exit.
+        /// drive them the same way as the panel's own steppers/Apply/Play/Exit.
         /// The first button ever registered becomes focused immediately, but
         /// that's internal state only — see <see cref="ShowFocusHighlight"/>
         /// for when the visible highlight itself turns on.
@@ -499,7 +555,33 @@ namespace Hapbeat
         public void RegisterFocusable(Vector2Int coord, Button button)
         {
             if (button == null) return;
+            AddFocusEntry(coord, button);
 
+            // Flash feedback on every activation of this button, regardless of
+            // whether it was reached via a direct click or via ActivateFocused —
+            // added once at registration time, not per-activation.
+            button.onClick.AddListener(() => FlashButton(coord));
+        }
+
+        /// <summary>
+        /// Registers the SAME <paramref name="button"/> at an additional grid
+        /// coordinate (e.g. Apply/Play/Exit — see <see cref="CreateActionColumnButton"/> —
+        /// registered at both row 0 and row 1 so they're reachable from either
+        /// stepper row). Unlike <see cref="RegisterFocusable"/>, this does not
+        /// add another onClick/flash listener — <paramref name="button"/>
+        /// already has one from its primary registration, and since every
+        /// alias coordinate shares the same underlying <see cref="Image"/>,
+        /// one flash listener is enough regardless of which coordinate is
+        /// "current" when it's clicked. No-op if <paramref name="button"/> is null.
+        /// </summary>
+        private void RegisterFocusableAlias(Vector2Int coord, Button button)
+        {
+            if (button == null) return;
+            AddFocusEntry(coord, button);
+        }
+
+        private void AddFocusEntry(Vector2Int coord, Button button)
+        {
             var image = button.GetComponent<Image>();
             bool wasEmpty = _focusEntries.Count == 0;
 
@@ -509,11 +591,6 @@ namespace Hapbeat
                 Image = image,
                 BaseColor = image != null ? image.color : Color.white,
             };
-
-            // Flash feedback on every activation of this button, regardless of
-            // whether it was reached via a direct click or via ActivateFocused —
-            // added once at registration time, not per-activation.
-            button.onClick.AddListener(() => FlashButton(coord));
 
             if (wasEmpty)
                 SetFocusedCoord(coord);
@@ -526,9 +603,9 @@ namespace Hapbeat
         /// per call (callers driving an analog stick should pick whichever
         /// axis has the larger magnitude). Vertical moves jump to the nearest
         /// row that has an entry in the pressed direction, preferring the
-        /// column closest to the current one (so moving down from a
-        /// single-column row like Exit still lands somewhere sensible).
-        /// Horizontal moves stay within the current row. No-op if there's
+        /// column closest to the current one (so moving down from a column
+        /// with only one entry in that direction still lands somewhere
+        /// sensible). Horizontal moves stay within the current row. No-op if there's
         /// nothing to move to in that direction, or if the grid is empty.
         /// </summary>
         public void MoveFocus(Vector2Int dir)
@@ -552,7 +629,7 @@ namespace Hapbeat
                     // Horizontal: same row only, strictly in the pressed direction.
                     if (coord.y != _focusedCoord.y) continue;
                     int dx = coord.x - _focusedCoord.x;
-                    if (Mathf.Sign(dx) != Mathf.Sign(dir.x)) continue;
+                    if (SignOfInt(dx) != SignOfInt(dir.x)) continue;
                     int dist = Mathf.Abs(dx);
                     if (dist < bestPrimaryDist)
                     {
@@ -564,8 +641,19 @@ namespace Hapbeat
                 {
                     // Vertical: any row strictly in the pressed direction; nearest
                     // row first, then nearest column within that row.
+                    //
+                    // NB: this must use SignOfInt (below), not Mathf.Sign — Unity's
+                    // Mathf.Sign(0f) returns +1, not 0. With that float-based sign,
+                    // a same-row entry (dy == 0) would satisfy
+                    // "Sign(dy) == Sign(dir.y)" whenever dir.y is positive (i.e.
+                    // every "move down" press), so the nearest same-row button would
+                    // win over any real below-row button (dist 0 beats any dist >= 1)
+                    // and focus would never actually descend a row — reproduced as
+                    // "stick shows (0, ±1) but focus won't move vertically" (moving
+                    // up worked, since Sign(dir.y) was negative there and never
+                    // matched Sign(0) == +1).
                     int dy = coord.y - _focusedCoord.y;
-                    if (Mathf.Sign(dy) != Mathf.Sign(dir.y)) continue;
+                    if (SignOfInt(dy) != SignOfInt(dir.y)) continue;
                     int rowDist = Mathf.Abs(dy);
                     int colDist = Mathf.Abs(coord.x - _focusedCoord.x);
                     if (rowDist < bestPrimaryDist || (rowDist == bestPrimaryDist && colDist < bestSecondaryDist))
@@ -580,6 +668,12 @@ namespace Hapbeat
             if (best.HasValue)
                 SetFocusedCoord(best.Value);
         }
+
+        /// <summary>Integer sign that returns exactly 0 for 0 — unlike <see cref="Mathf.Sign(float)"/>,
+        /// which returns +1 for a 0f input. <see cref="MoveFocus"/> relies on 0 meaning
+        /// "no direction" to distinguish "different row/column" from "same row/column",
+        /// so it must not use the float version.</summary>
+        private static int SignOfInt(int value) => value > 0 ? 1 : (value < 0 ? -1 : 0);
 
         /// <summary>Invokes whichever button currently holds focus (see <see cref="MoveFocus"/>), same as a direct click. No-op if nothing is focused yet.</summary>
         public void ActivateFocused()
