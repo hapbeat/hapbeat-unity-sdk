@@ -108,18 +108,31 @@ namespace Hapbeat
         // the focused cell reads clearly against the dark panel backdrop.
         private static readonly Color s_focusHighlightColor = new Color(1f, 0.85f, 0.2f, 0.55f);
 
-        // Activation flash. Deliberately not white or near-white (the old
-        // value) — a white flash erases the button's own white label text
-        // for the flash's duration, and it also collides with the panel's
-        // white/yellow text palette in general. This blue (#3D7EC9) reads
-        // clearly as "activated" against both the panel's dark (black,
-        // 0.6 alpha) backdrop and the buttons' own text (white labels,
-        // yellow value/status highlights) without matching either. Fires
-        // whenever any registered button's onClick runs (see
+        // Activation flash, shared by every registered button (steppers +
+        // Apply/Play/Exit). Deliberately not white (erases the button's own
+        // white label text for the flash's duration) and not a color that
+        // could blend into the panel's own dark (black, 0.6 alpha) backdrop —
+        // a dark grey at high alpha (#555555, 0.9 alpha) reads clearly as
+        // "activated" against that backdrop, against the buttons' own base
+        // colors (translucent white for steppers; blue/green/red accents for
+        // Apply/Play/Exit — see s_applyBaseColor/s_playBaseColor/s_exitBaseColor),
+        // and against the white/yellow text palette, without matching any of
+        // them or washing out into the backdrop the way a low-alpha grey
+        // would. Fires whenever any registered button's onClick runs (see
         // RegisterFocusable), regardless of whether it was clicked directly
         // or activated via ActivateFocused.
-        private static readonly Color s_actionFlashColor = new Color(0x3D / 255f, 0x7E / 255f, 0xC9 / 255f, 0.9f);
+        private static readonly Color s_actionFlashColor = new Color(0x55 / 255f, 0x55 / 255f, 0x55 / 255f, 0.9f);
         private const float ActionFlashSeconds = 0.2f;
+
+        // Apply/Play/Exit non-focused, non-flashing base colors (see
+        // CreateActionColumnButton) — each action reads at a glance from its
+        // color alone, not just its label. Alpha kept below 1 so they still
+        // read as part of the panel's translucent style rather than fully
+        // opaque swatches; labels stay white (CreateText's default) for
+        // contrast against all three.
+        private static readonly Color s_applyBaseColor = new Color(0x2F / 255f, 0x6F / 255f, 0xB5 / 255f, 0.85f);
+        private static readonly Color s_playBaseColor = new Color(0x2E / 255f, 0x8B / 255f, 0x57 / 255f, 0.85f);
+        private static readonly Color s_exitBaseColor = new Color(0xB0 / 255f, 0x3A / 255f, 0x3A / 255f, 0.85f);
 
         [Header("Layout")]
         [Tooltip("ScreenSpaceOverlay = fixed 2D HUD (top-center). WorldSpace = 3D panel parented to this GameObject (e.g. for VR).")]
@@ -321,9 +334,11 @@ namespace Hapbeat
                 panelRt.anchorMax = new Vector2(0.5f, 1f);
                 panelRt.pivot = new Vector2(0.5f, 1f);
                 // Sized for the 2-row layout (see Build() below): a 200px
-                // left stepper column + a 180px right action-button column,
-                // ~106px tall (title + 2 stepper rows + status line).
-                panelRt.sizeDelta = new Vector2(410f, 108f);
+                // left stepper column + an 8px mainRow gap (see mainRowLayout.spacing
+                // below) + a 180px right action-button column + 20px panel
+                // padding (10 left + 10 right) = 408px wide, ~106px tall
+                // (title + 2 stepper rows + status line).
+                panelRt.sizeDelta = new Vector2(408f, 108f);
                 // Top-anchored pivot: y is measured downward from the anchor, so a
                 // small negative offset nudges the panel just below the screen edge.
                 panelRt.anchoredPosition = new Vector2(0f, -8f);
@@ -357,7 +372,12 @@ namespace Hapbeat
             var mainRow = new GameObject("MainRow", typeof(RectTransform));
             mainRow.transform.SetParent(panel.transform, false);
             var mainRowLayout = mainRow.AddComponent<HorizontalLayoutGroup>();
-            mainRowLayout.spacing = 10f;
+            // Gap between the left stepper block and the right action-button
+            // column — kept tight (was 10f) so the two blocks read as one
+            // compact control cluster rather than two separately-floating
+            // groups. See the panelRt.sizeDelta comment above for how this
+            // feeds into the panel's total width.
+            mainRowLayout.spacing = 8f;
             mainRowLayout.childControlWidth = true;
             mainRowLayout.childControlHeight = true;
             mainRowLayout.childForceExpandWidth = false;
@@ -384,9 +404,9 @@ namespace Hapbeat
             rightColumnLayout.childForceExpandWidth = false;
             rightColumnLayout.childForceExpandHeight = false;
 
-            CreateActionColumnButton(rightColumn.transform, "ApplyButton", "Apply", 2, Apply);
-            CreateActionColumnButton(rightColumn.transform, "PlayButton", "Play", 3, () => OnPlayRequested?.Invoke());
-            CreateActionColumnButton(rightColumn.transform, "ExitButton", "Exit", 4, () => OnExitRequested?.Invoke());
+            CreateActionColumnButton(rightColumn.transform, "ApplyButton", "Apply", 2, s_applyBaseColor, Apply);
+            CreateActionColumnButton(rightColumn.transform, "PlayButton", "Play", 3, s_playBaseColor, () => OnPlayRequested?.Invoke());
+            CreateActionColumnButton(rightColumn.transform, "ExitButton", "Exit", 4, s_exitBaseColor, () => OnExitRequested?.Invoke());
 
             // Fixed-height, single-line status so editing/applying never shifts
             // the panel size — see workspace layout-shift rule. Never wraps
@@ -456,20 +476,27 @@ namespace Hapbeat
         /// <summary>
         /// Creates one of the Apply/Play/Exit action buttons: square-ish
         /// (<see cref="ActionButtonSize"/> on both axes, spanning the combined
-        /// height of the two stepper rows), and registered into the focus
-        /// grid at BOTH row 0 and row 1 of <paramref name="column"/> (see the
-        /// grid-layout comment in <see cref="Build"/>) so it's reachable via
-        /// a rightward move from either the Player or the Group row, and an
-        /// up/down move while it's focused toggles which row's coordinate is
-        /// current without any visible change.
+        /// height of the two stepper rows), tinted with <paramref name="baseColor"/>
+        /// (set before either grid registration below, so <see cref="AddFocusEntry"/>
+        /// captures it as the entry's <c>BaseColor</c> — see
+        /// <see cref="s_applyBaseColor"/>/<see cref="s_playBaseColor"/>/<see cref="s_exitBaseColor"/>),
+        /// and registered into the focus grid at BOTH row 0 and row 1 of
+        /// <paramref name="column"/> (see the grid-layout comment in
+        /// <see cref="Build"/>) so it's reachable via a rightward move from
+        /// either the Player or the Group row, and an up/down move while it's
+        /// focused toggles which row's coordinate is current without any
+        /// visible change.
         /// </summary>
-        private Button CreateActionColumnButton(Transform parent, string name, string label, int column, UnityEngine.Events.UnityAction onClick)
+        private Button CreateActionColumnButton(Transform parent, string name, string label, int column, Color baseColor, UnityEngine.Events.UnityAction onClick)
         {
             var button = CreateButton(parent, name, label);
             var layoutElement = button.GetComponent<LayoutElement>();
             layoutElement.preferredWidth = ActionButtonSize;
             layoutElement.preferredHeight = ActionButtonSize;
             button.onClick.AddListener(onClick);
+
+            var image = button.GetComponent<Image>();
+            if (image != null) image.color = baseColor;
 
             RegisterFocusable(new Vector2Int(column, 0), button);
             RegisterFocusableAlias(new Vector2Int(column, 1), button);
@@ -708,6 +735,11 @@ namespace Hapbeat
             ApplyFocusVisual();
         }
 
+        // No-op (keeps whatever was focused before) if coord isn't registered —
+        // this is what makes MoveFocus's "nothing found in that direction"
+        // case (see the `best.HasValue` check there) leave focus exactly
+        // where it was rather than ever landing on a dead coordinate and
+        // losing the highlight/ActivateFocused target.
         private void SetFocusedCoord(Vector2Int coord)
         {
             if (!_focusEntries.ContainsKey(coord)) return;
@@ -716,12 +748,39 @@ namespace Hapbeat
             ApplyFocusVisual();
         }
 
+        // Root cause of a previous bug: Apply/Play/Exit are each registered at
+        // TWO grid coordinates that share the SAME underlying Button/Image
+        // (see RegisterFocusableAlias / CreateActionColumnButton) — e.g. Apply
+        // lives at both (2,0) and (2,1). A per-coordinate comparison here
+        // (`kvp.Key == _focusedCoord`) is therefore unsafe: this loop visits
+        // BOTH of that button's coordinates and writes to the one shared
+        // Image.color each time, so whichever coordinate is iterated LAST
+        // decides the final color — even when the OTHER coordinate is the one
+        // that's actually focused. Concretely: reaching Apply via a rightward
+        // move from Player+ (row 0) focuses coord (2,0), but since dictionary
+        // iteration visits (2,0) before its (2,1) alias (insertion order),
+        // that (2,1) pass immediately overwrote the highlight this pass just
+        // painted, back to the base color — the highlight visibly "vanished"
+        // even though _focusedCoord/_hasFocus were correctly set and
+        // ActivateFocused still worked. Reaching Apply via Group+ (row 1)
+        // happened to focus coord (2,1), the LAST alias in iteration order, so
+        // that path never showed the bug.
+        //
+        // Fixed by resolving the highlight per BUTTON identity instead of per
+        // raw coordinate: every coordinate that maps to the same Button as the
+        // currently-focused entry computes the same showHighlight value, so
+        // whichever alias is visited last always re-affirms (never erases) the
+        // shared Image's highlighted state.
         private void ApplyFocusVisual()
         {
+            Button focusedButton = (_hasFocus && _focusEntries.TryGetValue(_focusedCoord, out var focusedEntry))
+                ? focusedEntry.Button
+                : null;
+
             foreach (var kvp in _focusEntries)
             {
                 if (kvp.Value.Image == null) continue;
-                bool showHighlight = _focusHighlightVisible && _hasFocus && kvp.Key == _focusedCoord;
+                bool showHighlight = _focusHighlightVisible && focusedButton != null && kvp.Value.Button == focusedButton;
                 kvp.Value.Image.color = showHighlight ? s_focusHighlightColor : kvp.Value.BaseColor;
             }
         }
