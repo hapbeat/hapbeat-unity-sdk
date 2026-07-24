@@ -70,6 +70,27 @@ namespace Hapbeat
         // device 単位の直近 pong time (key = IPAddress)。複数 device broadcast 想定。
         private readonly System.Collections.Generic.Dictionary<System.Net.IPAddress, float>
             _devicePongTimes = new System.Collections.Generic.Dictionary<System.Net.IPAddress, float>();
+
+        // Device TCP config port (serial-config.md §4 / ports.md) — fixed, not
+        // user-configurable (matches TCP_CONFIG_PORT in device firmware).
+        private const int DeviceTcpConfigPort = 7701;
+
+        // IPs the device has *confirmed* received the current _config.streamBufferMs
+        // value this app session (only added on a successful send — see
+        // OnStreamBufferConfigResult). Cleared whenever the configured value
+        // changes so every device is brought up to date exactly once per value.
+        private readonly System.Collections.Generic.HashSet<System.Net.IPAddress>
+            _streamBufferConfiguredIps = new System.Collections.Generic.HashSet<System.Net.IPAddress>();
+        private int _streamBufferConfiguredForMs = int.MinValue; // sentinel: always "changed" on first call
+
+        // Per-IP retry cooldown after a failed send (e.g. device's single TCP
+        // config slot held by Studio/Helper). Value = Time.realtimeSinceStartup
+        // after which MaybeConfigureStreamBufferFor will attempt this ip again.
+        // Cleared alongside _streamBufferConfiguredIps on a streamBufferMs change.
+        private readonly System.Collections.Generic.Dictionary<System.Net.IPAddress, float>
+            _streamBufferRetryAfter = new System.Collections.Generic.Dictionary<System.Net.IPAddress, float>();
+        private const float StreamBufferRetryCooldownSeconds = 10f;
+
         // alive count の前回値 (state 変化検出用)
         private int _prevAliveCount = -1;
 
@@ -254,6 +275,12 @@ namespace Hapbeat
         {
             // Dispatch discovery callbacks
             _discovery?.DispatchCallbacks();
+
+            // Dispatch set_stream_buffer send-result callbacks (HapbeatDeviceTcpConfig
+            // runs its TCP I/O on a thread-pool thread; results are queued there and
+            // drained here so OnStreamBufferConfigResult only ever runs on the main
+            // thread). Independent of _client, so keep this above the null check.
+            HapbeatDeviceTcpConfig.DispatchMainThreadCallbacks();
 
             if (_client == null)
                 return;
@@ -652,6 +679,12 @@ namespace Hapbeat
                 Log($"\u266a Stream session begin: {_sessionSampleRate}Hz, {_sessionChannels}ch, " +
                     $"target={(string.IsNullOrEmpty(target) ? "broadcast" : target)}");
 
+                // Bring every already-known alive device up to the configured
+                // stream-buffer mode. Devices that only appear later (PONG
+                // after this point) are covered by the OnPongFrom hook above.
+                foreach (System.Net.IPAddress ip in _devicePongTimes.Keys)
+                    MaybeConfigureStreamBufferFor(ip);
+
                 _sources.Add(source);
                 _mixerCoroutine = StartCoroutine(MixerCoroutine());
             }
@@ -962,6 +995,9 @@ namespace Hapbeat
             client.OnPongFrom += (sender, rttUs) =>
             {
                 _devicePongTimes[sender.Address] = Time.realtimeSinceStartup;
+                // Newly-seen (or reconfigured) device — make sure it has the
+                // configured stream-buffer mode for CLIP playback.
+                MaybeConfigureStreamBufferFor(sender.Address);
             };
 
             client.OnError += (errorCode, message) =>
@@ -972,6 +1008,84 @@ namespace Hapbeat
             };
 
             return client;
+        }
+
+        /// <summary>
+        /// Pushes <c>set_stream_buffer</c> (contracts §4.20-pre) to <paramref name="ip"/>
+        /// over TCP 7701. Only counted as done once the send actually succeeds
+        /// (see <see cref="OnStreamBufferConfigResult"/>) — a failed attempt
+        /// (device's single TCP config slot held by Studio/Helper, connect
+        /// timeout, etc.) is retried after <see cref="StreamBufferRetryCooldownSeconds"/>
+        /// on the next call, instead of being silently treated as configured
+        /// forever. Fire-and-forget from this method's own point of view — see
+        /// <see cref="HapbeatDeviceTcpConfig"/> for why the send itself never
+        /// blocks or throws.
+        ///
+        /// Called from two places (both main-thread, so <see cref="_streamBufferConfiguredIps"/>
+        /// / <see cref="_streamBufferRetryAfter"/> need no locking): (a) when a
+        /// StreamAudioClip session begins, for every already-known alive device
+        /// IP; (b) every time a PONG reveals a device IP, so devices that connect
+        /// mid-session (or after the first stream started), or that failed and
+        /// are now past their cooldown, still get configured.
+        /// </summary>
+        private void MaybeConfigureStreamBufferFor(System.Net.IPAddress ip)
+        {
+            if (_config == null || ip == null) return;
+            // Bridge/ESP-NOW-fed devices aren't reachable over direct Wi-Fi TCP —
+            // this feature only applies to the standard Wi-Fi UDP CLIP path.
+            if (_config.useBridge) return;
+
+            int bufferMs = _config.streamBufferMs;
+            if (bufferMs != _streamBufferConfiguredForMs)
+            {
+                // Value changed since we last sent (including the very first
+                // call, via the sentinel) — re-arm so every known device gets
+                // the new value once, dropping any stale confirmed/cooldown state.
+                _streamBufferConfiguredIps.Clear();
+                _streamBufferRetryAfter.Clear();
+                _streamBufferConfiguredForMs = bufferMs;
+            }
+            if (bufferMs <= 0) return; // 0 = don't send (device already defaults to low-latency)
+            if (_streamBufferConfiguredIps.Contains(ip)) return; // already confirmed configured for this value
+
+            if (_streamBufferRetryAfter.TryGetValue(ip, out float retryAfter) &&
+                Time.realtimeSinceStartup < retryAfter)
+            {
+                return; // still cooling down from a recent failed attempt
+            }
+
+            int forMs = bufferMs; // capture so a late callback can't misattribute a since-changed value
+            HapbeatDeviceTcpConfig.SendSetStreamBufferAsync(
+                ip.ToString(), DeviceTcpConfigPort, bufferMs, _config.verboseLogging,
+                (_, success) => OnStreamBufferConfigResult(ip, forMs, success));
+        }
+
+        /// <summary>
+        /// Main-thread callback for <see cref="HapbeatDeviceTcpConfig.SendSetStreamBufferAsync"/>
+        /// (invoked via <see cref="HapbeatDeviceTcpConfig.DispatchMainThreadCallbacks"/>
+        /// from <see cref="Update"/>). On success, marks <paramref name="ip"/> as
+        /// configured so it isn't re-sent for this <c>streamBufferMs</c> value. On
+        /// failure, arms a short retry cooldown so the next PONG (or the next
+        /// StreamAudioClip session start) will try again rather than the device
+        /// silently never getting the setting because Studio/Helper happened to
+        /// be holding the TCP 7701 slot at the moment we tried.
+        /// </summary>
+        private void OnStreamBufferConfigResult(System.Net.IPAddress ip, int forMs, bool success)
+        {
+            // Stale result for a streamBufferMs value we've since moved on from
+            // (the confirmed/cooldown maps were already cleared for the new
+            // value in MaybeConfigureStreamBufferFor) — ignore.
+            if (forMs != _streamBufferConfiguredForMs) return;
+
+            if (success)
+            {
+                _streamBufferConfiguredIps.Add(ip);
+                _streamBufferRetryAfter.Remove(ip);
+            }
+            else
+            {
+                _streamBufferRetryAfter[ip] = Time.realtimeSinceStartup + StreamBufferRetryCooldownSeconds;
+            }
         }
 
         private bool EnsureConnected()

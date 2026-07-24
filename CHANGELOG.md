@@ -11,6 +11,10 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Added（追加）
 
+- **CLIP (Wi-Fi UDP stream) 途切れ改善 — device 側ジッタバッファ深さの設定 (`set_stream_buffer`)** — `HapbeatConfig.streamBufferMs`（既定 30ms、0-500、0 = 送らない/device 既定の低遅延モードのまま）を追加。値が 0 より大きい間、既知の alive デバイス IP（`OnPongFrom` で追跡済み）へ TCP 7701 経由で `{"cmd":"set_stream_buffer","buffer_ms":N,"persist":true}`（contracts §4.20-pre）を送り、firmware の低遅延・連続再生モード（hold-decay + drift 補正 + no-reprime）を有効化する。Wi-Fi のゆらぎで CLIP 音声/触覚が途切れやすい環境向け（トレードオフ: レイテンシ増）。
+  - 送信は新規 `HapbeatDeviceTcpConfig`（internal, fire-and-forget）が担当。スレッドプール上で TCP 接続（~400ms タイムアウト）→ JSON 送信 → close。device の TCP 7701 は単一クライアントスロットのため、Studio/Helper が既に占有中なら黙って失敗する（verbose ログのみ、UDP 音声送出には一切影響しない）。
+  - `HapbeatManager` が (a) `StreamAudioClip` セッション開始時に既知の alive デバイス全て、(b) セッション中/接続後に新規 PONG で現れたデバイス、へ送信を試みる。TCP 接続 + JSON 書込みが成功したデバイスのみ「設定済み」として以後スキップし（`streamBufferMs` の値が変わるとやり直す）、TCP スロット占有等で失敗した場合は約 10 秒のクールダウン後に次回 PONG / セッション開始時で自動再試行する（無限リトライループにはしない）。
+  - Settings ウィンドウに "Device Stream Buffer (ms)" フィールドを追加。
 - **Address Override（player/group の実行時上書き）** — 同一ビルドを複数 HMD に配布し、各端末を自分の Hapbeat に 1:1 で向けたいユースケース向け。
   - `HapbeatConfig` に `Addressing` セクション (`overridePlayer` / `overrideGroup`、-1 = 無効・1-99 = 強制適用) を追加。設定すると EventMap 側の target 文字列に関わらず、全ての送信 (Play/Stop/StopAll/StreamBegin) にこの player/group が強制適用される。
   - `HapbeatManager.SetAddressOverride(int player, int group, bool persist = false)` を追加。実行時に override を切り替え可能。`persist: true` で PlayerPrefs に保存し、次回起動時も復元される。

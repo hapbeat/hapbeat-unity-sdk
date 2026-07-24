@@ -43,6 +43,16 @@ namespace Hapbeat
         [Range(0.01f, 0.2f)]
         public float streamSendAheadSeconds = 0.05f;
 
+        [Tooltip("Device-side jitter-buffer depth (ms) for CLIP (Wi-Fi UDP stream) playback, " +
+                 "pushed to each known device via set_stream_buffer (TCP 7701) when a stream " +
+                 "starts / a new device is discovered. 0 = device default (low-latency, " +
+                 "re-primes on underrun — best for short haptic hits, don't send this setting). " +
+                 ">0 = continuous mode (hold-decay + drift correction, no re-prime) — trades " +
+                 "latency for far fewer dropouts on flaky Wi-Fi. Range 0–500 ms (contracts " +
+                 "§4.20-pre). Typical: 30 ms.")]
+        [Range(0, 500)]
+        public int streamBufferMs = 30;
+
         [Header("Latency Compensation")]
         [Tooltip("Global delay (seconds) added to every Play / StreamClip call to match the audio output latency " +
                  "(e.g. Bluetooth headphones). Hapbeat haptics go out over UDP with very low latency (~10 ms), " +
