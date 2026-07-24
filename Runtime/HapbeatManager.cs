@@ -1,7 +1,10 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 namespace Hapbeat
 {
@@ -524,6 +527,10 @@ namespace Hapbeat
         /// </summary>
         public void Disconnect()
         {
+            // Join the background mixer thread (if any) before tearing down the
+            // socket it sends through. No-op if nothing is streaming.
+            StopStream();
+
             if (_client == null)
                 return;
 
@@ -614,36 +621,58 @@ namespace Hapbeat
                 return null;
             }
 
-            // Session compatibility check (sample rate / channels / target must match active session)
-            if (_sessionActive)
-            {
-                if (clip.frequency != _sessionSampleRate || clip.channels != _sessionChannels)
-                {
-                    Debug.LogWarning($"[Hapbeat] StreamAudioClip: rate/channel mismatch with active session " +
-                        $"(session={_sessionSampleRate}Hz/{_sessionChannels}ch, new={clip.frequency}Hz/{clip.channels}ch). Rejecting new source.");
-                    return null;
-                }
-                bool sameTarget = string.IsNullOrEmpty(target)
-                    ? string.IsNullOrEmpty(_sessionTarget)
-                    : (target == _sessionTarget);
-                if (!sameTarget)
-                {
-                    Debug.LogWarning($"[Hapbeat] StreamAudioClip: target mismatch with active session " +
-                        $"(session='{_sessionTarget}', new='{target}'). Rejecting new source.");
-                    return null;
-                }
-            }
-
             var playback = new HapbeatStreamPlayback(baselineGain, initialGain);
             var source = new StreamSource(clip, playback, loop);
 
-            if (!_sessionActive)
+            // The whole "read _sessionActive \u2192 validate compatibility \u2192 mutate
+            // _sources/_sessionActive" sequence must be atomic: the background
+            // mixer thread can flip _sessionActive false (natural completion \u2014
+            // all sources finished on their own) at any time now, not just on a
+            // main-thread StopStream() call as before. Without one lock spanning
+            // the read and the mutation, a session could finish between this
+            // method's compatibility check and its _sources.Add(), silently
+            // dropping the new source into an abandoned list nobody is mixing
+            // anymore.
+            bool startNewSession = false;
+            int activeSourceCount = 0;
+            lock (_streamLock)
             {
-                _sessionSampleRate = (ushort)clip.frequency;
-                _sessionChannels = (byte)clip.channels;
-                _sessionTarget = target;
-                _sessionActive = true;
+                if (_sessionActive)
+                {
+                    if (clip.frequency != _sessionSampleRate || clip.channels != _sessionChannels)
+                    {
+                        Debug.LogWarning($"[Hapbeat] StreamAudioClip: rate/channel mismatch with active session " +
+                            $"(session={_sessionSampleRate}Hz/{_sessionChannels}ch, new={clip.frequency}Hz/{clip.channels}ch). Rejecting new source.");
+                        return null;
+                    }
+                    bool sameTarget = string.IsNullOrEmpty(target)
+                        ? string.IsNullOrEmpty(_sessionTarget)
+                        : (target == _sessionTarget);
+                    if (!sameTarget)
+                    {
+                        Debug.LogWarning($"[Hapbeat] StreamAudioClip: target mismatch with active session " +
+                            $"(session='{_sessionTarget}', new='{target}'). Rejecting new source.");
+                        return null;
+                    }
 
+                    _sources.Add(source);
+                    activeSourceCount = _sources.Count;
+                }
+                else
+                {
+                    _sessionSampleRate = (ushort)clip.frequency;
+                    _sessionChannels = (byte)clip.channels;
+                    _sessionTarget = target;
+                    _sessionActive = true;
+                    _streamStopRequested = false;
+                    Interlocked.Exchange(ref _streamEndSentFlag, 0);
+                    _sources.Add(source);
+                    startNewSession = true;
+                }
+            }
+
+            if (startNewSession)
+            {
                 // Send gain=1.0 so the device passes through, and pre-multiply
                 // each source's gain in the SDK (sample \u00d7 gain) to avoid the
                 // device applying it twice. totalSamples=0 means "unknown".
@@ -652,13 +681,37 @@ namespace Hapbeat
                 Log($"\u266a Stream session begin: {_sessionSampleRate}Hz, {_sessionChannels}ch, " +
                     $"target={(string.IsNullOrEmpty(target) ? "broadcast" : target)}");
 
-                _sources.Add(source);
-                _mixerCoroutine = StartCoroutine(MixerCoroutine());
+                // Background thread instead of a MonoBehaviour coroutine: the mixer
+                // previously ran inside MixerCoroutine (Update-driven), so a frame
+                // hitch (GC / rendering spike / physics) delayed chunk sends and
+                // starved the device ring buffer, producing audible dropouts even
+                // though Wi-Fi and the firmware mixer were healthy. A dedicated
+                // Thread paces sends off a Stopwatch instead of Unity's frame clock,
+                // so it keeps sending on schedule regardless of what the main thread
+                // is doing. See subrepo-devs/unity-sdk/instructions/
+                // instructions-streaming-background-thread-202605210100.md.
+                //
+                // _streamThread itself is only ever otherwise touched under
+                // _streamLock (by StopStream and the mixer thread's own trailer);
+                // assigning it under the same lock here — even though this whole
+                // method is main-thread-only in practice — keeps lock discipline
+                // uniform for that field rather than relying on call-order
+                // reasoning. Starting the thread while holding the lock is safe:
+                // its first lock acquisition happens inside StreamThreadLoop's
+                // while-loop, so at worst it blocks briefly until this scope exits.
+                lock (_streamLock)
+                {
+                    _streamThread = new Thread(StreamThreadLoop)
+                    {
+                        Name = "HapbeatStreamMixer",
+                        IsBackground = true
+                    };
+                    _streamThread.Start();
+                }
             }
             else
             {
-                _sources.Add(source);
-                Log($"\u266a Stream source added: {clip.name} (active sources={_sources.Count}, loop={loop})");
+                Log($"\u266a Stream source added: {clip.name} (active sources={activeSourceCount}, loop={loop})");
             }
 
             return playback;
@@ -671,20 +724,41 @@ namespace Hapbeat
         /// </summary>
         public void StopStream()
         {
-            if (_mixerCoroutine != null)
+            Thread threadToJoin;
+            bool wasActive;
+            lock (_streamLock)
             {
-                StopCoroutine(_mixerCoroutine);
-                _mixerCoroutine = null;
+                wasActive = _sessionActive;
+                for (int i = 0; i < _sources.Count; i++)
+                    _sources[i].Playback?.MarkStopped();
+                _sources.Clear();
+                // Tell the thread to exit without sending its own STREAM_END —
+                // this call owns that (via TrySendStreamEnd below), so whichever
+                // of the two ends up running first the device only sees one.
+                _streamStopRequested = true;
+                threadToJoin = _streamThread;
             }
-            for (int i = 0; i < _sources.Count; i++)
-                _sources[i].Playback?.MarkStopped();
-            _sources.Clear();
-            if (_sessionActive && _client != null && _client.IsConnected)
+
+            if (threadToJoin != null)
             {
-                _client.SendStreamEnd();
-                Log("Stream session stopped (all sources).");
+                // Chunks are ~10ms and the pacing sleep polls _streamStopRequested
+                // every <2ms, so the thread should wake and exit within a few ms.
+                // 500ms is a generous ceiling, not the expected case — if it's ever
+                // hit something else is wrong (e.g. a blocked UDP send), and we log
+                // rather than hang the caller (main thread) forever.
+                if (!threadToJoin.Join(500))
+                    Debug.LogWarning("[Hapbeat] StopStream: mixer thread did not exit within 500ms.");
             }
-            _sessionActive = false;
+
+            lock (_streamLock)
+            {
+                _sessionActive = false;
+                _streamThread = null;
+                _streamStopRequested = false;
+            }
+
+            if (wasActive)
+                TrySendStreamEnd("Stream session stopped (all sources).");
         }
 
         /// <summary>
@@ -722,8 +796,19 @@ namespace Hapbeat
         /// multi-source use, hold the per-source handle returned by
         /// <see cref="StreamAudioClip"/>.
         /// </summary>
-        public HapbeatStreamPlayback ActivePlayback =>
-            (_sources.Count > 0 && !_sources[0].Playback.IsStopped) ? _sources[0].Playback : null;
+        public HapbeatStreamPlayback ActivePlayback
+        {
+            get
+            {
+                // _sources is mutated by the background mixer thread (adds happen
+                // on the main thread too — see StreamAudioClip); guard every access
+                // with the same lock so this never observes a torn/mid-mutation list.
+                lock (_streamLock)
+                {
+                    return (_sources.Count > 0 && !_sources[0].Playback.IsStopped) ? _sources[0].Playback : null;
+                }
+            }
+        }
 
         // ----- Multi-source mixing internals -----
 
@@ -739,6 +824,12 @@ namespace Hapbeat
 
             public StreamSource(AudioClip clip, HapbeatStreamPlayback pb, bool loop)
             {
+                // AudioClip.GetData is a Unity API and main-thread-only, so we read
+                // the whole clip into a plain managed float[] here, on the main
+                // thread, at StreamAudioClip() call time — before the source is ever
+                // handed to the background mixer thread. The mixer thread only ever
+                // touches this plain array + Cursor afterwards, so it needs no Unity
+                // API access at all.
                 Samples = new float[clip.samples * clip.channels];
                 clip.GetData(Samples, 0);
                 Channels = (byte)clip.channels;
@@ -752,21 +843,81 @@ namespace Hapbeat
             public bool IsDone => Playback == null || Playback.IsStopped;
         }
 
+        // Guards all structural access to _sources (Add from the main thread in
+        // StreamAudioClip / StopStream; Add+Remove+iterate from the mixer thread
+        // in StreamThreadLoop) plus the _sessionActive / _streamThread /
+        // _streamStopRequested trio below. Per-chunk hold time is a few float
+        // multiplies over a few hundred samples — sub-microsecond — so contention
+        // is never a concern even though the mixer thread takes it every ~10ms.
+        private readonly object _streamLock = new object();
         private readonly System.Collections.Generic.List<StreamSource> _sources
             = new System.Collections.Generic.List<StreamSource>(4);
-        private Coroutine _mixerCoroutine;
+        private Thread _streamThread;
+        // Set by StopStream() to tell the mixer thread to exit immediately without
+        // sending its own STREAM_END (StopStream sends it instead — see
+        // TrySendStreamEnd). Polled frequently (sub-2ms) by both the loop condition
+        // and PreciseSleep so Stop-triggered teardown is fast, not just eventual.
+        private volatile bool _streamStopRequested;
+        // Interlocked-guarded flip so exactly one of {StopStream (forced stop),
+        // StreamThreadLoop (natural completion — all sources finished on their
+        // own)} sends the closing STREAM_END, even in the rare race where both
+        // happen within the same few microseconds.
+        private int _streamEndSentFlag;
         private ushort _sessionSampleRate;
         private byte _sessionChannels;
         private string _sessionTarget;
-        private bool _sessionActive;
+        private volatile bool _sessionActive;
 
         /// <summary>
-        /// Multi-source mixer. Mixes one chunk's worth of samples from every
-        /// active source as float, converts to PCM16, and sends as a single
-        /// wire stream. When all sources finish, sends STREAM_END to close
-        /// the session.
+        /// Sends STREAM_END at most once per session — see <see cref="_streamEndSentFlag"/>.
+        /// Callable from either the main thread (StopStream) or the mixer thread
+        /// (StreamThreadLoop's natural-completion path).
         /// </summary>
-        private IEnumerator MixerCoroutine()
+        private void TrySendStreamEnd(string logMessage)
+        {
+            if (Interlocked.Exchange(ref _streamEndSentFlag, 1) != 0)
+                return; // the other path already sent it
+            if (_client != null && _client.IsConnected)
+            {
+                _client.SendStreamEnd();
+                Log(logMessage);
+            }
+        }
+
+        /// <summary>
+        /// Target chunk duration for the background mixer thread. Deliberately
+        /// small (~10ms, vs. the old MTU-max chunks of ~22–44ms) so the thread
+        /// sends on a fine, even cadence instead of infrequent bursts — this is
+        /// the actual smoothness fix; running off a Stopwatch instead of Unity's
+        /// frame clock only removes the *source* of the jitter (main-thread frame
+        /// hitches), while smaller chunks reduce how much any single missed send
+        /// can starve the device ring buffer.
+        /// </summary>
+        private const float StreamChunkTargetSeconds = 0.01f;
+
+        /// <summary>
+        /// Multi-source mixer, running on a dedicated background thread (started
+        /// by <see cref="StreamAudioClip"/>, joined by <see cref="StopStream"/> /
+        /// <see cref="Disconnect"/> / <see cref="Cleanup"/>). Mixes one chunk's
+        /// worth of samples from every active source as float, converts to
+        /// PCM16, and sends as a single wire stream, paced off a
+        /// <see cref="Stopwatch"/> so it's unaffected by Unity main-thread frame
+        /// jitter (GC / rendering spikes). When all sources finish on their own
+        /// (nobody called <see cref="HapbeatStreamPlayback.Stop"/> /
+        /// <see cref="StopStream"/>), this thread sends STREAM_END itself and
+        /// exits — the session isn't kept idle/resident between streams (see
+        /// instruction doc §"idle 常駐" tradeoff): sessions are episodic bursts of
+        /// haptic feedback, not a continuous background service, and thread
+        /// start/stop cost (sub-ms) is negligible next to a ~10ms chunk cadence,
+        /// so tearing down between sessions keeps the lifetime trivially easy to
+        /// reason about (no idle-thread wake/sleep coordination to get wrong).
+        /// <para>
+        /// Loop-seam crossfade (instruction doc §D) is intentionally out of scope
+        /// here — it's an independent audio-quality improvement, not part of the
+        /// threading fix, and is left for a follow-up.
+        /// </para>
+        /// </summary>
+        private void StreamThreadLoop()
         {
             byte channels = _sessionChannels;
             ushort sampleRate = _sessionSampleRate;
@@ -774,8 +925,9 @@ namespace Hapbeat
             // Chunk size in SAMPLES (not bytes). Must be a whole number of
             // sample frames so stereo L/R stays aligned at chunk boundaries.
             int bytesPerFrame = channels * 2;
-            int framesPerChunk = maxChunkBytes / bytesPerFrame;
-            if (framesPerChunk <= 0) framesPerChunk = 1;
+            int mtuFramesPerChunk = Math.Max(1, maxChunkBytes / bytesPerFrame);
+            int targetFramesPerChunk = Math.Max(1, Mathf.RoundToInt(sampleRate * StreamChunkTargetSeconds));
+            int framesPerChunk = Math.Min(mtuFramesPerChunk, targetFramesPerChunk);
             int samplesPerChunk = framesPerChunk * channels;
             byte[] pcmChunk = new byte[samplesPerChunk * 2];
             float[] mixBuffer = new float[samplesPerChunk];
@@ -784,102 +936,179 @@ namespace Hapbeat
             float sendAheadSeconds = _config != null ? _config.streamSendAheadSeconds : 0.05f;
             if (sendAheadSeconds < 0.01f) sendAheadSeconds = 0.05f;
 
+            var stopwatch = Stopwatch.StartNew();
             uint globalByteOffset = 0;
-            float startTime = Time.realtimeSinceStartup;
+            // False only when StopStream() forced this iteration to end — in that
+            // case StopStream (not us) sends the closing STREAM_END.
+            bool naturalCompletion = true;
 
-            while (_sources.Count > 0 && _client != null && _client.IsConnected)
+            try
             {
-                // 1. Clear mix buffer
-                System.Array.Clear(mixBuffer, 0, mixBuffer.Length);
-
-                // 2. Mix each source into mixBuffer (also remove stopped/finished sources)
-                for (int s = _sources.Count - 1; s >= 0; s--)
+                while (true)
                 {
-                    var src = _sources[s];
-                    if (src.IsDone)
-                    {
-                        _sources.RemoveAt(s);
-                        continue;
-                    }
+                    if (_streamStopRequested) { naturalCompletion = false; break; }
 
-                    float g = src.Playback.Gain;
-                    float gainL, gainR;
-                    src.Playback.GetStereoChannelGains(out gainL, out gainR);
-
-                    int framesRemaining = framesPerChunk;
-                    int outIdx = 0;
-                    while (framesRemaining > 0)
+                    bool anySources;
+                    lock (_streamLock)
                     {
-                        int srcSamplesLeft = src.Samples.Length - src.Cursor;
-                        int srcFramesAvail = srcSamplesLeft / channels;
-                        if (srcFramesAvail <= 0)
+                        if (_streamStopRequested) { naturalCompletion = false; break; }
+
+                        // 1. Clear mix buffer
+                        System.Array.Clear(mixBuffer, 0, mixBuffer.Length);
+
+                        // 2. Mix each source into mixBuffer (also remove stopped/finished sources)
+                        for (int s = _sources.Count - 1; s >= 0; s--)
                         {
-                            if (src.Loop)
+                            var src = _sources[s];
+                            if (src.IsDone)
                             {
-                                src.Cursor = 0;
+                                _sources.RemoveAt(s);
                                 continue;
                             }
-                            else
+
+                            float g = src.Playback.Gain;
+                            float gainL, gainR;
+                            src.Playback.GetStereoChannelGains(out gainL, out gainR);
+
+                            int framesRemaining = framesPerChunk;
+                            int outIdx = 0;
+                            while (framesRemaining > 0)
                             {
-                                src.Playback.MarkStopped();
-                                _sources.RemoveAt(s);
-                                break;
+                                int srcSamplesLeft = src.Samples.Length - src.Cursor;
+                                int srcFramesAvail = srcSamplesLeft / channels;
+                                if (srcFramesAvail <= 0)
+                                {
+                                    if (src.Loop)
+                                    {
+                                        src.Cursor = 0;
+                                        continue;
+                                    }
+                                    else
+                                    {
+                                        src.Playback.MarkStopped();
+                                        _sources.RemoveAt(s);
+                                        break;
+                                    }
+                                }
+                                int framesToCopy = Mathf.Min(framesRemaining, srcFramesAvail);
+                                if (channels == 2)
+                                {
+                                    for (int f = 0; f < framesToCopy; f++)
+                                    {
+                                        mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g * gainL;
+                                        mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g * gainR;
+                                    }
+                                }
+                                else
+                                {
+                                    for (int f = 0; f < framesToCopy; f++)
+                                        mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g;
+                                }
+                                framesRemaining -= framesToCopy;
                             }
                         }
-                        int framesToCopy = Mathf.Min(framesRemaining, srcFramesAvail);
-                        if (channels == 2)
-                        {
-                            for (int f = 0; f < framesToCopy; f++)
-                            {
-                                mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g * gainL;
-                                mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g * gainR;
-                            }
-                        }
-                        else
-                        {
-                            for (int f = 0; f < framesToCopy; f++)
-                                mixBuffer[outIdx++] += src.Samples[src.Cursor++] * g;
-                        }
-                        framesRemaining -= framesToCopy;
+
+                        anySources = _sources.Count > 0;
                     }
+
+                    if (!anySources) break; // natural completion — no more sources, exit loop normally
+
+                    // 3. Convert mixed float → PCM16 (clamp to int16 range) — outside
+                    // the lock; only touches this thread's own local buffers.
+                    for (int i = 0; i < samplesPerChunk; i++)
+                    {
+                        short pcm = (short)Mathf.Clamp(mixBuffer[i] * 32767f, -32768f, 32767f);
+                        pcmChunk[i * 2    ] = (byte)(pcm & 0xFF);
+                        pcmChunk[i * 2 + 1] = (byte)((pcm >> 8) & 0xFF);
+                    }
+
+                    // 4. Send chunk — also outside the lock (UDP send shouldn't block
+                    // main-thread Add/StopStream calls waiting on _streamLock).
+                    int chunkBytes = samplesPerChunk * 2;
+                    var client = _client;
+                    if (client == null || !client.IsConnected) { naturalCompletion = false; break; }
+                    client.SendStreamData(globalByteOffset, pcmChunk, 0, chunkBytes);
+                    globalByteOffset += (uint)chunkBytes;
+
+                    // 5. Pace — pin lead at sendAheadSeconds regardless of chunk size,
+                    // using a Stopwatch instead of Unity's Time.realtimeSinceStartup
+                    // (UnityEngine.Time is main-thread-only and would throw here).
+                    //
+                    // overshoot is computed from *cumulative* bytes sent vs. elapsed
+                    // wall time (not a fixed per-chunk sleep), so any single chunk that
+                    // sends late is auto-corrected on the next iteration — this feedback
+                    // property carries over unchanged from the original coroutine.
+                    double elapsedTime = stopwatch.Elapsed.TotalSeconds;
+                    double sentDuration = globalByteOffset / (double)bytesPerSecond;
+                    double overshoot = sentDuration - elapsedTime - sendAheadSeconds;
+                    if (overshoot > 0.0)
+                        PreciseSleep(overshoot);
                 }
-
-                // 3. Convert mixed float → PCM16 (clamp to int16 range)
-                for (int i = 0; i < samplesPerChunk; i++)
-                {
-                    short pcm = (short)Mathf.Clamp(mixBuffer[i] * 32767f, -32768f, 32767f);
-                    pcmChunk[i * 2    ] = (byte)(pcm & 0xFF);
-                    pcmChunk[i * 2 + 1] = (byte)((pcm >> 8) & 0xFF);
-                }
-
-                // 4. Send chunk
-                int chunkBytes = samplesPerChunk * 2;
-                _client.SendStreamData(globalByteOffset, pcmChunk, 0, chunkBytes);
-                globalByteOffset += (uint)chunkBytes;
-
-                // 5. Pace — pin lead at sendAheadSeconds regardless of frame rate / chunk size.
-                //
-                // 旧実装は `yield return null` 1 回だけで再開し、即次 chunk を送っていた。
-                // chunk duration (mono=43.75ms / stereo=21.875ms @16kHz) が Unity frame interval
-                // (~16.67ms @60fps) を上回るケースでは、yield 1 回では追いつかず lead が
-                // 線形に成長 → device ring buffer (256ms) を即飽和 → 新規 chunk が drop され、
-                // Stop / parameter 変更が device に届かなくなる。
-                //
-                // overshoot 分だけ WaitForSecondsRealtime で待つことで、frame rate / chunk size
-                // に依存せず lead を sendAheadSeconds 付近に張り付かせる。
-                float elapsedTime = Time.realtimeSinceStartup - startTime;
-                float sentDuration = globalByteOffset / bytesPerSecond;
-                float overshoot = sentDuration - elapsedTime - sendAheadSeconds;
-                if (overshoot > 0f)
-                    yield return new WaitForSecondsRealtime(overshoot);
             }
+            finally
+            {
+                // Trailer (sessionActive clear + natural-completion STREAM_END) runs
+                // as ONE atomic critical section, not two. Previously the STREAM_END
+                // send happened after this lock was released, which raced the main
+                // thread: StreamAudioClip() only needs _sessionActive == false (set
+                // below) to start a brand-new session — it sends its own STREAM_BEGIN
+                // and resets _streamEndSentFlag to 0 while holding this same lock. If
+                // that happened in the gap between "unlock" and "send old END" here,
+                // the stale END would land *after* the new BEGIN (killing the new
+                // session on the device) and would also consume the flag the new
+                // session's own eventual END depends on (leaving the new session's
+                // real END permanently suppressed). Sending inside this lock closes
+                // that window: StreamAudioClip's new-session branch can't proceed
+                // until it acquires the same lock, by which point this trailer —
+                // flag flip + END — has already fully run.
+                //
+                // Wrapped in try/finally (rather than falling off the end of the
+                // while-loop) so an unexpected exception mid-loop still clears
+                // _sessionActive and attempts the closing STREAM_END instead of
+                // leaving the session stuck "active" forever with no thread left
+                // to service it.
+                lock (_streamLock)
+                {
+                    _sessionActive = false;
+                    _streamThread = null;
+                    _streamStopRequested = false;
 
-            // All sources done → end session
-            if (_client != null && _client.IsConnected)
-                _client.SendStreamEnd();
-            _sessionActive = false;
-            _mixerCoroutine = null;
-            Log($"Stream session ended ({globalByteOffset} bytes sent).");
+                    if (naturalCompletion)
+                        TrySendStreamEnd($"Stream session ended ({globalByteOffset} bytes sent).");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sleeps for approximately <paramref name="seconds"/>, exiting early if
+        /// <see cref="_streamStopRequested"/> becomes true so <see cref="StopStream"/>
+        /// gets a responsive join instead of waiting out a full pacing sleep.
+        /// <para>
+        /// Hybrid strategy: <c>Thread.Sleep(1)</c> in a loop for the bulk of the
+        /// wait (cheap, ~0% CPU), then a short <c>SpinWait</c> tail for the last
+        /// couple of ms. Windows' default timer resolution makes a single
+        /// <c>Thread.Sleep</c> call accurate only to ~15.6ms, so sleeping the
+        /// entire remaining duration in one call risks overshooting a ~10ms chunk
+        /// interval by more than the interval itself; repeatedly sleeping 1ms and
+        /// re-checking the elapsed time keeps the coarse phase self-correcting
+        /// (it just re-measures and loops again if a Sleep(1) overran), and the
+        /// final spin phase is short enough (~2ms worst case) that the busy-wait
+        /// cost is negligible on a background thread.
+        /// </para>
+        /// </summary>
+        private void PreciseSleep(double seconds)
+        {
+            const double spinThresholdSeconds = 0.002; // last ~2ms: spin instead of Sleep
+            var sw = Stopwatch.StartNew();
+            while (!_streamStopRequested)
+            {
+                double remaining = seconds - sw.Elapsed.TotalSeconds;
+                if (remaining <= 0.0) return;
+                if (remaining > spinThresholdSeconds)
+                    Thread.Sleep(1);
+                else
+                    Thread.SpinWait(200);
+            }
         }
 
         #endregion
@@ -985,6 +1214,14 @@ namespace Hapbeat
 
         private void Cleanup()
         {
+            // Join the background mixer thread (if any) before disposing the client
+            // it sends through — must happen first so StopStream's own final
+            // STREAM_END still has a live socket to go out on. Domain-reload /
+            // Play-mode-stop safety: without this, the thread would keep running
+            // (raw System.Threading.Thread isn't swept by Unity like a Coroutine is)
+            // and reference a disposed HapbeatClient on its next iteration.
+            StopStream();
+
             // Send a final CONNECT_STATUS connected=false so the device updates
             // its display immediately instead of waiting the full 15-second
             // CONNECT_TIMEOUT_MS to age out. This is fire-and-forget; UDP
