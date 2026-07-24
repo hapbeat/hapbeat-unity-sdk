@@ -807,8 +807,36 @@ namespace Hapbeat
             // Chunk size in SAMPLES (not bytes). Must be a whole number of
             // sample frames so stereo L/R stays aligned at chunk boundaries.
             int bytesPerFrame = channels * 2;
-            int framesPerChunk = maxChunkBytes / bytesPerFrame;
-            if (framesPerChunk <= 0) framesPerChunk = 1;
+
+            // Target ~StreamChunkTargetMs of audio per STREAM_DATA packet instead of
+            // filling STREAM_DATA_MAX_PAYLOAD. The device's ring (audio_stream.cpp)
+            // is drained continuously by the DAC, not "per packet" — a single UDP
+            // packet writes its whole payload into the ring in ONE burst.
+            // streamBufferMs>0 (e.g. the config default 30) configures a
+            // streamBufferMs-ms target / 1.5x hard-trim ceiling on that ring (30/45 ms
+            // at the default); the previous MAX_PAYLOAD-sized chunk (700 frames mono =
+            // 43.75 ms, 350 frames stereo = 21.875 ms @16 kHz) meant a single mono
+            // packet ALONE already exceeded the 45 ms ceiling, so the very next mix
+            // tick saw fill > max and hard-trimmed the ring straight back down to
+            // target — discarding almost the entire freshly-arrived chunk on every
+            // single packet (audio_stream.cpp audioStreamMixInto's "burst overrun"
+            // branch). That made CLIP playback audibly MORE broken than before
+            // set_stream_buffer existed, not less. Capping the chunk to ~10 ms keeps
+            // every burst well under a configured (streamBufferMs>0) target even with
+            // a couple of packets queued back-to-back, leaving headroom to its 1.5x
+            // ceiling.
+            // NOTE: this "well under target" framing does NOT hold for the
+            // streamBufferMs=0 default path — there the device's own low-latency ring
+            // is only target=64/max=96 frames (4 ms/6 ms @16 kHz; audio_stream.cpp
+            // s_ll_target/s_ll_max, PRE_BUF_FRAMES-derived), so a single ~10 ms chunk
+            // already exceeds even that ceiling by itself. That path relies entirely
+            // on the ring's continuous hold+decay/drift-correction behavior (no
+            // re-prime stall) rather than on chunks staying under its tiny ceiling.
+            const float StreamChunkTargetMs = 10f;
+            int framesPerChunk = Mathf.Max(1, Mathf.RoundToInt(sampleRate * StreamChunkTargetMs / 1000f));
+            int maxFramesByPayload = maxChunkBytes / bytesPerFrame;
+            if (maxFramesByPayload <= 0) maxFramesByPayload = 1;
+            if (framesPerChunk > maxFramesByPayload) framesPerChunk = maxFramesByPayload;
             int samplesPerChunk = framesPerChunk * channels;
             byte[] pcmChunk = new byte[samplesPerChunk * 2];
             float[] mixBuffer = new float[samplesPerChunk];
@@ -816,6 +844,23 @@ namespace Hapbeat
             float bytesPerSecond = sampleRate * channels * 2f;
             float sendAheadSeconds = _config != null ? _config.streamSendAheadSeconds : 0.05f;
             if (sendAheadSeconds < 0.01f) sendAheadSeconds = 0.05f;
+
+            // Clamp the pacing lead to the device ring's target when streamBufferMs>0
+            // configures the continuous (music jitter-buffer) ring mode. §5 below paces
+            // sends to keep steady-state fill ≈ sendAheadSeconds ahead of playback; if
+            // that lead exceeds the ring's target (streamBufferMs, ms), fill sits above
+            // target on every tick and gets hard-trimmed straight back down to target
+            // every tick (audio_stream.cpp's ceiling = 1.5× target) — the same
+            // burst-overrun regression the ~10 ms chunk-size cap above exists to avoid,
+            // just re-introduced at the pacing layer instead of the chunk-size layer.
+            // Clamping keeps steady-state fill at or under target, leaving the full
+            // (ceiling − target) headroom free to absorb Wi-Fi jitter instead of being
+            // eaten by our own lead. streamBufferMs=0 (device's default low-latency
+            // ring, see the NOTE above) has no such target to respect, so the
+            // configured lead is used as-is in that case.
+            int bufferMsForPacing = _config != null ? _config.streamBufferMs : 0;
+            if (bufferMsForPacing > 0)
+                sendAheadSeconds = Mathf.Min(sendAheadSeconds, bufferMsForPacing / 1000f);
 
             uint globalByteOffset = 0;
             float startTime = Time.realtimeSinceStartup;
