@@ -39,11 +39,7 @@ namespace Hapbeat
         [Tooltip("Audio data the SDK keeps queued ahead of real-time playback while " +
                  "streaming a clip. Smaller values stop the haptic faster after " +
                  "StopStream() but increase risk of stutter on slow links. " +
-                 "Range: 10–200 ms. Typical LAN: 30–60 ms. Default: 50 ms.\n\n" +
-                 "When streamBufferMs > 0, the effective lead used for pacing is " +
-                 "clamped to streamBufferMs so it never exceeds the device ring's " +
-                 "target depth (see streamBufferMs below) — raising this value alone " +
-                 "has no further effect unless streamBufferMs is also raised.")]
+                 "Range: 10–200 ms. Typical LAN: 30–60 ms. Default: 50 ms.")]
         [Range(0.01f, 0.2f)]
         public float streamSendAheadSeconds = 0.05f;
 
@@ -53,13 +49,7 @@ namespace Hapbeat
                  "re-primes on underrun — best for short haptic hits, don't send this setting). " +
                  ">0 = continuous mode (hold-decay + drift correction, no re-prime) — trades " +
                  "latency for far fewer dropouts on flaky Wi-Fi. Range 0–500 ms (contracts " +
-                 "§4.20-pre). Typical: 30 ms. The SDK sends STREAM_DATA in ~10 ms packets " +
-                 "so a single packet never approaches this buffer's hard-trim ceiling " +
-                 "(1.5× this value) — do not raise the SDK's send chunk size without also " +
-                 "raising this value proportionally.\n\n" +
-                 "The SDK also clamps its own send-ahead pacing (streamSendAheadSeconds) to " +
-                 "this value so steady-state ring fill stays at/under target instead of " +
-                 "eating into the 1.5× ceiling's jitter headroom.")]
+                 "§4.20-pre). Typical: 30 ms.")]
         [Range(0, 500)]
         public int streamBufferMs = 30;
 
