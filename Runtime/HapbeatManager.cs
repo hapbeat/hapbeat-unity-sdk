@@ -1011,8 +1011,6 @@ namespace Hapbeat
                         anySources = _sources.Count > 0;
                     }
 
-                    if (!anySources) break; // natural completion — no more sources, exit loop normally
-
                     // 3. Convert mixed float → PCM16 (clamp to int16 range) — outside
                     // the lock; only touches this thread's own local buffers.
                     for (int i = 0; i < samplesPerChunk; i++)
@@ -1023,12 +1021,20 @@ namespace Hapbeat
                     }
 
                     // 4. Send chunk — also outside the lock (UDP send shouldn't block
-                    // main-thread Add/StopStream calls waiting on _streamLock).
+                    // main-thread Add/StopStream calls waiting on _streamLock). Sent
+                    // unconditionally, even when this mix just drained the last active
+                    // source (anySources below is now false): step 2 above still wrote
+                    // that source's real trailing samples into mixBuffer before removing
+                    // it, so checking "no sources left" *before* sending (as before) threw
+                    // away up to one whole chunk (~10ms) of real audio off the end of
+                    // every one-shot clip instead of delivering its tail.
                     int chunkBytes = samplesPerChunk * 2;
                     var client = _client;
                     if (client == null || !client.IsConnected) { naturalCompletion = false; break; }
                     client.SendStreamData(globalByteOffset, pcmChunk, 0, chunkBytes);
                     globalByteOffset += (uint)chunkBytes;
+
+                    if (!anySources) break; // natural completion — no more sources; last chunk already sent above
 
                     // 5. Pace — pin lead at sendAheadSeconds regardless of chunk size,
                     // using a Stopwatch instead of Unity's Time.realtimeSinceStartup
@@ -1084,21 +1090,26 @@ namespace Hapbeat
         /// <see cref="_streamStopRequested"/> becomes true so <see cref="StopStream"/>
         /// gets a responsive join instead of waiting out a full pacing sleep.
         /// <para>
-        /// Hybrid strategy: <c>Thread.Sleep(1)</c> in a loop for the bulk of the
-        /// wait (cheap, ~0% CPU), then a short <c>SpinWait</c> tail for the last
-        /// couple of ms. Windows' default timer resolution makes a single
-        /// <c>Thread.Sleep</c> call accurate only to ~15.6ms, so sleeping the
-        /// entire remaining duration in one call risks overshooting a ~10ms chunk
-        /// interval by more than the interval itself; repeatedly sleeping 1ms and
-        /// re-checking the elapsed time keeps the coarse phase self-correcting
-        /// (it just re-measures and loops again if a Sleep(1) overran), and the
-        /// final spin phase is short enough (~2ms worst case) that the busy-wait
-        /// cost is negligible on a background thread.
+        /// Every call from <see cref="StreamThreadLoop"/> requests a duration no
+        /// larger than one ~10ms chunk (the pacing check runs once per chunk, and
+        /// only sleeps the small excess once the send-ahead lead is reached) — but
+        /// Windows' default timer resolution makes a single <c>Thread.Sleep(1)</c>
+        /// call accurate only to ~15.6ms, i.e. coarser than every request this
+        /// method actually receives in practice. Calling <c>Thread.Sleep(1)</c> at
+        /// all therefore always overshoots by ~5–13ms, and because a correction is
+        /// due on nearly every chunk boundary, that overshoot got paid on nearly
+        /// every chunk — bleeding the lead below <c>sendAheadSeconds</c> on a
+        /// recurring cadence instead of an occasional one. <c>spinThresholdSeconds</c>
+        /// is set above that ~15.6ms floor so requests in this method's actual
+        /// range always take the accurate <c>SpinWait</c> path; <c>Thread.Sleep(1)</c>
+        /// is kept only for the (here, unreached in normal operation) case of a
+        /// genuinely large request, where its floor cost is a small fraction of
+        /// the total and busy-waiting the whole thing would waste real CPU.
         /// </para>
         /// </summary>
         private void PreciseSleep(double seconds)
         {
-            const double spinThresholdSeconds = 0.002; // last ~2ms: spin instead of Sleep
+            const double spinThresholdSeconds = 0.016; // >= Windows' ~15.6ms Sleep(1) floor: spin instead of Sleep
             var sw = Stopwatch.StartNew();
             while (!_streamStopRequested)
             {
