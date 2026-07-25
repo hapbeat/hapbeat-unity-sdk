@@ -338,13 +338,6 @@ namespace Hapbeat
         // mid-run (an XR session end clears it — an ordinary headset doff does that), and
         // back to true when the next session begins, so the panel stays visible throughout.
         private bool _compositionLayerEngaged;
-
-        // Texture-less layer held from build time so that a CompositionLayerManager instance
-        // exists when the XR session begins — without it the OpenXR feature never hands the
-        // manager a layer provider and no layer created later is ever composited. See
-        // HapbeatPanelCompositionLayerSurface.CreateManagerKeepAlive for the full reasoning.
-        // Destroyed once the real layer takes over that role (or when we give up).
-        private GameObject _compositionLayerKeepAlive;
 #endif
 
         // Translation counterpart of _followDeadzoneDegrees: the wearer can walk
@@ -544,7 +537,6 @@ namespace Hapbeat
                 _compositionSurface.Dispose();
                 _compositionSurface = null;
             }
-            DestroyCompositionLayerKeepAlive();
 #endif
         }
 
@@ -584,18 +576,22 @@ namespace Hapbeat
             if (wantsCompositionLayer)
             {
 #if HAPBEAT_HAS_COMPOSITION_LAYERS
-                if (followCamera != null)
+                if (!HapbeatCompositionLayerBootstrap.SupportEnabled)
+                {
+                    // Nothing kept a composition layer manager alive across XR session begin,
+                    // so the OpenXR feature's one chance to assign a layer provider is already
+                    // gone — no amount of waiting here would produce one. Say so now rather
+                    // than timing out and pointing at the OpenXR feature, which may well
+                    // already be enabled. See HapbeatCompositionLayerBootstrap.
+                    WarnCompositionLayerFallback("Composition Layer support is turned off in HapbeatConfig — " +
+                        "enable \"Enable Composition Layer Support\" in the Hapbeat Settings window (it has to " +
+                        "start the composition layer manager before the XR session begins, which is before this " +
+                        "scene loads, so it cannot be switched on from here)");
+                }
+                else if (followCamera != null)
                 {
                     _compositionLayerPending = true;
                     _compositionLayerWaitDeadline = Time.unscaledTime + CompositionLayerWaitSeconds;
-
-                    // Must happen HERE, not when the provider shows up: the provider is only
-                    // assigned at XR session begin, and only if a composition layer manager
-                    // is alive at that instant. The manager shuts itself down whenever no
-                    // layer exists, which is the state of every scene that (like this one)
-                    // would otherwise create its first layer on demand — so waiting for a
-                    // provider without holding a layer waits forever.
-                    _compositionLayerKeepAlive = HapbeatPanelCompositionLayerSurface.CreateManagerKeepAlive();
                 }
                 // followCamera == null: ResolveFollowCamera already warned, and without a
                 // camera there is no view to fix the layer to — WorldFixed placement stands.
@@ -904,17 +900,18 @@ namespace Hapbeat
                 if (Time.unscaledTime < _compositionLayerWaitDeadline) return;
 
                 _compositionLayerPending = false;
-                DestroyCompositionLayerKeepAlive();
 
                 // Two genuinely different failures, and telling a user to "enable the feature"
                 // when it is already enabled only sends them in circles — so name what was
-                // actually observed.
+                // actually observed. Composition Layer support is on at this point (Build()
+                // handles the off case), so the manager was kept alive from subsystem
+                // registration and the remaining suspect is the OpenXR feature itself.
                 WarnCompositionLayerFallback(HapbeatPanelCompositionLayerSurface.ManagerAlive
                     ? "the XR composition layer manager is running but no layer provider was ever assigned to it. " +
                       "The OpenXR \"Composition Layers\" feature assigns one only once, when the XR session begins " +
-                      "— so this means either the feature is disabled for this platform under Project Settings > " +
-                      "XR Plug-in Management > OpenXR, or the XR session had already begun (and its one chance to " +
-                      "assign a provider had passed) before this panel existed"
+                      "— so this means the feature is disabled for the platform being run under Project Settings > " +
+                      "XR Plug-in Management > OpenXR, or the XR runtime does not support the composition layer " +
+                      "extensions it needs"
                     : "the XR composition layer manager is not running, so the OpenXR feature had nothing to assign " +
                       "a layer provider to when the session began");
                 return;
@@ -926,7 +923,6 @@ namespace Hapbeat
             var surface = HapbeatPanelCompositionLayerSurface.TryCreate(canvas, _worldSize, _worldPixelDensity, _worldScale);
             if (surface == null)
             {
-                DestroyCompositionLayerKeepAlive();
                 WarnCompositionLayerFallback("the composition layer could not be created");
                 return;
             }
@@ -935,18 +931,8 @@ namespace Hapbeat
             _compositionLayerEngaged = true;
             _compositionSurface.SetActive(isActiveAndEnabled);
 
-            // The real layer now keeps the manager alive on its own.
-            DestroyCompositionLayerKeepAlive();
-
             Debug.Log("[Hapbeat] HapbeatAddressOverridePanel: rendering as an OpenXR quad composition layer " +
                 $"({surface.Describe()}).", this);
-        }
-
-        private void DestroyCompositionLayerKeepAlive()
-        {
-            if (_compositionLayerKeepAlive == null) return;
-            Destroy(_compositionLayerKeepAlive);
-            _compositionLayerKeepAlive = null;
         }
 
         /// <summary>

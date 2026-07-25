@@ -107,6 +107,18 @@ namespace Hapbeat
         [Range(0f, 0.5f)]
         public float hapticDelaySeconds = 0f;
 
+        [Header("XR")]
+        [Tooltip("Enable when a world-space Hapbeat panel should be displayed as an OpenXR composition " +
+                 "layer (HapbeatAddressOverridePanel with World Attach Mode = CompositionLayer).\n\n" +
+                 "The OpenXR \"Composition Layers\" feature is also required (Project Settings > XR Plug-in " +
+                 "Management > OpenXR), but on its own it is not enough: it hands out its layer provider once, " +
+                 "when the XR session begins, and only if a composition layer manager is already running at " +
+                 "that instant — which is before the first scene loads. Turning this on makes the SDK start " +
+                 "that manager during subsystem registration, i.e. early enough to catch it.\n\n" +
+                 "Off by default because it keeps one (empty, undrawn) composition layer resident for the " +
+                 "whole run, which a project that never uses composition layers should not pay for.")]
+        public bool enableCompositionLayerSupport = false;
+
         [Header("Debugging")]
         [Tooltip("Enable logging to the Unity console (Play, Stop, Connect, errors).")]
         public bool enableLogging = true;

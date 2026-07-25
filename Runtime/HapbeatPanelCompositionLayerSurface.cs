@@ -41,9 +41,10 @@ namespace Hapbeat
     /// </para>
     ///
     /// <para>
-    /// <b>Why a keep-alive layer is needed.</b> See <see cref="CreateManagerKeepAlive"/> —
-    /// the OpenXR side only ever hands the manager a layer provider once, at session begin,
-    /// and only if a manager instance happens to be alive at that exact moment.
+    /// <b>Why a keep-alive layer is needed.</b> See <see cref="CreateManagerKeepAlive"/> and
+    /// <see cref="HapbeatCompositionLayerBootstrap"/> — the OpenXR side only ever hands the
+    /// manager a layer provider once, at session begin, and only if a manager instance
+    /// happens to be alive at that exact moment (which is before the first scene loads).
     /// </para>
     /// </summary>
     internal sealed class HapbeatPanelCompositionLayerSurface
@@ -127,8 +128,7 @@ namespace Hapbeat
 
         /// <summary>
         /// Creates a texture-less quad layer whose only job is to keep a
-        /// <c>CompositionLayerManager</c> instance alive, and returns its GameObject so the
-        /// caller can destroy it once a real layer exists.
+        /// <c>CompositionLayerManager</c> instance alive, and returns its GameObject.
         ///
         /// <para>
         /// <b>Why.</b> <c>OpenXRCompositionLayersFeature</c> assigns the layer provider in
@@ -136,13 +136,20 @@ namespace Hapbeat
         /// <c>if (CompositionLayerManager.Instance != null)</c>. The manager, in turn, stops
         /// itself (<c>StopCompositionLayerManager</c>) as soon as an update finds no active
         /// and no known layers, and once stopped its <c>Instance</c> property returns null
-        /// until something creates a layer again. So in a scene that contains no composition
-        /// layer at startup — which is every scene that only creates one on demand, like this
-        /// panel — the manager is already stopped when the session begins, the feature
-        /// silently skips the assignment, and no layer created later will ever be composited,
-        /// no matter how long the panel waits for a provider. Holding one enabled layer from
-        /// the moment the panel is built keeps the manager alive across session begin (and
-        /// across the end/begin cycle of a headset doff) so the assignment actually happens.
+        /// until something creates a layer again. So in a project that contains no composition
+        /// layer at startup — which is every project that only creates one on demand, like this
+        /// panel — the manager is stopped when the session begins, the feature silently skips
+        /// the assignment, and no layer created later will ever be composited, no matter how
+        /// long the panel waits for a provider.
+        /// </para>
+        ///
+        /// <para>
+        /// <b>Who calls this, and when.</b> Only <see cref="HapbeatCompositionLayerBootstrap"/>,
+        /// from a <c>SubsystemRegistration</c> runtime hook — XR is initialized and started
+        /// from <c>XRGeneralSettings</c>'s <c>AfterAssembliesLoaded</c> /
+        /// <c>BeforeSplashScreen</c> hooks, both of which precede the first scene load, so
+        /// creating this from a component's <c>OnEnable</c> is already too late. It is then
+        /// kept for the whole run, which also covers the end/begin cycle of a headset doff.
         /// </para>
         ///
         /// <para>

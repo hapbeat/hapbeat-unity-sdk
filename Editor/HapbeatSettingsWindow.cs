@@ -175,6 +175,26 @@ namespace Hapbeat.Editor
                 _serializedConfig.FindProperty("verboseLogging"),
                 new GUIContent("Verbose Log", "Log PONG / keep-alive / protocol details. Noisy — debugging only."));
 
+            // ── XR ───────────────────────────────────────────────────
+            // Opt-in for the composition layer path. Has to be a build-time setting, not
+            // something a panel can turn on: the SDK acts on it during subsystem
+            // registration, before XR starts (see HapbeatCompositionLayerBootstrap).
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("XR", EditorStyles.boldLabel);
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("enableCompositionLayerSupport"),
+                new GUIContent(
+                    "Enable Composition Layer Support",
+                    "Turn on to display a world-space Hapbeat panel as an OpenXR composition layer\n" +
+                    "(HapbeatAddressOverridePanel, World Attach Mode = CompositionLayer).\n\n" +
+                    "The OpenXR \"Composition Layers\" feature is required as well, and is not enough on\n" +
+                    "its own: it hands out its layer provider once, at XR session begin, and only if a\n" +
+                    "composition layer manager is already running then — which is before the first scene\n" +
+                    "loads. This setting makes the SDK start one early enough to be caught.\n\n" +
+                    "Off by default: it keeps one empty, undrawn composition layer resident for the\n" +
+                    "whole run."));
+
             // ── Latency compensation ─────────────────────────────────
             // Global offset to align haptic with the (often slower) audio output
             // path (Bluetooth, etc.). Per-entry fine tuning lives on each
