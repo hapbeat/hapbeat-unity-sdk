@@ -122,7 +122,17 @@ namespace Hapbeat.Editor
                     "Send StreamClip audio directly to each known device instead of broadcast.\n" +
                     "Avoids Wi-Fi AP power-save (DTIM) batching, which can cause periodic\n" +
                     "stutter on broadcast. Falls back to broadcast if no device is known yet\n" +
-                    "or in Bridge mode. Play/Stop/StopAll always broadcast. Default: on."));
+                    "or in Bridge mode. See Command Unicast for Play/Stop/StopAll. Default: on."));
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("commandUnicast"),
+                new GUIContent(
+                    "Command Unicast",
+                    "Send Play/Stop/StopAll directly to each known device instead of broadcast.\n" +
+                    "Avoids Wi-Fi AP power-save (DTIM) batching, which can delay a broadcast\n" +
+                    "frame by ~100-300 ms before a haptic fires. Falls back to broadcast if no\n" +
+                    "device is known yet, in Bridge mode, or if no known device's address\n" +
+                    "matches the target. Default: on."));
 
             EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("enableLogging"),

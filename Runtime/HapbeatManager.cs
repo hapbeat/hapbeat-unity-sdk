@@ -1295,7 +1295,6 @@ namespace Hapbeat
             _overrideGroup = HapbeatClient.NormalizeOverride(group);
 
             _client = CreateClient();
-            _client.SetAddressOverride(_overridePlayer, _overrideGroup);
             _isInitialized = true;
 
             // Auto-connect on startup
@@ -1306,6 +1305,14 @@ namespace Hapbeat
         {
             var client = new HapbeatClient();
 
+            // Push the routing config here rather than at the Initialize() call site:
+            // Connect() / ConnectToBridge() also construct a client when none exists
+            // yet, and those paths used to leave it on library defaults — silently
+            // dropping the address override for anyone who calls Connect() directly.
+            client.SetAddressOverride(_overridePlayer, _overrideGroup);
+            client.SetCommandUnicast(
+                _config == null || _config.commandUnicast, AliveTimeoutSeconds);
+
             client.OnConnectionStateChanged += (connected) =>
             {
                 if (connected)
@@ -1315,6 +1322,17 @@ namespace Hapbeat
                     _lastPingTime = Time.realtimeSinceStartup;
                     // Notify devices that app is connected
                     client.SendConnectStatus(true, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);
+                    // Discover devices immediately instead of waiting a full
+                    // pingInterval (5 s by default) for the first periodic PING.
+                    // Until a device PONGs, it is invisible to AliveDeviceCount,
+                    // to the stream unicast snapshot, and to command unicast
+                    // routing -- so anything fired in that window broadcasts while
+                    // later commands unicast. Mixing the two transports is what
+                    // lets a PLAY and its matching STOP take different paths (and
+                    // arrive out of order, since broadcast is the one the AP delays
+                    // for DTIM). Pinging on connect shrinks that window from
+                    // seconds to about one RTT.
+                    client.SendPing();
                     OnConnected?.Invoke();
                 }
                 else

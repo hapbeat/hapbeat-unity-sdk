@@ -11,6 +11,22 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Added（追加）
 
+- **`commandUnicast`（Play/Stop/StopAll のユニキャスト送信）** — Wi-Fi broadcast が AP の DTIM 省電力バッチングで ~100-300ms 遅延する問題への対処を、既存の `streamUnicast`（STREAM_*）に続いて PLAY/STOP/STOP_ALL にも適用。`HapbeatConfig.commandUnicast`（既定 `true`）を追加。
+  - `HapbeatClient.SendPlay`/`SendStop`/`SendStopAll` の戻り値を `void` から `CommandSendResult`（`Broadcast`/`Unicast`）に変更。既存呼び出し側（式文として無視）は無変更でコンパイル可能。
+  - ルーティング: (a) commandUnicast 無効 / Bridge モード → broadcast、(b) 生存デバイス（直近 PONG が liveness window 内）へ unicast、(c) address 未報告のデバイスも unicast（fail-open）、(d) unicast 先が 1 台も無い（生存 0 台、または全台の address が target と不一致）→ **broadcast へフォールバック**。二重配送なし（unicast したら broadcast しない、逆も同様）。
+  - (d) で broadcast する理由: firmware は受信した PLAY/STOP/STOP_ALL すべてに `addressMatch()` を再適用する（`udp_receiver.cpp`）ため、broadcast しても target が指していないデバイスは発火しない。送信をスキップしても得られるのは電波の節約だけで、代わりに「デバイスの group/player を変更した直後で PONG がまだ古い」「SDK 側 `AddressMatches` が firmware と乖離した」場合にコマンドが無言で消える。STOP/STOP_ALL でそれが起きるとループ再生が止まらなくなる。
+  - `_knownDeviceIps`（新設）は最終 PONG 時刻を保持し、liveness window（`HapbeatManager` の alive 判定と同じ pingInterval x 3・最小 5 秒）を過ぎたデバイスは送信時に除去する。電源 OFF のデバイスへ永久に unicast し続けること、および「生存 0 台でも set が空にならず broadcast へ戻れない」状態を防ぐ。`Disconnect()` で既知デバイス情報と stream スナップショットをクリア（別ネットワークへ再接続したときに旧 IP を撃たない）。
+  - 接続直後に PING を 1 発送るようにした（従来は最初の定期 PING まで最大 pingInterval = 既定 5 秒待っていた）。デバイスが未知の間は broadcast、既知になったら unicast と経路が切り替わるため、その混在窓の中では PLAY と対になる STOP が別経路になり、DTIM で遅延した broadcast が後着して順序が入れ替わりうる。窓を数秒から約 1 RTT に縮める。
+  - PING / CONNECT_STATUS は対象外（discovery 用途のため常に broadcast のまま）。
+  - Editor Test Play (`HapbeatEditorTransport`) は PING を送らない専用クライアントのため既知デバイスが常に空 → 常に broadcast フォールバックとなり、既存の再生プレビュー挙動と変わらない。
+  - Settings ウィンドウ（`Hapbeat > Open Settings`）に `Command Unicast` トグルを `Stream Unicast` の隣に追加。
+
+### Fixed（修正）
+
+- **UDP 受信スレッドが Windows の ICMP reset (WSAECONNRESET / 10054) で永久停止する問題** — 電源 OFF・再起動中のデバイスへ unicast すると ICMP port unreachable が返り、Windows はそれを *次の* `Receive()` の `SocketException` として報告する。従来の受信ループはこれを致命エラー扱いして `break` しており、以後 PONG が一切届かず（`EnsureConnected()` は再接続せず警告するだけなので）そのセッションの触覚が停止していた。hapbeat-helper が同一原因で根治した不具合（helper f06fa04）と同じもので、commandUnicast により one-shot コマンドでも unicast するようになったため露出面が拡大した。
+  - ソケット生成時に Windows のみ `SIO_UDP_CONNRESET=false` を設定（他 OS では no-op）。
+  - 受信ループは 1 データグラム分の ICMP フィードバック（`ConnectionReset` / `ConnectionRefused` / `HostUnreachable` / `NetworkUnreachable` / `NetworkReset` / `MessageSize`）では停止せず継続する。ログは接続ごとに 1 回だけ出す。
+
 - **Stream unicast の宛先を target アドレスで絞り込み** — 1人が複数台装着する構成や、同一 LAN 上に複数のプレイヤー/デバイスペアが同時に存在する構成で、各アプリが自分のペア以外にも STREAM_BEGIN/DATA/END を unicast 複製していた挙動を修正。
   - `HapbeatProtocol.ParsePongExtended(byte[])` を追加。PONG (0x11) payload の拡張フィールド (device_name / address / firmware_version / volume_level / volume_wiper、device-addressing.md §5.4) をパースする。旧仕様の短い payload やフィールド欠落は例外を投げず null/-1 で返す（既存の `ParsePong` はそのまま維持、内部で流用）。
   - `HapbeatClient.AddressMatches(string target, string deviceAddress)` (static) を追加。firmware `address_match.cpp` / device-addressing.md §4.3 の擬似コードと同一セマンティクスの target/address マッチ判定（空 target = 全マッチ、`/` 区切り位置比較、`*` ワイルドカード、target 前方一致は OK・target が長ければ不一致）。`Tests/Runtime/AddressMatchesTests.cs` に仕様書 §4.2 の例表を移植したユニットテストを追加。

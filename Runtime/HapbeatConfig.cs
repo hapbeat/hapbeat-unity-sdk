@@ -48,9 +48,20 @@ namespace Hapbeat
                  "(DTIM) batching can hold broadcast frames for one beacon interval, showing up as " +
                  "periodic ~100-200 ms stutter in streamed haptics; unicast avoids that batching. " +
                  "Falls back to broadcast automatically when no device has responded yet or in " +
-                 "Bridge mode. Other commands (Play/Stop/StopAll) are unaffected and always broadcast. " +
+                 "Bridge mode. See commandUnicast for the equivalent setting on Play/Stop/StopAll. " +
                  "Default: enabled.")]
         public bool streamUnicast = true;
+
+        [Tooltip("Send Play/Stop/StopAll directly (unicast) to each device already known from a " +
+                 "PONG response, instead of UDP broadcast. Same rationale as streamUnicast: Wi-Fi AP " +
+                 "power-save (DTIM) batching can hold a broadcast frame for one beacon interval, " +
+                 "showing up as ~100-300 ms of extra latency before a haptic fires; unicast avoids " +
+                 "that batching (the device itself has modem-sleep disabled, so this is purely an " +
+                 "AP-side effect). Falls back to broadcast automatically when no device has responded " +
+                 "yet, in Bridge mode, or when every known device's address mismatches the command's " +
+                 "target -- the device applies the same target filter on receipt, so a broadcast " +
+                 "can never actuate a device the target didn't address. Default: enabled.")]
+        public bool commandUnicast = true;
 
         [Header("Latency Compensation")]
         [Tooltip("Global delay (seconds) added to every Play / StreamClip call to match the audio output latency " +

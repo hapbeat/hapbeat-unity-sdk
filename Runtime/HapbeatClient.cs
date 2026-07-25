@@ -9,6 +9,27 @@ using System.Threading;
 namespace Hapbeat
 {
     /// <summary>
+    /// Outcome of a PLAY/STOP/STOP_ALL send (see <see cref="HapbeatClient.SendPlay"/>/
+    /// <see cref="HapbeatClient.SendStop"/>/<see cref="HapbeatClient.SendStopAll"/> and
+    /// the routing they share in <c>SendCommandRaw</c>). Returned so callers can tell
+    /// which path a command actually took (diagnostics / tests) without
+    /// <see cref="HapbeatClient"/> having to read config or log on their behalf.
+    /// </summary>
+    public enum CommandSendResult
+    {
+        /// <summary>Sent via plain broadcast (or Bridge/ESP-NOW unicast to the bridge
+        /// host) — commandUnicast is disabled, the client isn't in broadcast mode, or
+        /// there was no live device to unicast to (none PONGed recently, or none whose
+        /// reported address matched the target).</summary>
+        Broadcast,
+
+        /// <summary>Sent via unicast to one or more known devices — either their
+        /// reported address matched the resolved target, or their address is unknown
+        /// and was therefore kept (fail-open).</summary>
+        Unicast,
+    }
+
+    /// <summary>
     /// Internal UDP client for communicating with Hapbeat devices or Bridge.
     /// Supports broadcast sending (standard) and unicast sending (Bridge mode).
     /// Receive runs on a background thread; callbacks are queued for main-thread dispatch.
@@ -51,6 +72,35 @@ namespace Hapbeat
         private int _overridePlayer = -1;
         private int _overrideGroup = -1;
 
+        // Whether SendPlay/SendStop/SendStopAll should attempt unicast to already-
+        // known devices instead of broadcasting (see SendCommandRaw) — same
+        // Wi-Fi AP DTIM power-save rationale as streamUnicast, applied to one-shot
+        // commands instead of a stream session. Defaults to true so a HapbeatClient
+        // used standalone (no HapbeatManager) still gets the low-latency behavior.
+        // Pushed from HapbeatConfig.commandUnicast by HapbeatManager (see
+        // SetCommandUnicast) — same separation of concerns as
+        // _overridePlayer/_overrideGroup above.
+        private bool _commandUnicastEnabled = true;
+
+        // How long a device stays in _knownDeviceIps after its last PONG. Keeps the
+        // command-unicast destination set aligned with HapbeatManager's alive-device
+        // window (pingInterval x 3, min 5 s) — the same window that seeds the stream
+        // unicast targets. Without expiry the set only ever grows: a powered-off
+        // device would keep absorbing datagrams forever AND keep the set non-empty,
+        // permanently suppressing the broadcast fallback for a LAN with no live
+        // device left. Pushed from HapbeatManager (see SetCommandUnicast); the
+        // default matches the config default so a standalone client behaves the same.
+        private float _knownDeviceTtlSeconds = 15f;
+
+        // Windows-only socket ioctl that stops an ICMP "port unreachable" (drawn by
+        // a unicast send to a device that is off/rebooting) from surfacing as a
+        // WSAECONNRESET on the NEXT Receive() call. See SuppressUdpConnReset.
+        private const int SIO_UDP_CONNRESET = -1744830452; // 0x9800000C
+
+        // One-shot guard so a recoverable receive error logs once per connection
+        // instead of once per stale destination per command.
+        private bool _loggedRecoverableReceiveError;
+
         // Unicast destinations for STREAM_BEGIN/DATA/END. Three states:
         //   null            -> no unicast snapshot taken (or explicitly cleared):
         //                      fall back to broadcast, same as before target
@@ -78,6 +128,22 @@ namespace Hapbeat
         // or a PONG that hasn't arrived yet, shouldn't silently lose its stream.
         private readonly ConcurrentDictionary<IPAddress, string> _deviceAddresses =
             new ConcurrentDictionary<IPAddress, string>();
+
+        // Device IPs that have PONGed recently, mapped to the local timestamp (us,
+        // same clock as GetLocalTimestampUs) of that most recent PONG. Recorded
+        // regardless of whether the PONG reported an address (unlike
+        // _deviceAddresses above, which only has an entry when the address
+        // extension was present). Used by SendCommandRaw (PLAY/STOP/STOP_ALL
+        // unicast routing) so an address-unknown device (e.g. older firmware
+        // without the extension) still receives commands via unicast instead of
+        // being silently dropped — the same fail-open philosophy
+        // SetStreamUnicastTargets applies for streaming. Entries older than
+        // _knownDeviceTtlSeconds are dropped on the next send (see SendCommandRaw)
+        // so the set tracks *live* devices rather than growing forever. Written
+        // from the background receive thread (HandlePong); read/pruned from the
+        // main thread (SendCommandRaw).
+        private readonly ConcurrentDictionary<IPAddress, long> _knownDeviceIps =
+            new ConcurrentDictionary<IPAddress, long>();
 
         // Queue for dispatching callbacks to the main thread
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
@@ -107,6 +173,7 @@ namespace Hapbeat
             {
                 _udpClient = new UdpClient(0); // bind to OS-assigned local port
                 _udpClient.EnableBroadcast = true;
+                SuppressUdpConnReset(_udpClient);
                 _targetEndPoint = new IPEndPoint(IPAddress.Broadcast, port);
                 IsBroadcast = true;
 
@@ -136,6 +203,7 @@ namespace Hapbeat
             try
             {
                 _udpClient = new UdpClient(0); // bind to OS-assigned local port
+                SuppressUdpConnReset(_udpClient);
                 _targetEndPoint = new IPEndPoint(IPAddress.Parse(host), port);
                 IsBroadcast = false;
 
@@ -181,6 +249,19 @@ namespace Hapbeat
             _receiveThread = null;
             _pendingPings.Clear();
 
+            // Device knowledge is per-connection: after a reconnect (Wi-Fi change,
+            // AP switch, network hand-off) the previous IPs may belong to a
+            // different network entirely. Leaving them behind would make
+            // SendCommandRaw unicast every command at unreachable hosts while the
+            // non-empty set suppresses the broadcast fallback — i.e. total silence
+            // on the new network until a fresh PONG lands. Same reasoning for the
+            // stream snapshot, whose endpoints would otherwise outlive the socket
+            // they were resolved for.
+            _knownDeviceIps.Clear();
+            _deviceAddresses.Clear();
+            _streamUnicastTargets = null;
+            _loggedRecoverableReceiveError = false;
+
             EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(false));
         }
 
@@ -194,6 +275,24 @@ namespace Hapbeat
         {
             _overridePlayer = NormalizeOverride(player);
             _overrideGroup = NormalizeOverride(group);
+        }
+
+        /// <summary>
+        /// Enable/disable unicast routing for <see cref="SendPlay"/>/<see cref="SendStop"/>/
+        /// <see cref="SendStopAll"/> (see <see cref="SendCommandRaw"/>), and set how long a
+        /// device stays a unicast destination after its last PONG. Defaults: enabled, 15 s.
+        /// Pushed from <c>HapbeatConfig.commandUnicast</c> by <c>HapbeatManager</c> — the
+        /// client itself never reads config directly (see <see cref="_overridePlayer"/>).
+        /// </summary>
+        /// <param name="enabled">Whether one-shot commands may unicast at all.</param>
+        /// <param name="knownDeviceTtlSeconds">Liveness window for the unicast destination
+        /// set. Should match the caller's alive-device window (HapbeatManager uses
+        /// pingInterval x 3, min 5 s) so commands and streams target the same devices.</param>
+        public void SetCommandUnicast(bool enabled, float knownDeviceTtlSeconds)
+        {
+            _commandUnicastEnabled = enabled;
+            if (knownDeviceTtlSeconds > 0f)
+                _knownDeviceTtlSeconds = knownDeviceTtlSeconds;
         }
 
         /// <summary>
@@ -459,30 +558,34 @@ namespace Hapbeat
         }
 
         /// <summary>Send a PLAY command. <paramref name="target"/> is the device-addressing
-        /// target string ("" = broadcast).</summary>
-        public void SendPlay(string eventId, long targetTimeUs, float gain, string target = null)
+        /// target string ("" = broadcast). Unicasts to known matching devices instead of
+        /// broadcasting when <c>commandUnicast</c> is enabled — see <see cref="SendCommandRaw"/>
+        /// and <see cref="CommandSendResult"/> for the exact routing/fallback rules.</summary>
+        public CommandSendResult SendPlay(string eventId, long targetTimeUs, float gain, string target = null)
         {
             target = ResolveTarget(target);
             byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, gain, target);
-            SendPacket(HapbeatProtocol.CMD_PLAY, payload);
+            return SendCommandPacket(HapbeatProtocol.CMD_PLAY, payload, target);
         }
 
         /// <summary>Send a STOP command. <paramref name="target"/> is the device-addressing
-        /// target string ("" = broadcast).</summary>
-        public void SendStop(string eventId, string target = null)
+        /// target string ("" = broadcast). See <see cref="SendPlay"/> for the unicast routing
+        /// this shares.</summary>
+        public CommandSendResult SendStop(string eventId, string target = null)
         {
             target = ResolveTarget(target);
             byte[] payload = HapbeatProtocol.BuildStopPayload(eventId, target);
-            SendPacket(HapbeatProtocol.CMD_STOP, payload);
+            return SendCommandPacket(HapbeatProtocol.CMD_STOP, payload, target);
         }
 
         /// <summary>Send a STOP_ALL command. <paramref name="target"/> is the device-addressing
-        /// target string ("" = broadcast).</summary>
-        public void SendStopAll(string target = null)
+        /// target string ("" = broadcast). See <see cref="SendPlay"/> for the unicast routing
+        /// this shares.</summary>
+        public CommandSendResult SendStopAll(string target = null)
         {
             target = ResolveTarget(target);
             byte[] payload = HapbeatProtocol.BuildStopAllPayload(target);
-            SendPacket(HapbeatProtocol.CMD_STOP_ALL, payload);
+            return SendCommandPacket(HapbeatProtocol.CMD_STOP_ALL, payload, target);
         }
 
         /// <summary>
@@ -676,6 +779,158 @@ namespace Hapbeat
             }
         }
 
+        // Command send path shared by SendPlay/SendStop/SendStopAll. Mirrors the
+        // STREAM_* unicast design above (SendStreamRaw/SetStreamUnicastTargets) but
+        // resolves destinations fresh on every call from _knownDeviceIps/_deviceAddresses
+        // instead of a session-snapshotted list: PLAY/STOP/STOP_ALL are one-shot
+        // fire-and-forget packets, not a per-chunk hot path, so there's no equivalent
+        // "session start" to snapshot against and no lock-free-hot-path constraint
+        // to design around. PING/CONNECT_STATUS intentionally keep using
+        // SendPacket/SendRaw (plain broadcast) since they exist for discovery/
+        // liveness, not addressed playback commands.
+        private CommandSendResult SendCommandPacket(byte commandType, byte[] payload, string resolvedTarget)
+        {
+            ushort seq = GetNextSequenceNumber();
+            byte[] packet = HapbeatProtocol.BuildPacket(commandType, seq, payload);
+            return SendCommandRaw(packet, resolvedTarget);
+        }
+
+        /// <summary>
+        /// Routes a single PLAY/STOP/STOP_ALL packet to unicast or broadcast. Fallback
+        /// semantics deliberately match SetStreamUnicastTargets/SendStreamRaw exactly:
+        /// <list type="bullet">
+        /// <item>Not in broadcast mode (Bridge/ESP-NOW), or commandUnicast disabled ->
+        /// plain broadcast/bridge-unicast via SendRaw (unchanged pre-feature behavior).</item>
+        /// <item>No device has ever PONGed this session (_knownDeviceIps empty) ->
+        /// broadcast (fail open — nobody to unicast to yet).</item>
+        /// <item>A known device with no reported address (older firmware, or its PONG
+        /// hasn't been parsed yet) -> unicast to it anyway (fail open — same treatment
+        /// as the unknown-address case in SetStreamUnicastTargets).</item>
+        /// <item>A known device whose reported address matches <paramref name="resolvedTarget"/>
+        /// -> unicast to it.</item>
+        /// <item>At least one send above went out -> done, no broadcast (avoids the
+        /// double-delivery a known-and-matching device would get if we also broadcast).</item>
+        /// <item>Nothing was unicast (no live device known, or every known device's
+        /// reported address failed to match) -> broadcast, exactly as before this
+        /// feature existed. This deliberately does NOT mirror SendStreamRaw's
+        /// "send nowhere" sentinel: firmware re-applies <c>addressMatch()</c> to every
+        /// PLAY/STOP/STOP_ALL it receives (udp_receiver.cpp handlePlay/handleStop/
+        /// handleStopAll), so a broadcast can never actuate a device the target didn't
+        /// address — the only thing skipping would buy is airtime, at the price of
+        /// silently losing a command whenever our cached address is stale (the device's
+        /// group/player was just changed and its next PONG hasn't landed) or our
+        /// AddressMatches ever diverges from firmware's. For STOP/STOP_ALL that silent
+        /// loss means a looping event never stops.</item>
+        /// </list>
+        /// </summary>
+        private CommandSendResult SendCommandRaw(byte[] data, string resolvedTarget)
+        {
+            if (!IsConnected || _udpClient == null)
+                return CommandSendResult.Broadcast;
+
+            if (!IsBroadcast || !_commandUnicastEnabled)
+            {
+                SendRaw(data);
+                return CommandSendResult.Broadcast;
+            }
+
+            int port = _targetEndPoint != null ? _targetEndPoint.Port : 0;
+            long nowUs = GetLocalTimestampUs();
+            long ttlUs = (long)(_knownDeviceTtlSeconds * 1_000_000f);
+            bool sentAny = false;
+
+            foreach (var kv in _knownDeviceIps)
+            {
+                if (nowUs - kv.Value > ttlUs)
+                {
+                    // Device stopped answering PINGs (powered off, left the network,
+                    // rebooting after an OTA). Drop it so we stop aiming datagrams at a
+                    // dead host — each one draws an ICMP port-unreachable that Windows
+                    // reports back on this socket (see SuppressUdpConnReset) — and so the
+                    // set can empty out again and let the broadcast fallback below take
+                    // over instead of unicasting into the void. Skipped rather than
+                    // removed: the entry is revived by the device's next PONG, and
+                    // leaving the collection untouched keeps this loop free of any
+                    // race with the receive thread writing into it.
+                    continue;
+                }
+
+                string knownAddress = GetKnownDeviceAddress(kv.Key);
+                // Fail open: unknown address => keep (send). Known address => must match.
+                if (knownAddress != null && !AddressMatches(resolvedTarget, knownAddress))
+                    continue;
+
+                sentAny = true;
+                try
+                {
+                    _udpClient.Send(data, data.Length, new IPEndPoint(kv.Key, port));
+                }
+                catch (SocketException ex)
+                {
+                    // A single unreachable/offline target shouldn't block the rest —
+                    // log and keep sending to the remaining known devices.
+                    UnityEngine.Debug.LogWarning(
+                        $"[Hapbeat] Command unicast send to {kv.Key} failed: {ex.Message}");
+                }
+                catch (ObjectDisposedException)
+                {
+                    HandleDisconnection();
+                    return CommandSendResult.Unicast; // best-effort; some sends may already be out
+                }
+            }
+
+            if (!sentAny)
+            {
+                SendRaw(data);
+                return CommandSendResult.Broadcast;
+            }
+
+            return CommandSendResult.Unicast;
+        }
+
+        /// <summary>
+        /// Ask Windows to stop reporting ICMP "port unreachable" from a previous
+        /// unicast send as an error on this socket. Without it, sending a command to a
+        /// device that is powered off or rebooting makes the *next* <c>Receive()</c>
+        /// throw <c>SocketException</c> (WSAECONNRESET / 10054) even though the socket
+        /// is perfectly healthy — which used to kill the receive thread outright and,
+        /// with it, every subsequent PONG. hapbeat-helper root-caused and fixed exactly
+        /// this failure (hapbeat-helper f06fa04, "recv スレッドが Windows ICMP reset
+        /// (10054) で死にデバイス全ロストする問題"); the SDK now unicasts one-shot
+        /// commands too, so it is exposed to the same ICMP feedback.
+        /// Best-effort: the ioctl doesn't exist off Windows, and
+        /// <see cref="ReceiveLoop"/> treats the error as non-fatal regardless.
+        /// </summary>
+        private static void SuppressUdpConnReset(UdpClient client)
+        {
+            try
+            {
+                client.Client.IOControl(SIO_UDP_CONNRESET, new byte[] { 0, 0, 0, 0 }, null);
+            }
+            catch
+            {
+                // Unsupported platform / runtime — ReceiveLoop is the safety net.
+            }
+        }
+
+        /// <summary>
+        /// Whether a receive-side <see cref="SocketException"/> describes ICMP feedback
+        /// about one previously-sent datagram (a dead unicast destination) rather than a
+        /// broken socket. These must not tear down the receive thread: nothing restarts
+        /// it, and <c>HapbeatManager.EnsureConnected</c> only warns instead of
+        /// reconnecting, so one powered-off device would otherwise disable haptics for
+        /// the rest of the session.
+        /// </summary>
+        private static bool IsRecoverableReceiveError(SocketError error)
+        {
+            return error == SocketError.ConnectionReset      // WSAECONNRESET (10054) — ICMP port unreachable
+                || error == SocketError.ConnectionRefused    // same class, reported differently by some stacks
+                || error == SocketError.HostUnreachable
+                || error == SocketError.NetworkUnreachable
+                || error == SocketError.NetworkReset
+                || error == SocketError.MessageSize;         // oversized datagram: drop it, keep the socket
+        }
+
         private ushort GetNextSequenceNumber()
         {
             lock (_seqLock)
@@ -708,12 +963,30 @@ namespace Hapbeat
                         }
                     }
                 }
-                catch (SocketException)
+                catch (SocketException ex)
                 {
-                    if (_isRunning)
+                    if (!_isRunning)
+                        break;
+
+                    if (IsRecoverableReceiveError(ex.SocketErrorCode))
                     {
-                        EnqueueMainThread(() => HandleDisconnection());
+                        // Per-datagram ICMP feedback (typically a command unicast to a
+                        // device that just powered off / is rebooting), not a dead
+                        // socket. Breaking here would silently end PONG reception for
+                        // the whole session — see IsRecoverableReceiveError. Log once
+                        // per connection so a genuinely misconfigured LAN is still
+                        // visible without spamming one line per stale destination.
+                        if (!_loggedRecoverableReceiveError)
+                        {
+                            _loggedRecoverableReceiveError = true;
+                            UnityEngine.Debug.LogWarning(
+                                $"[Hapbeat] Ignoring recoverable receive error ({ex.SocketErrorCode}); " +
+                                "a device is likely powered off or rebooting. Receive loop continues.");
+                        }
+                        continue;
                     }
+
+                    EnqueueMainThread(() => HandleDisconnection());
                     break;
                 }
                 catch (ObjectDisposedException)
@@ -766,7 +1039,15 @@ namespace Hapbeat
             // sender.Address (IPAddress) is immutable, so caching it directly here
             // (unlike the mutable IPEndPoint captured below for the main-thread
             // closure) is safe even though it's read later from the main thread via
-            // GetKnownDeviceAddress.
+            // GetKnownDeviceAddress / SendCommandRaw.
+            //
+            // Recorded regardless of whether this PONG reported an address —
+            // SendCommandRaw needs the full set of live devices (see _knownDeviceIps),
+            // not just the subset with a known address, so an address-unknown device
+            // still gets PLAY/STOP/STOP_ALL unicast instead of being silently dropped.
+            // The timestamp is what lets SendCommandRaw expire a device that stopped
+            // answering PINGs instead of unicasting at it forever.
+            _knownDeviceIps[sender.Address] = nowUs;
             if (!string.IsNullOrEmpty(address))
                 _deviceAddresses[sender.Address] = address;
 
