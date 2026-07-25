@@ -51,7 +51,7 @@ namespace Hapbeat.Editor
 
         private void DrawAddressOverrideSection()
         {
-            // DrawFull already renders its own "Address Override (this device)"
+            // DrawFull already renders its own "Override Addressing (this device)"
             // bold heading — no separate section header needed here.
             HapbeatAddressOverrideStatusGUI.DrawFull(HapbeatManager.Instance, Repaint);
 

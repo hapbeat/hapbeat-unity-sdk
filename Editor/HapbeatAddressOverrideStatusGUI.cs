@@ -5,7 +5,7 @@ using UnityEngine;
 namespace Hapbeat.Editor
 {
     /// <summary>
-    /// Shared drawing logic for the "Address Override (this device)" status —
+    /// Shared drawing logic for the "Override Addressing (this device)" status —
     /// the saved (PlayerPrefs) value and the runtime-active value, plus a
     /// "Clear Saved Override" action. Extracted so <see cref="HapbeatManagerEditor"/>
     /// (compact inline box) and <see cref="HapbeatRuntimeStatusWindow"/> (full
@@ -56,7 +56,7 @@ namespace Hapbeat.Editor
         /// </summary>
         public static void DrawFull(HapbeatManager manager, System.Action repaint)
         {
-            EditorGUILayout.LabelField("Address Override (this device)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Override Addressing (this device)", EditorStyles.boldLabel);
             DrawBuildRow(manager);
             DrawSavedRow();
             DrawActiveRow(manager);
@@ -67,7 +67,7 @@ namespace Hapbeat.Editor
         /// that want the Clear action point users at the full Runtime Status window instead).</summary>
         public static void DrawCompact(HapbeatManager manager)
         {
-            EditorGUILayout.LabelField("Address Override (this device)", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Override Addressing (this device)", EditorStyles.boldLabel);
             DrawBuildRow(manager);
             DrawSavedRow();
             DrawActiveRow(manager);
@@ -114,7 +114,7 @@ namespace Hapbeat.Editor
             EditorGUILayout.LabelField(
                 player >= 1 || group >= 1
                     ? "   A forced axis always wins over the saved/edited value below and cannot be changed on the device."
-                    : "   Set in HapbeatConfig (Hapbeat > Settings > Addressing). 'per-device' = decided by the values below.",
+                    : "   Set in HapbeatConfig (Hapbeat > Settings > Override Addressing (this build)). 'per-device' = decided by the values below.",
                 EditorStyles.miniLabel);
         }
 

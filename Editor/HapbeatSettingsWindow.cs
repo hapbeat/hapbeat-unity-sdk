@@ -99,27 +99,38 @@ namespace Hapbeat.Editor
                 (len == 0 ? "  (empty: uses Application.productName)" : ""),
                 EditorStyles.miniLabel);
 
-            // ── Addressing ───────────────────────────────────────────
+            // ── Override Addressing (this build) ─────────────────────
             // Build-wide player/group pinning. -1 keeps an axis per-device
             // (runtime panel / SetAddressOverride / PlayerPrefs); 1-99 forces it
-            // for every device running this build.
+            // for every device running this build. The per-device counterpart is
+            // "Override Addressing (this device)" in the Runtime Status window.
             EditorGUILayout.Space(5);
-            EditorGUILayout.LabelField("Addressing", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Override Addressing (this build)", EditorStyles.boldLabel);
 
             EditorGUILayout.HelpBox(
-                "-1 = per-device (set on the device via the Address Override panel / API; saved in PlayerPrefs)\n" +
+                "-1 = per-device (left to Override Addressing (this device): the runtime panel / API; saved in PlayerPrefs)\n" +
                 "1-99 = forced for this whole build (cannot be changed on the device)\n\n" +
                 "Running several demos at once: force Group here so each build only reaches its own\n" +
                 "devices, and leave Player at -1 so each headset is paired on site.",
                 MessageType.Info);
 
-            EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("buildOverridePlayer"),
-                new GUIContent("Build Player", "-1 = per-device. 1-99 = forced for this whole build."));
+            // Player / Group on one row of plain int fields, matching the
+            // "Edit (works outside Play Mode too)" row in the Runtime Status
+            // window so the build-wide and per-device overrides read alike.
+            var buildPlayerProp = _serializedConfig.FindProperty("buildOverridePlayer");
+            var buildGroupProp = _serializedConfig.FindProperty("buildOverrideGroup");
 
-            EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("buildOverrideGroup"),
-                new GUIContent("Build Group", "-1 = per-device. 1-99 = forced for this whole build."));
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(
+                new GUIContent("Player", "-1 = per-device. 1-99 = forced for this whole build."),
+                GUILayout.Width(50));
+            buildPlayerProp.intValue = EditorGUILayout.IntField(buildPlayerProp.intValue, GUILayout.Width(50));
+            GUILayout.Space(10);
+            EditorGUILayout.LabelField(
+                new GUIContent("Group", "-1 = per-device. 1-99 = forced for this whole build."),
+                GUILayout.Width(50));
+            buildGroupProp.intValue = EditorGUILayout.IntField(buildGroupProp.intValue, GUILayout.Width(50));
+            EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("Behavior", EditorStyles.boldLabel);

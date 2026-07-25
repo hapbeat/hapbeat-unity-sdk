@@ -190,7 +190,7 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Compact "Address Override (this device)" box: the two always-on status
+        /// Compact "Override Addressing (this device)" box: the two always-on status
         /// rows (saved / active), shared with <see cref="HapbeatRuntimeStatusWindow"/>
         /// via <see cref="HapbeatAddressOverrideStatusGUI"/>, plus a button to open
         /// that window for the full view (including "Clear Saved Override", now

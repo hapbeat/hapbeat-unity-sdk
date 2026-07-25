@@ -24,7 +24,19 @@ namespace Hapbeat
         /// Longer strings are truncated when serialized.</summary>
         public const int MaxAppNameLength = 16;
 
-        [Header("Addressing")]
+        // No [Header] here: the Hapbeat Settings window (the normal editing route)
+        // draws its own "Override Addressing (this build)" section heading, and a
+        // header attribute would render a second one above the PropertyFields.
+
+        /// <summary>Lower bound for <see cref="buildOverridePlayer"/> / <see cref="buildOverrideGroup"/>
+        /// (-1 = per-device). Clamped in OnValidate since the fields are drawn as plain
+        /// int fields, not a [Range] slider.</summary>
+        public const int MinBuildOverride = -1;
+
+        /// <summary>Upper bound for <see cref="buildOverridePlayer"/> / <see cref="buildOverrideGroup"/>.
+        /// Matches the device address range (player_1..99 / group_1..99).</summary>
+        public const int MaxBuildOverride = 99;
+
         [Tooltip("Build-wide forced player number.\n\n" +
                  "  1-99 = force this player for the whole build (cannot be changed on the device —\n" +
                  "         the runtime panel / SetAddressOverride / PlayerPrefs are all ignored for this axis)\n" +
@@ -32,7 +44,6 @@ namespace Hapbeat
                  "Typical setup for running several demos at once: force 'group' in the build so each " +
                  "demo build only ever reaches its own devices, and leave 'player' at -1 so each " +
                  "headset can be paired with its own Hapbeat on site.")]
-        [Range(-1, 99)]
         public int buildOverridePlayer = -1;
 
         [Tooltip("Build-wide forced group number.\n\n" +
@@ -41,7 +52,6 @@ namespace Hapbeat
                  "  -1   = per-device (the runtime panel / SetAddressOverride / PlayerPrefs decide)\n\n" +
                  "Forcing the group here is the intended way to keep simultaneous demos from " +
                  "cross-talking: every build ships with its own group number baked in.")]
-        [Range(-1, 99)]
         public int buildOverrideGroup = -1;
 
         [Header("Bridge (ESP-NOW)")]
@@ -135,6 +145,14 @@ namespace Hapbeat
                     $"truncated to '{appName.Substring(0, MaxAppNameLength)}'.", this);
                 appName = appName.Substring(0, MaxAppNameLength);
             }
+
+            // buildOverridePlayer / buildOverrideGroup are drawn as plain int fields
+            // (not a [Range] slider) so they line up with the Runtime Status window's
+            // Player/Group row, so the bounds have to be enforced here instead.
+            // 0 stays as typed: NormalizeOverride() already treats anything outside
+            // 1..99 as "disabled" (-1), so it needs no special case.
+            buildOverridePlayer = Mathf.Clamp(buildOverridePlayer, MinBuildOverride, MaxBuildOverride);
+            buildOverrideGroup = Mathf.Clamp(buildOverrideGroup, MinBuildOverride, MaxBuildOverride);
 
             // Detect Play-mode hapticDelaySeconds edits and notify the SDK so
             // it can flush pending delay coroutines. Only fires during Play to

@@ -19,8 +19,8 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Added（追加）
 
-- **ビルド単位の Address Override 固定（`HapbeatConfig` > Addressing）** — 複数のデモを同時開催しても混線しないよう、player / group を**ビルド全体で固定**できるようにしました。軸ごとに独立して指定します。
-  - `HapbeatConfig.buildOverridePlayer` / `buildOverrideGroup`（既定 `-1`）— `1-99` = そのビルド全体で強制（端末側の設定パネル / `SetAddressOverride` / `PlayerPrefs` では変更不可）。`-1` = 従来どおり端末ごと。
+- **ビルド単位の Address Override 固定（`Hapbeat > Settings` > Override Addressing (this build)）** — 複数のデモを同時開催しても混線しないよう、player / group を**ビルド全体で固定**できるようにしました。軸ごとに独立して指定します。端末単位の `Override Addressing (this device)`（Runtime Status ウィンドウ）と対になる名前で、Player / Group は同じ横並びの数値入力で編集します。
+  - `HapbeatConfig.buildOverridePlayer` / `buildOverrideGroup`（既定 `-1`）— `1-99` = そのビルド全体で強制（端末側の設定パネル / `SetAddressOverride` / `PlayerPrefs` では変更不可）。`-1` = 従来どおり端末ごと。値は `OnValidate` で `-1..99` にクランプされます。
   - 想定運用: `group` をビルドで固定してデモを分離し、`player` は `-1` のまま端末ごとにペアリングする。
   - 優先順位は軸ごとに「config が `1-99` → それを強制 / config が `-1` → 保存値（`PlayerPrefs`）→ 無効」。`HapbeatManager.ResolveEffectiveOverride(int, int)`（static・純粋関数）として切り出し、ユニットテスト（`AddressOverrideResolutionTests`）を追加しています。
   - `HapbeatManager.BuildOverridePlayer` / `BuildOverrideGroup` / `IsPlayerForcedByBuild` / `IsGroupForcedByBuild` — UI が「この軸はビルド固定」と表示するための公開判定。
@@ -54,7 +54,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 ### Fixed（修正）
 
 - **group を指定した送信がデバイスに届かない** — デバイスのアドレス照合は位置ベース（i 番目のセグメント同士を比較）ですが、`group_<M>` を target の末尾に付けるだけだったため、player / position を省略した target では group が本来と違うスロットに入り、常に不一致になっていました。position スロットを `*` で補ってから追加するよう修正しています（例: `"" → "*/*/group_2"`）。
-  なお、group を指定した送信が届くのは**デバイス側にも group（1-99）が設定されている場合のみ**です。出荷時は group 未設定のため、group での絞り込みを使うには対象デバイスすべてに設定が必要です。
+  なお、デバイスのアドレスは常に `player_<N>/<position>/group_<M>` の正規形で、**既定は `player_1` / `group_1`** です（firmware DEC-048 以降、group が省略されることはありません）。設定し忘れた機体は既定の 1 番に合流するので、デモを分けるときは **1 以外の番号から振る**と設定漏れに気付けます。
 - **UDP 受信スレッドが Windows の ICMP reset で停止する** — 電源 OFF や再起動中のデバイスへユニキャスト送信すると ICMP port unreachable が返り、Windows ではそれが次の `Receive()` の例外として現れます。従来はこれを致命エラーとして受信ループを終了しており、以後デバイスを一切検出できなくなっていました（`SIO_UDP_CONNRESET` の設定と、回復可能なエラーでループを止めない処理を追加）。
 - `HapbeatAddressOverridePanel` が既存の Canvas の子に配置された場合、生成する Canvas が入れ子になって表示位置がずれる問題を修正しました（Unity の仕様上、子 Canvas は独自の RenderMode を持てないため、シーンルートへ退避します）。
 - フォーカス移動の不具合 2 件を修正 — 下方向へ移動できない（`Mathf.Sign(0f)` が `+1` を返す仕様に起因）、および複数座標に登録したボタンでハイライトが消える問題。
