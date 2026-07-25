@@ -33,11 +33,22 @@ namespace Hapbeat
         WorldFixed,
 
         /// <summary>
-        /// Always centered in the rendering camera's view: the panel's Canvas is
-        /// made a <b>child of the camera Transform</b> at a fixed local offset,
-        /// so it inherits the camera's transform hierarchy directly. Default.
+        /// Loosely follows the view: the panel stays world-fixed (and therefore
+        /// perfectly reprojected) while it is within <c>Follow Deadzone Degrees</c>
+        /// of the view center, and glides to a new resting spot in front of the
+        /// wearer once they look further away than that. Default.
+        ///
+        /// <para>
+        /// Deliberately <b>not</b> a hard head-lock (Canvas parented to the camera
+        /// Transform): a head-locked surface is re-projected by the XR compositor's
+        /// TimeWarp pass as if it were a static scene object, so the correction is
+        /// applied on top of a surface that already moved with the head, and the UI
+        /// visibly swims whenever the wearer turns. Anything that only moves while
+        /// the head moves *slowly* (this mode) avoids that entirely, because it is
+        /// world-static exactly when reprojection matters most.
+        /// </para>
         /// </summary>
-        HeadLocked,
+        LazyFollow,
     }
 
     /// <summary>
@@ -74,10 +85,9 @@ namespace Hapbeat
     /// <see cref="HapbeatAddressOverridePanelSpace.WorldSpace"/>, <c>World Attach Mode</c>
     /// picks between <see cref="HapbeatAddressOverridePanelWorldAttach.WorldFixed"/>
     /// (stays where it was placed) and
-    /// <see cref="HapbeatAddressOverridePanelWorldAttach.HeadLocked"/> (default —
-    /// always centered in view). Head-lock parents the Canvas to the camera
-    /// Transform rather than writing its pose every frame; see the comment in
-    /// <see cref="Build"/> for why that distinction matters in XR.
+    /// <see cref="HapbeatAddressOverridePanelWorldAttach.LazyFollow"/> (default —
+    /// world-fixed while roughly in front of the wearer, gliding to a new resting
+    /// spot once they look away). See <see cref="UpdateLazyFollow"/>.
     /// </para>
     ///
     /// <para>
@@ -177,22 +187,32 @@ namespace Hapbeat
         [SerializeField]
         private Vector2 _worldSize = new Vector2(0.5f, 0.13f);
 
-        [Tooltip("World-space anchoring. HeadLocked (default) parents the panel's Canvas to the camera Transform " +
-            "so it is always centered in view; WorldFixed leaves it where it was placed. Ignored in ScreenSpaceOverlay.")]
+        [Tooltip("World-space anchoring. LazyFollow (default) keeps the panel world-fixed while it is roughly in " +
+            "front of the wearer and glides it to a new resting spot once they look away; WorldFixed leaves it " +
+            "where it was placed. Ignored in ScreenSpaceOverlay.")]
         [SerializeField]
-        private HapbeatAddressOverridePanelWorldAttach _worldAttachMode = HapbeatAddressOverridePanelWorldAttach.HeadLocked;
+        private HapbeatAddressOverridePanelWorldAttach _worldAttachMode = HapbeatAddressOverridePanelWorldAttach.LazyFollow;
 
-        [Tooltip("Camera Transform to parent the Canvas to in HeadLocked mode. Leave empty to use Camera.main.")]
+        [Tooltip("Camera the panel follows in LazyFollow mode. Leave empty to use Camera.main.")]
         [SerializeField]
-        private Transform _headLockedCamera;
+        private Transform _followCamera;
 
-        [Tooltip("HeadLocked distance in front of the camera, in meters.")]
+        [Tooltip("LazyFollow resting distance in front of the camera, in meters.")]
         [SerializeField]
-        private float _headLockedDistance = 1.5f;
+        private float _followDistance = 1.5f;
 
-        [Tooltip("HeadLocked vertical offset from the view center, in meters. Negative moves the panel down.")]
+        [Tooltip("LazyFollow vertical offset from eye height, in meters. Negative moves the panel down.")]
         [SerializeField]
-        private float _headLockedVerticalOffset = 0f;
+        private float _followVerticalOffset = 0f;
+
+        [Tooltip("LazyFollow deadzone: how far (in degrees of yaw) the panel may drift from the view center " +
+            "before it starts following. Inside the deadzone it stays perfectly world-fixed.")]
+        [SerializeField]
+        private float _followDeadzoneDegrees = 10f;
+
+        [Tooltip("LazyFollow smoothing time constant, in seconds. Larger = slower, softer glide.")]
+        [SerializeField]
+        private float _followSmoothSeconds = 0.25f;
 
         [Tooltip("World-space local position offset relative to this GameObject (WorldFixed only; ignored in ScreenSpaceOverlay).")]
         [SerializeField]
@@ -233,11 +253,37 @@ namespace Hapbeat
         // from this component's own transform hierarchy.
         private GameObject _canvasGo;
 
-        // Camera Transform the Canvas was actually parented to in HeadLocked
-        // mode (see Build / ResolveHeadLockedCamera). Null whenever head-lock
-        // isn't in effect — ScreenSpaceOverlay, WorldFixed, no camera found, or
-        // the nested-Canvas guard had to move the Canvas to the scene root.
-        private Transform _headLockedParent;
+        // Camera the Canvas lazily follows (see Build / ResolveFollowCamera /
+        // UpdateLazyFollow). Null whenever following isn't in effect —
+        // ScreenSpaceOverlay, WorldFixed, or no camera found.
+        private Transform _followCameraResolved;
+
+        // --- LazyFollow state (see UpdateLazyFollow) ---
+
+        // True while the panel is actively gliding toward the view. Cleared once
+        // it has settled (hysteresis), after which it stays world-fixed until the
+        // wearer looks past the deadzone again.
+        private bool _followEngaged;
+
+        // Set on build / enable / SnapToView: the next LateUpdate places the panel
+        // directly at the target pose instead of easing into it.
+        private bool _followSnapPending;
+
+        private Vector3 _followVelocity;
+
+        // Translation counterpart of _followDeadzoneDegrees: the wearer can walk
+        // (or the tracking origin can jump) without any yaw change at all, which a
+        // purely angular deadzone would never notice — the panel would be left
+        // behind at its old world spot. Engages the glide once the resting spot has
+        // moved further than this.
+        private const float FollowPositionDeadzoneMeters = 0.25f;
+
+        // Hysteresis for releasing the glide: both thresholds must be met, and both
+        // are deliberately much tighter than the engage thresholds so the panel
+        // actually finishes centering rather than stopping the moment it re-enters
+        // the (wide) deadzone.
+        private const float FollowReleaseAngleFraction = 0.25f;
+        private const float FollowReleasePositionMeters = 0.02f;
 
         // --- 2D focus-navigation grid ---
 
@@ -281,11 +327,10 @@ namespace Hapbeat
         /// The runtime-built Canvas's Transform (built on first access if this
         /// component hasn't been enabled yet). External controllers that need to
         /// place their own world-space UI alongside this panel — e.g.
-        /// <c>VRConfigExampleController</c>'s guide text — should parent to
-        /// <c>PanelCanvasTransform.parent</c> and offset from its
-        /// <c>localPosition</c>, so their UI shares whatever anchoring this panel
-        /// resolved (head-locked camera child, this GameObject, or the scene
-        /// root) instead of re-deriving it.
+        /// <c>VRConfigExampleController</c>'s guide text — should parent their UI
+        /// to <b>this Transform</b> and offset it in its local space, so it rides
+        /// along with whatever pose the panel resolves (lazy-follow glide,
+        /// WorldFixed placement) instead of re-deriving or re-following it.
         /// </summary>
         public Transform PanelCanvasTransform
         {
@@ -293,16 +338,51 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// True while the panel's Canvas is actually parented to a camera
-        /// Transform (world-space + <see cref="HapbeatAddressOverridePanelWorldAttach.HeadLocked"/>
-        /// + a camera was resolved). Callers that reposition the panel in the
-        /// world (e.g. a "recenter in front of me" binding) should treat this as
-        /// "already centered, nothing to do" — moving this GameObject has no
-        /// effect on a camera-parented Canvas.
+        /// True while the panel is lazily following the view (world-space +
+        /// <see cref="HapbeatAddressOverridePanelWorldAttach.LazyFollow"/> + a
+        /// camera was resolved). Callers with a "recenter in front of me" binding
+        /// should call <see cref="SnapToView"/> in that case, and only reposition
+        /// this GameObject themselves when it's false (WorldFixed).
         /// </summary>
-        public bool IsHeadLocked
+        public bool IsFollowingView
         {
-            get { EnsureBuilt(); return _headLockedParent != null; }
+            get { EnsureBuilt(); return _followCameraResolved != null; }
+        }
+
+        /// <summary>
+        /// LazyFollow vertical offset from eye height, in meters (the serialized
+        /// <c>Follow Vertical Offset</c>). Settable at runtime so a controller that
+        /// hangs its own UI below the panel (e.g. <c>VRConfigExampleController</c>'s
+        /// guide text) can raise the panel by half of what it added underneath, and
+        /// keep the *combined* block centered in view rather than the panel alone.
+        /// </summary>
+        public float FollowVerticalOffset
+        {
+            get => _followVerticalOffset;
+            set => _followVerticalOffset = value;
+        }
+
+        /// <summary>
+        /// Immediately re-centers the panel in front of the camera on the next
+        /// <c>LateUpdate</c>, ignoring the follow deadzone and the smoothing —
+        /// the "recenter" gesture for a
+        /// <see cref="HapbeatAddressOverridePanelWorldAttach.LazyFollow"/> panel.
+        /// No-op when the panel isn't following a camera (see
+        /// <see cref="IsFollowingView"/>).
+        ///
+        /// <para>
+        /// Deferred to <c>LateUpdate</c> rather than applied here so it uses the
+        /// same end-of-frame camera pose the follow itself does — an input callback
+        /// runs before the HMD pose is final for the frame, which is exactly the
+        /// stale-pose bug that made the old startup recenter place the panel
+        /// relative to the authored scene camera.
+        /// </para>
+        /// </summary>
+        public void SnapToView()
+        {
+            EnsureBuilt();
+            if (_followCameraResolved == null) return;
+            _followSnapPending = true;
         }
 
         private void EnsureBuilt()
@@ -321,6 +401,12 @@ namespace Hapbeat
             // Unity no longer does that for us via the hierarchy.
             if (_canvasGo != null)
                 _canvasGo.SetActive(true);
+
+            // Re-appearing after being hidden: place the panel where the wearer is
+            // looking *now* rather than easing in from wherever it was left.
+            _followSnapPending = true;
+            _followEngaged = false;
+            _followVelocity = Vector3.zero;
 
             // Reflect whatever is currently active (a PlayerPrefs-restored value
             // from a previous session, or disabled) so the editing steppers start
@@ -371,22 +457,23 @@ namespace Hapbeat
 
             bool worldSpace = _space == HapbeatAddressOverridePanelSpace.WorldSpace;
 
-            // Head-lock is implemented by making the Canvas an actual CHILD of the
-            // camera Transform — deliberately NOT by re-deriving its pose every
-            // frame. A per-frame position/rotation write is sampled at a different
-            // point in the frame than the XR compositor's own late-latch/
-            // reprojection pass, so the UI visibly micro-jitters relative to the
-            // reprojected view. As a child of the camera it goes through the exact
-            // same transform hierarchy as the rendered view, so no lag or jitter
-            // is possible by construction.
-            Transform headLockParent = (worldSpace && _worldAttachMode == HapbeatAddressOverridePanelWorldAttach.HeadLocked)
-                ? ResolveHeadLockedCamera()
+            // LazyFollow writes the Canvas's WORLD pose in LateUpdate rather than
+            // parenting it to the camera Transform. A camera-parented (hard
+            // head-locked) surface is reprojected by the XR compositor as though it
+            // were static in the scene, so on every head turn the compositor's
+            // correction is applied on top of a surface that already moved with the
+            // head — the UI visibly swims. Writing the pose only while the wearer
+            // looks past the deadzone means the panel is genuinely world-static
+            // during the small, fast head motions reprojection actually corrects
+            // for, and any residual lag during the (rare, deliberate) glide reads
+            // as intentional easing rather than as a tracking fault.
+            Transform followCamera = (worldSpace && _worldAttachMode == HapbeatAddressOverridePanelWorldAttach.LazyFollow)
+                ? ResolveFollowCamera()
                 : null;
 
-            // --- Canvas (child of the head-lock camera, else of self so it
-            // toggles with this GameObject) ---
+            // --- Canvas (child of self so it toggles with this GameObject) ---
             var canvasGo = new GameObject("AddressOverrideCanvas");
-            Transform desiredParent = headLockParent != null ? headLockParent : transform;
+            Transform desiredParent = transform;
             canvasGo.transform.SetParent(desiredParent, false);
             var canvas = canvasGo.AddComponent<Canvas>();
             canvas.sortingOrder = 50;
@@ -394,48 +481,44 @@ namespace Hapbeat
             // Nested-Canvas guard: a child Canvas inherits its parent Canvas's
             // render settings and cannot have its own RenderMode/anchoring — so
             // if our Canvas ends up under another Canvas (e.g. this panel is
-            // attached under a screen-space HUD, or the head-lock camera itself
-            // is somehow parented under one), our ScreenSpaceOverlay/WorldSpace
+            // attached under a screen-space HUD), our ScreenSpaceOverlay/WorldSpace
             // choice and screen anchors above would silently be ignored and the
             // panel would render wherever the ancestor Canvas positions it.
             // Detect that and re-parent our Canvas to the scene root so it
-            // becomes independent, as intended — which also means head-lock
-            // can't apply, so it degrades to WorldFixed.
+            // becomes independent, as intended. LazyFollow is unaffected — it
+            // writes a world pose and doesn't care which parent it hangs from.
             var ancestorCanvas = desiredParent.GetComponentInParent<Canvas>(true);
             if (ancestorCanvas != null && ancestorCanvas.gameObject != canvasGo)
             {
                 Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: found under an ancestor Canvas " +
                     $"(\"{ancestorCanvas.name}\") — moved its own Canvas (\"{canvasGo.name}\") to the scene " +
                     "root so it can render as an independent RenderMode/anchor instead of inheriting the " +
-                    "parent Canvas's settings." + (headLockParent != null
-                        ? " HeadLocked is therefore not applied; the panel behaves as WorldFixed."
-                        : string.Empty), this);
+                    "parent Canvas's settings.", this);
                 canvasGo.transform.SetParent(null, false);
-                headLockParent = null;
             }
             _canvasGo = canvasGo;
-            _headLockedParent = headLockParent;
+            _followCameraResolved = followCamera;
 
             if (worldSpace)
             {
                 canvas.renderMode = RenderMode.WorldSpace;
                 float scale = Mathf.Max(_worldScale, 0.0001f);
                 var canvasRt = canvasGo.GetComponent<RectTransform>();
+                // Centered pivot, stated explicitly rather than relying on the
+                // RectTransform default: everything downstream (the follow target,
+                // the guide text a controller hangs underneath) treats this
+                // Transform's position as the panel's visual CENTER.
+                canvasRt.pivot = new Vector2(0.5f, 0.5f);
                 canvasRt.sizeDelta = new Vector2(_worldSize.x / scale, _worldSize.y / scale);
-                if (headLockParent != null)
-                {
-                    // Camera-local: straight ahead at _headLockedDistance, no
-                    // rotation of its own (identity = facing the same way the
-                    // camera does, i.e. square to the viewer).
-                    canvasGo.transform.localPosition = new Vector3(
-                        0f, _headLockedVerticalOffset, Mathf.Max(0.01f, _headLockedDistance));
-                    canvasGo.transform.localRotation = Quaternion.identity;
-                }
-                else
-                {
-                    canvasGo.transform.localPosition = _worldLocalPosition;
-                }
+                canvasGo.transform.localPosition = _worldLocalPosition;
                 canvasGo.transform.localScale = Vector3.one * scale;
+                if (followCamera != null)
+                {
+                    // Seed the pose so the first rendered frame is already in front
+                    // of the wearer; LateUpdate takes over from here.
+                    _followSnapPending = true;
+                    ApplyFollowSnap();
+                }
                 // Text on a world-space canvas is rasterized at the canvas's own
                 // pixel density, then scaled into world units — at the default 1
                 // px/unit the glyphs end up soft once the panel is a metre or two
@@ -495,6 +578,18 @@ namespace Hapbeat
             }
 
             var layout = panel.AddComponent<VerticalLayoutGroup>();
+            // MiddleLeft, not the UpperLeft default: the rows below add up to a
+            // fixed ~106 UI px (title 14 + main row 56 + status 16 + 2*4 spacing +
+            // 12 padding) and are NOT force-expanded vertically, so in a
+            // world-space panel whose rect is taller than that — e.g. the
+            // VRConfigExample scene's 0.5 m tall canvas, ~278 px at its 0.0018
+            // scale — an UpperLeft alignment pinned all of it to the top of the
+            // backdrop and left the rest empty. The panel's visual center then sat
+            // ~86 px (0.155 m) ABOVE the Transform the follow logic centers on,
+            // which is what read as "the panel sits above the view center".
+            // Centering the content makes the visual center coincide with this
+            // Transform's position for any rect size.
+            layout.childAlignment = TextAnchor.MiddleLeft;
             layout.padding = new RectOffset(10, 10, 6, 6);
             layout.spacing = 4f;
             layout.childControlWidth = true;
@@ -578,28 +673,147 @@ namespace Hapbeat
             // camera child, or the scene root via the nested-Canvas guard), so
             // Unity won't inherit our active state to it. Seed it explicitly —
             // OnEnable/OnDisable keep it in sync from here on. Matters because
-            // Build() can now run from PanelCanvasTransform/IsHeadLocked before
+            // Build() can now run from PanelCanvasTransform/IsFollowingView before
             // this component has ever been enabled.
             canvasGo.SetActive(isActiveAndEnabled);
         }
 
         /// <summary>
-        /// Resolves the Transform to parent the Canvas to in HeadLocked mode:
-        /// <c>_headLockedCamera</c> if set, else <c>Camera.main</c>. Returns null
+        /// Resolves the camera to follow in LazyFollow mode:
+        /// <c>_followCamera</c> if set, else <c>Camera.main</c>. Returns null
         /// (with a single warning) if neither is available — the caller then
         /// falls back to WorldFixed placement.
         /// </summary>
-        private Transform ResolveHeadLockedCamera()
+        private Transform ResolveFollowCamera()
         {
-            if (_headLockedCamera != null) return _headLockedCamera;
+            if (_followCamera != null) return _followCamera;
 
             var mainCamera = Camera.main;
             if (mainCamera != null) return mainCamera.transform;
 
-            Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: World Attach Mode is HeadLocked but no " +
-                "camera was found — assign \"Head Locked Camera\", or tag your camera MainCamera. " +
+            Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: World Attach Mode is LazyFollow but no " +
+                "camera was found — assign \"Follow Camera\", or tag your camera MainCamera. " +
                 "Falling back to WorldFixed placement.", this);
             return null;
+        }
+
+        // ---------------------------------------------------------------
+        // LazyFollow
+        // ---------------------------------------------------------------
+
+        // LateUpdate, not Update: the camera pose for this frame is final by then
+        // (a TrackedPoseDriver applies the HMD pose in Update / before-render), so
+        // the follow never chases a pose that is about to change again.
+        private void LateUpdate()
+        {
+            if (_canvasGo == null || _followCameraResolved == null) return;
+            UpdateLazyFollow(Time.deltaTime);
+        }
+
+        /// <summary>
+        /// One step of the lazy follow. While the panel is within
+        /// <c>_followDeadzoneDegrees</c> of yaw (and
+        /// <see cref="FollowPositionDeadzoneMeters"/> of translation) of where it
+        /// wants to be, <b>nothing is written at all</b> — the panel is genuinely
+        /// world-static, which is the state the XR compositor's reprojection is
+        /// built to correct for, so it renders rock-steady while the wearer's head
+        /// moves. Looking further than that engages a
+        /// <c>_followSmoothSeconds</c>-time-constant glide (frame-rate independent:
+        /// <see cref="Vector3.SmoothDamp"/> takes deltaTime directly, and the
+        /// rotation uses an exponential factor over deltaTime rather than a fixed
+        /// per-frame lerp), which releases again once the panel has settled well
+        /// inside the deadzone (see <see cref="FollowReleaseAngleFraction"/>).
+        /// </summary>
+        private void UpdateLazyFollow(float deltaTime)
+        {
+            if (_followSnapPending)
+            {
+                ApplyFollowSnap();
+                return;
+            }
+
+            Transform canvas = _canvasGo.transform;
+            Transform cam = _followCameraResolved;
+            GetFollowTarget(out Vector3 targetPos, out Quaternion targetRot);
+
+            float deadzone = Mathf.Max(0f, _followDeadzoneDegrees);
+
+            if (!_followEngaged)
+            {
+                if (YawErrorDegrees(cam.position, canvas.position, targetPos) <= deadzone &&
+                    Vector3.Distance(canvas.position, targetPos) <= FollowPositionDeadzoneMeters)
+                    return;
+
+                _followEngaged = true;
+                _followVelocity = Vector3.zero;
+            }
+
+            float smooth = Mathf.Max(_followSmoothSeconds, 0.0001f);
+            Vector3 nextPos = Vector3.SmoothDamp(canvas.position, targetPos, ref _followVelocity, smooth, Mathf.Infinity, deltaTime);
+            // Exponential approach: the fraction of the remaining rotation covered
+            // this frame depends on deltaTime, so the glide takes the same wall
+            // time at any frame rate (a bare Slerp(.., t) would not).
+            float rotT = 1f - Mathf.Exp(-deltaTime / smooth);
+            canvas.SetPositionAndRotation(nextPos, Quaternion.Slerp(canvas.rotation, targetRot, rotT));
+
+            if (YawErrorDegrees(cam.position, canvas.position, targetPos) <= deadzone * FollowReleaseAngleFraction &&
+                Vector3.Distance(canvas.position, targetPos) <= FollowReleasePositionMeters)
+            {
+                _followEngaged = false;
+                _followVelocity = Vector3.zero;
+            }
+        }
+
+        private void ApplyFollowSnap()
+        {
+            _followSnapPending = false;
+            _followEngaged = false;
+            _followVelocity = Vector3.zero;
+            GetFollowTarget(out Vector3 targetPos, out Quaternion targetRot);
+            _canvasGo.transform.SetPositionAndRotation(targetPos, targetRot);
+        }
+
+        /// <summary>
+        /// Resting pose for the panel: <c>_followDistance</c> ahead of the camera
+        /// along its <b>yaw only</b> (pitch/roll dropped, so the panel stays level
+        /// and at eye height however the wearer tilts their head), raised by
+        /// <c>_followVerticalOffset</c>, facing back along that same yaw.
+        /// </summary>
+        private void GetFollowTarget(out Vector3 position, out Quaternion rotation)
+        {
+            Transform cam = _followCameraResolved;
+            Vector3 fwd = cam.forward;
+            fwd.y = 0f;
+            if (fwd.sqrMagnitude < 1e-6f)
+            {
+                // Camera pointing straight up/down — its forward carries no yaw.
+                // Hold the panel's current heading rather than snapping to an
+                // arbitrary one (the wearer looking at their feet must not spin it).
+                fwd = _canvasGo.transform.forward;
+                fwd.y = 0f;
+                if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
+            }
+            fwd.Normalize();
+
+            position = cam.position + fwd * Mathf.Max(0.01f, _followDistance) + Vector3.up * _followVerticalOffset;
+            rotation = Quaternion.LookRotation(fwd, Vector3.up);
+        }
+
+        /// <summary>
+        /// Horizontal angle, in degrees, between "camera → where the panel is" and
+        /// "camera → where the panel wants to be" — i.e. how far off view-center
+        /// the panel has drifted. Returns 180 (always outside any deadzone) if
+        /// either direction degenerates, e.g. the camera is standing exactly on the
+        /// panel's own position.
+        /// </summary>
+        private static float YawErrorDegrees(Vector3 cameraPos, Vector3 currentPos, Vector3 targetPos)
+        {
+            Vector3 toCurrent = currentPos - cameraPos;
+            Vector3 toTarget = targetPos - cameraPos;
+            toCurrent.y = 0f;
+            toTarget.y = 0f;
+            if (toCurrent.sqrMagnitude < 1e-8f || toTarget.sqrMagnitude < 1e-8f) return 180f;
+            return Vector3.Angle(toCurrent, toTarget);
         }
 
         private Text CreateStepperRow(Transform parent, string label, int row, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc,

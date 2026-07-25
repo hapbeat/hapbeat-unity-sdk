@@ -49,9 +49,9 @@ namespace Hapbeat.Samples.VRConfigExample
     /// <see cref="HapbeatAddressOverridePanel.ActivateFocused"/>, i.e. "press"
     /// whichever button currently has focus. Keyboard: Enter/Space.</item>
     /// <item>Stick click (either hand) — <see cref="Recenter"/> the panel + guide
-    /// in front of the camera. Keyboard: R. Only meaningful when the panel's
-    /// World Attach Mode is WorldFixed — the default is HeadLocked, where the
-    /// panel is always centered in view and this is a logged no-op.</item>
+    /// in front of the camera. Keyboard: R. With the default LazyFollow panel
+    /// this snaps it straight back to the view center (bypassing the follow
+    /// deadzone and easing); with a WorldFixed panel it moves the rig itself.</item>
     /// <item>Left-hand Menu button / Keyboard Esc — <see cref="ExitToScene"/>
     /// directly (in addition to the panel's own Exit button, reachable via the
     /// focus grid). <b>Not</b> bound to the right controller: on Quest, the
@@ -204,15 +204,22 @@ namespace Hapbeat.Samples.VRConfigExample
         // runtime, so it never causes a layout shift.
         private const string GuideActionsText = "Stick: move / Trigger or A: press";
 
-        // Guide canvas transform. Parented alongside the panel's own Canvas (see
-        // AttachGuideToPanelAnchor) so it inherits the same anchoring — with the
-        // panel head-locked by default, that means both are children of the
-        // camera Transform and move as one.
+        // Guide canvas transform. Parented UNDER the panel's own Canvas (see
+        // AttachGuideToPanel) so the panel's lazy-follow motion carries it along
+        // and this controller never runs a second follow of its own.
         private Transform _guideCanvasTransform;
 
-        // Guide canvas offset below the panel, in meters, in the shared parent's
-        // local space (see AttachGuideToPanelAnchor).
-        private const float GuideBelowPanelMeters = -0.5f;
+        // World-space size/scale of the guide canvas (see BuildGuideText). Kept as
+        // constants because AttachGuideToPanel needs the height to place the guide
+        // directly under the panel.
+        private const float GuideCanvasScale = 0.0018f;
+        private const float GuideWorldWidth = 1.0f;
+        private const float GuideWorldHeight = 0.12f; // 1 fixed line — see GuideActionsText
+
+        // Edge-to-edge gap between the bottom of the panel and the top of the
+        // guide, in meters. Small on purpose: the two read as one block (it used to
+        // be a flat -0.5 m center offset, which left them visibly unrelated).
+        private const float GuideGapMeters = 0.02f;
 
         private void OnEnable()
         {
@@ -243,14 +250,13 @@ namespace Hapbeat.Samples.VRConfigExample
             }
 
             // Deliberately NO startup Recenter() here. The panel defaults to
-            // HeadLocked (its Canvas is a child of the camera Transform), so it
-            // is centered in view by construction — and a startup recenter was
-            // actively harmful: OnEnable runs before XR tracking is established,
-            // so the camera is still at its authored scene position and the panel
-            // was placed relative to that, ending up well off to the lower-left
-            // of where the wearer actually was. Recenter() remains bound to stick
-            // click / R for WorldFixed setups, where it is still meaningful.
-            AttachGuideToPanelAnchor();
+            // LazyFollow, which places itself in front of the wearer on its own
+            // (in LateUpdate, i.e. after the frame's HMD pose is final) — and a
+            // startup recenter was actively harmful: OnEnable runs before XR
+            // tracking is established, so the camera is still at its authored scene
+            // position and the panel was placed relative to that, ending up well
+            // off to the lower-left of where the wearer actually was.
+            AttachGuideToPanel();
 
             _diagnosticTimer = 0f;
             PollControllerDiagnostics(); // don't wait a full second for the first reading
@@ -565,30 +571,28 @@ namespace Hapbeat.Samples.VRConfigExample
         }
 
         /// <summary>
-        /// Moves the Address Override panel (and the guide text, which follows
-        /// it — see <see cref="AttachGuideToPanelAnchor"/>) to
+        /// Moves the Address Override panel (and the guide text, which rides under
+        /// it — see <see cref="AttachGuideToPanel"/>) to
         /// <see cref="RecenterDistanceMeters"/> in front of the camera, at the
         /// camera's current eye height, facing the camera's yaw only (pitch/roll
         /// ignored so the panel never tips when the wearer looks up/down).
         /// Bound to stick-click / Keyboard R.
         ///
         /// <para>
-        /// <b>No-op while the panel is head-locked</b> (its default — see
-        /// <see cref="HapbeatAddressOverridePanel.IsHeadLocked"/>): the panel's
-        /// Canvas is a child of the camera Transform there, so it is already
-        /// centered in view and moving this rig's Transform would do nothing.
-        /// Only meaningful for WorldFixed panels.
+        /// With the default LazyFollow panel this delegates to
+        /// <see cref="HapbeatAddressOverridePanel.SnapToView"/>: the panel owns its
+        /// own pose there, so recenter means "stop waiting for the follow deadzone,
+        /// be in front of me now". Only a WorldFixed panel is repositioned by
+        /// moving this rig's Transform, as below.
         /// </para>
         /// </summary>
         public void Recenter()
         {
             if (_cameraTransform == null || _panel == null) return;
 
-            if (_panel.IsHeadLocked)
+            if (_panel.IsFollowingView)
             {
-                Debug.Log("[Hapbeat] VRConfigExampleController: recenter ignored — the panel is head-locked " +
-                    "(always centered in view). Set the panel's World Attach Mode to WorldFixed if you want " +
-                    "a recenterable, world-anchored panel instead.");
+                _panel.SnapToView();
                 return;
             }
 
@@ -658,9 +662,9 @@ namespace Hapbeat.Samples.VRConfigExample
             // physical size = worldWidth/worldHeight regardless of scale — scale
             // only trades off UI-pixel canvas resolution against how large each
             // fixed-pixel-sized font/element renders).
-            const float scale = 0.0018f;
-            const float worldWidth = 1.0f;
-            const float worldHeight = 0.12f; // 1 fixed line — see GuideActionsText
+            const float scale = GuideCanvasScale;
+            const float worldWidth = GuideWorldWidth;
+            const float worldHeight = GuideWorldHeight;
 
             var canvasGo = new GameObject("VRConfigExampleGuideCanvas");
             canvasGo.transform.SetParent(transform, false);
@@ -675,8 +679,8 @@ namespace Hapbeat.Samples.VRConfigExample
             _guideCanvasTransform = canvasGo.transform;
 
             // Fallback placement (in front of this rig) for when no panel is
-            // wired. With a panel wired, AttachGuideToPanelAnchor() re-parents
-            // this canvas next to the panel's own Canvas and supersedes this.
+            // wired. With a panel wired, AttachGuideToPanel() re-parents this
+            // canvas under the panel's own Canvas and supersedes this.
             canvasGo.transform.localPosition = new Vector3(0f, 1.0f, 1.5f);
 
             var bg = new GameObject("Background", typeof(RectTransform));
@@ -714,34 +718,72 @@ namespace Hapbeat.Samples.VRConfigExample
         }
 
         /// <summary>
-        /// Parents the guide canvas to the SAME Transform the panel parented its
-        /// own Canvas to (the head-lock camera by default — see
-        /// <see cref="HapbeatAddressOverridePanel.PanelCanvasTransform"/>), at the
-        /// panel's local pose offset down by <see cref="GuideBelowPanelMeters"/>.
+        /// Parents the guide canvas UNDER the panel's own Canvas (see
+        /// <see cref="HapbeatAddressOverridePanel.PanelCanvasTransform"/>), directly
+        /// below it with a <see cref="GuideGapMeters"/> edge gap, and raises the
+        /// panel by half the height the guide adds underneath
+        /// (<see cref="HapbeatAddressOverridePanel.FollowVerticalOffset"/>) so the
+        /// panel+guide block as a whole — not the panel alone — ends up centered in
+        /// view.
         ///
         /// <para>
-        /// Parenting, not per-frame following: a guide canvas whose pose is
-        /// rewritten every frame is sampled at a different point in the frame
-        /// than the XR compositor's reprojection pass and visibly micro-jitters
-        /// against the head-locked panel right above it. Sharing the panel's
-        /// parent makes the two rigidly co-moving by construction. Called once
-        /// from <see cref="OnEnable"/>; nothing re-applies it per frame.
+        /// Parenting, not per-frame following: this controller must not run a
+        /// second follow of its own. As a child of the panel's Canvas the guide
+        /// inherits the panel's lazy-follow motion exactly, so the two can never
+        /// drift or jitter against each other. Called from <see cref="OnEnable"/>;
+        /// nothing re-applies it per frame.
+        /// </para>
+        ///
+        /// <para>
+        /// The offsets below are expressed in the panel Canvas's LOCAL units, which
+        /// are UI pixels (the panel scales its Canvas by world-meters-per-UI-pixel),
+        /// hence the division by the parent's scale — and the guide's own
+        /// localScale is divided by the same factor so its final world scale stays
+        /// <see cref="GuideCanvasScale"/> regardless of what the panel uses.
         /// </para>
         /// </summary>
-        private void AttachGuideToPanelAnchor()
+        private void AttachGuideToPanel()
         {
             if (_guideCanvasTransform == null || _panel == null) return;
 
             Transform panelCanvas = _panel.PanelCanvasTransform;
             if (panelCanvas == null) return; // panel built no canvas — keep the fallback placement
 
-            // worldPositionStays: false — the guide canvas keeps its own
-            // localScale (its UI-pixel-to-meter scale, see BuildGuideText),
-            // which a world-preserving re-parent would rewrite.
-            _guideCanvasTransform.SetParent(panelCanvas.parent, false);
-            _guideCanvasTransform.localPosition =
-                panelCanvas.localPosition + new Vector3(0f, GuideBelowPanelMeters, 0f);
-            _guideCanvasTransform.localRotation = panelCanvas.localRotation;
+            var panelRt = panelCanvas as RectTransform;
+            if (panelRt == null) return;
+
+            // Uniform scale by construction (the panel sets Vector3.one * scale).
+            float panelScale = panelCanvas.lossyScale.y;
+            if (Mathf.Abs(panelScale) < 1e-6f) return;
+
+            float panelHeight = panelRt.rect.height * panelScale;
+            float centerToCenter = panelHeight * 0.5f + GuideGapMeters + GuideWorldHeight * 0.5f;
+
+            // worldPositionStays: false — the guide canvas's pose/scale are fully
+            // re-derived below, so preserving its world transform would only fight
+            // the values being written.
+            _guideCanvasTransform.SetParent(panelCanvas, false);
+            _guideCanvasTransform.localPosition = new Vector3(0f, -centerToCenter / panelScale, 0f);
+            _guideCanvasTransform.localRotation = Quaternion.identity;
+            _guideCanvasTransform.localScale = Vector3.one * (GuideCanvasScale / panelScale);
+
+            // The block now spans from +panelHeight/2 (panel top) down to
+            // -(centerToCenter + GuideWorldHeight/2) (guide bottom) around the
+            // panel's own center, so its midpoint sits this far below the panel.
+            // Raising the panel by that much puts the block's midpoint on the
+            // follow anchor. Assigned (not accumulated) — this controller owns the
+            // panel's follow offset in this sample, and OnEnable may run repeatedly.
+            if (_panel.IsFollowingView)
+            {
+                _panel.FollowVerticalOffset =
+                    (centerToCenter + GuideWorldHeight * 0.5f - panelHeight * 0.5f) * 0.5f;
+
+                // The panel already placed itself using the previous offset, and
+                // this change alone is far too small to escape the follow deadzone
+                // — snap so the new resting height takes effect immediately
+                // instead of on the wearer's next large head turn.
+                _panel.SnapToView();
+            }
         }
 
         // ---------------------------------------------------------------
