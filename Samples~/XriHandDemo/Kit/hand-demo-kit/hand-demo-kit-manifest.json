@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0.0",
+  "pack_id": "hand-demo-kit",
+  "version": "1.0.1",
+  "name": "hand-demo-kit",
+  "description": "",
+  "author": "",
+  "created_at": "2026-04-21T05:50:37.227Z",
+  "target_device": {
+    "firmware_version_min": "0.1.0"
+  },
+  "events": {
+    "handdemo.grab_heavy": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/grab_heavy.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.35
+      }
+    },
+    "handdemo.grab-right": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/grab-right.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.3
+      }
+    },
+    "handdemo.ui-click-hard": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/ui-click-2.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.8
+      }
+    },
+    "handdemo.ui-click-weak": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/ui-click-weak.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.9
+      }
+    },
+    "handdemo.c_160hz-10s": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/160hz-10s.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.6
+      }
+    },
+    "handdemo.c_40hz-10s": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/40hz-10s.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.1
+      }
+    },
+    "handdemo.c_63hz_1s": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/63Hz_1s.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.15
+      }
+    },
+    "handdemo.scratch-soft": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/scratch-soft.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.15
+      }
+    },
+    "handdemo.snap-sine": {
+      "mode": "stream_clip",
+      "clip": "stream-clips/snap-sine.wav",
+      "description": "",
+      "parameters": {
+        "intensity": 0.25
+      }
+    }
+  },
+  "clips": {}
+}

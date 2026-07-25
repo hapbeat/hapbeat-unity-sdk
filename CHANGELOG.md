@@ -19,6 +19,13 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Added（追加）
 
+- **サンプル「XRI Hand Demo (haptics add-on)」と `Hapbeat > Samples > Augment XRI Hand Demo`** — XR Interaction Toolkit の *Hands Interaction Demo* シーンに触覚を後付けするサンプルです。XRI のサンプルは Unity Companion License のため改変シーンを再配布できません。そこで**シーンは配らず、EventMap（`HandsDemoEventMap.asset`・10 エントリ）と Kit（`hand-demo-kit`・stream clip 9 本）だけを同梱し、配線は Editor コマンドで後付けする**構成にしています。ユーザーは XRI 側で `HandsDemoScene` を import して開き、このコマンドを実行するだけで、掴む / 擦る / 押し込む / スナップ / UI クリックの触覚が入ります。
+  - 追加されるのは Hapbeat コンポーネント 33 個（`HapbeatUnityEventTrigger` 18・`HapbeatSequenceTrigger` 6・`HapbeatParameterBinding` 4・`HapbeatTickEmitter` 2・`HapbeatManager` 1・`XR Helpers` のフィルタ 2）と、UnityEvent 配線 41 本です。
+  - **冪等**です。既にあるコンポーネント・同じ対象/メソッドを指す配線はスキップし、追加数 / スキップ数をサマリログに出します。全操作は 1 つの Undo にまとまります。
+  - 実行前にシーンが *Hands Interaction Demo* かを検証し、違えば中断します。XRI のバージョン差で階層が変わっている場合は、**見つからなかったパスを 1 件ずつ警告として列挙**したうえで、見つかった分だけを適用します（黙って部分適用しません）。
+  - XRI 側の select イベントには手を加えません。ソケット周りは `XR Helpers` サンプルのフィルタコンポーネント経由で配線します。
+  - 診断用の `HapbeatEventLogger` 配線（PokeButton の XRI イベント 14 種）は別メニュー **`Augment XRI Hand Demo (+ diagnostic Event Logger)`** に分離しました。
+  - この Editor ツールは **XRI への asmdef 参照を持ちません**。XRI コンポーネントは型名で探索し、UnityEvent は `SerializedObject` のプロパティパス経由で編集するため、XRI 未導入のプロジェクトでもコンパイルできます。
 - **ビルド単位の Address Override 固定（`Hapbeat > Settings` > Override Addressing (this build)）** — 複数のデモを同時開催しても混線しないよう、player / group を**ビルド全体で固定**できるようにしました。軸ごとに独立して指定します。端末単位の `Override Addressing (this device)`（Runtime Status ウィンドウ）と対になる名前で、Player / Group は同じ横並びの数値入力で編集します。
   - `HapbeatConfig.buildOverridePlayer` / `buildOverrideGroup`（既定 `-1`）— `1-99` = そのビルド全体で強制（端末側の設定パネル / `SetAddressOverride` / `PlayerPrefs` では変更不可）。`-1` = 従来どおり端末ごと。値は `OnValidate` で `-1..99` にクランプされます。
   - 想定運用: `group` をビルドで固定してデモを分離し、`player` は `-1` のまま端末ごとにペアリングする。

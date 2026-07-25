@@ -25,6 +25,11 @@
       "path": "Samples~/XriHelpers"
     },
     {
+      "displayName": "XRI Hand Demo (haptics add-on)",
+      "description": "Haptics for the XR Interaction Toolkit \"Hands Interaction Demo\" scene. Ships the EventMap and Kit only — import the XRI demo yourself, then run Hapbeat > Samples > Augment XRI Hand Demo to apply the wiring. Requires the XR Helpers sample.",
+      "path": "Samples~/XriHandDemo"
+    },
+    {
       "displayName": "VR Config Example",
       "description": "Minimal VR (Quest) example for on-device verification (address override, test haptics). No XRI dependency.",
       "path": "Samples~/VRConfigExample"

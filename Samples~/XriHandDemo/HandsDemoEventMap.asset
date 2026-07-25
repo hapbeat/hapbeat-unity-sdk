@@ -1,0 +1,231 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf9c34b08ac7b8c4f954b03abe0affb3, type: 3}
+  m_Name: HandsDemoEventMap
+  m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatEventMap
+  entries:
+  - _id: 6a24573fe8fc487a88a93a3871cc25e7
+    mode: 1
+    displayName: GrabLight
+    category: weapon
+    eventName: gunshot
+    streamClip: {fileID: 8300000, guid: 18e20b0d372e644459a6fd9419ce98da, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: c05efeacaf0a4da9a94728c70ea78824
+    mode: 1
+    displayName: GrabHeavy
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: cd91b9fa8406f1e4a9d736536442a390, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: df94bc4c409d45b19889b9cf750bb49d
+    mode: 1
+    displayName: GrabHoldLight
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 2d841c32476ab1a459553b3664575d6c, type: 3}
+    loop: 1
+    bindings: []
+    gain: 0.5
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: ab0c6a7c4b204f8996bd3c1355339157
+    mode: 1
+    displayName: GrabHoldMiddle
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 2a86c9a45c4b8da4aa4a8dbb5d860d12, type: 3}
+    loop: 1
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: 6f906707c8954309944d1f3375c68ed5
+    mode: 1
+    displayName: GrabHoldHeavy
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 96f0afdb55e84b248b945b88d19f17d9, type: 3}
+    loop: 1
+    bindings: []
+    gain: 0.064
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: 2e3f8d3cbbb94046ba1e662d79f5753b
+    mode: 1
+    displayName: SnapFit
+    category: weapon
+    eventName: gunshot
+    streamClip: {fileID: 8300000, guid: 3117c154bd9dd0746bbbe99caf6472a2, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: 902e14644a14462db93d87122c05d889
+    mode: 1
+    displayName: UI-Click-Light
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 2b1cc6dc57576c04eac57c7e407f05c5, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: ce34d69b94c441e092772525a2c075df
+    mode: 1
+    displayName: UI-Click-Heavy
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: ac1dd3c7abf94854994c3cf5661cbc7b, type: 3}
+    loop: 0
+    bindings: []
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: 06a735ddbc794d1cb948ada0c814b339
+    mode: 1
+    displayName: Scratch
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: e052ab347a7774545aab3be8ec4d0fee, type: 3}
+    loop: 1
+    bindings:
+    - _id: 7229f2bc2f854e3e84898e4ae2f2b6a0
+      ownerObjectName: FlatSphereController
+      sourceTransformPath: 
+      sourceProperty: 8
+      inputMin: 0.02
+      inputMax: 0.5
+      curveType: 0
+      customCurve:
+        serializedVersion: 2
+        m_Curve: []
+        m_PreInfinity: 0
+        m_PostInfinity: 0
+        m_RotationOrder: 0
+      outputParameter: 0
+      outputMin: 0
+      outputMax: 1
+      debugLog: 0
+      debugLogInterval: 0.1
+      debugLogChangeThreshold: 0.02
+    - _id: 172af27674664d87a69b3cd2795173fc
+      ownerObjectName: PawnController
+      sourceTransformPath: 
+      sourceProperty: 8
+      inputMin: 0
+      inputMax: 0.1
+      curveType: 0
+      customCurve:
+        serializedVersion: 2
+        m_Curve: []
+        m_PreInfinity: 0
+        m_PostInfinity: 0
+        m_RotationOrder: 0
+      outputParameter: 0
+      outputMin: 0
+      outputMax: 1
+      debugLog: 0
+      debugLogInterval: 0.1
+      debugLogChangeThreshold: 0.02
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  - _id: 3e60a1fa323245b2ac8ee3c3cba8a538
+    mode: 1
+    displayName: PushFeedback
+    category: 
+    eventName: 
+    streamClip: {fileID: 8300000, guid: 2d841c32476ab1a459553b3664575d6c, type: 3}
+    loop: 1
+    bindings:
+    - _id: 9888d0f9dfad464f83af7b8706a5d8bb
+      ownerObjectName: 
+      sourceTransformPath: Button
+      sourceProperty: 1
+      inputMin: 0.0165
+      inputMax: 0
+      curveType: 0
+      customCurve:
+        serializedVersion: 2
+        m_Curve:
+        - serializedVersion: 3
+          time: 0
+          value: 0
+          inSlope: 2
+          outSlope: 2
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        - serializedVersion: 3
+          time: 1
+          value: 1
+          inSlope: 0
+          outSlope: 0
+          tangentMode: 0
+          weightedMode: 0
+          inWeight: 0
+          outWeight: 0
+        m_PreInfinity: 2
+        m_PostInfinity: 2
+        m_RotationOrder: 0
+      outputParameter: 0
+      outputMin: 0
+      outputMax: 1
+      debugLog: 1
+      debugLogInterval: 0.1
+      debugLogChangeThreshold: 0.02
+    gain: 1
+    target: 
+    delayOffsetSeconds: 0
+    notes: 
+    manifestOverride: {fileID: 4900000, guid: 79721145957dd1f408244801270289ed, type: 3}
+    _cachedManifestIntensity: -1
+  revertPlayModeChanges: 0
