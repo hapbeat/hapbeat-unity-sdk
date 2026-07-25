@@ -34,6 +34,8 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
   - `HapbeatClient.ResolveTarget(string target, int overridePlayer, int overrideGroup)`（static・UnityEngine 非依存）— target 文字列の `player_<N>` / `group_<M>` を置換・挿入します。
   - `appName` に `<p>` / `<g>` を含めると、送信時に現在の override 番号（無効時は `-`）へ置換されます（`HapbeatManager.ApplyAddressPlaceholders`）。デバイスの OLED にペア番号が表示されるので、現場で対応関係を確認できます。
 - **`HapbeatAddressOverridePanel`（Runtime コンポーネント）** — GameObject に 1 つ追加するだけで override 設定 UI が出ます。`ScreenSpaceOverlay` / `WorldSpace`（VR 用）の 2 モードに対応。Player -/+、Group -/+、Play、Apply、Exit のボタンを内蔵し、2D フォーカスグリッド（`RegisterFocusable` / `MoveFocus` / `ActivateFocused`）でコントローラー操作にも対応します。Play / Exit の実処理は `OnPlayRequested` / `OnExitRequested` で外部から注入します。
+  - `WorldSpace` 時の **ヘッドロック表示**（`World Attach Mode` = `HeadLocked` / `WorldFixed`、既定 `HeadLocked`）— 生成した Canvas を**カメラ Transform の子**にすることで、HMD のトラッキングに関わらず常に視界の中央に表示します。毎フレーム姿勢を書き込む方式は採っていません（XR コンポジタの再投影とサンプリング時刻がずれて UI が微振動するため）。カメラは `Head Locked Camera`（未設定なら `Camera.main`）、位置は `Head Locked Distance`（既定 `1.5` m）/ `Head Locked Vertical Offset`（既定 `0` m）で調整します。カメラが見つからない場合は警告を 1 回出して `WorldFixed` 相当で動作します。
+  - `PanelCanvasTransform` / `IsHeadLocked`（public）— 外部コントローラーが自前の world-space UI をパネルと同じ親に並べたり、「視界中央へ戻す」操作が不要かどうかを判定するために公開しています。
 - **`Hapbeat > Open Runtime Status` ウィンドウ** — 端末ごとに変わる値を 1 画面に集約。Address Override（保存値 / 実行時値 / 直接編集 + 保存 / Clear）、appName のプレースホルダー解決後プレビュー、接続状態（broadcast・unicast / ポート / 生存デバイス数 / 発見済み一覧）を確認できます。Manager インスペクタからも開けます。
 - **ユニキャスト送信（`streamUnicast` / `commandUnicast`、いずれも既定 `true`）**
   Wi-Fi のブロードキャストは、同じアクセスポイントに省電力状態の端末が 1 台でもいると AP 側で DTIM まで保留されるため、100〜300ms 級の遅延が周期的に発生します（CLIP では可聴な途切れとして現れていました）。PONG で判明している既知デバイスへ直接送ることでこれを回避します。
@@ -41,7 +43,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
   - 宛先は解決後の target で絞り込みます（`HapbeatClient.AddressMatches` — firmware の照合と同一セマンティクス）。1 人が複数台装着する構成や、複数ペアが同一 LAN にいる構成でも、自分のペアにだけ送信します。
   - 既知デバイスが 0 台のときはブロードキャストへフォールバックします。二重配送はしません。
   - `HapbeatProtocol.ParsePongExtended` — PONG からデバイスの address / device_name / firmware_version 等を取得します（プロトコル変更はありません。従来 SDK 側が読んでいなかっただけです）。
-- **新サンプル `VRConfigExample`** — Quest 等の VR 実機で override を設定・確認するための最小シーン。XR Interaction Toolkit に依存せず、Input System のみで動作します。操作はスティックでフォーカス移動、トリガー / A(X) / B(Y) のいずれかで決定の 2 アクションのみ。スティック押し込みで UI を視界中央へ recenter します。テスト再生は EventMap の CLIP エントリ（100Hz sine 同梱）なので、デバイスに Kit を配備しなくても振動を確認できます。戻り先シーンを設定すれば Exit で自分のシーンへ復帰できるため、**自プロジェクトの設定画面としてそのまま使えます**。
+- **新サンプル `VRConfigExample`** — Quest 等の VR 実機で override を設定・確認するための最小シーン。XR Interaction Toolkit に依存せず、Input System のみで動作します。操作はスティックでフォーカス移動、トリガー / A(X) / B(Y) のいずれかで決定の 2 アクションのみ。パネル・ガイドは既定でヘッドロック（常に視界中央）なので、起動時の recenter は行いません（スティック押し込みの recenter は `WorldFixed` 設定時のみ意味を持ち、ヘッドロック時はログのみの no-op です）。テスト再生は EventMap の CLIP エントリ（100Hz sine 同梱）なので、デバイスに Kit を配備しなくても振動を確認できます。戻り先シーンを設定すれば Exit で自分のシーンへ復帰できるため、**自プロジェクトの設定画面としてそのまま使えます**。
 - ユニットテスト（EditMode）— `ResolveTargetTests` / `AddressMatchesTests` / `AddressPlaceholderTests` と `Tests/Runtime` アセンブリ定義を新設しました。
 - `package.json` に `com.unity.ugui` 依存、Runtime asmdef に `UnityEngine.UI` 参照を追加（`HapbeatAddressOverridePanel` の uGUI 利用のため）。
 
@@ -58,7 +60,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - **UDP 受信スレッドが Windows の ICMP reset で停止する** — 電源 OFF や再起動中のデバイスへユニキャスト送信すると ICMP port unreachable が返り、Windows ではそれが次の `Receive()` の例外として現れます。従来はこれを致命エラーとして受信ループを終了しており、以後デバイスを一切検出できなくなっていました（`SIO_UDP_CONNRESET` の設定と、回復可能なエラーでループを止めない処理を追加）。
 - `HapbeatAddressOverridePanel` が既存の Canvas の子に配置された場合、生成する Canvas が入れ子になって表示位置がずれる問題を修正しました（Unity の仕様上、子 Canvas は独自の RenderMode を持てないため、シーンルートへ退避します）。
 - フォーカス移動の不具合 2 件を修正 — 下方向へ移動できない（`Mathf.Sign(0f)` が `+1` を返す仕様に起因）、および複数座標に登録したボタンでハイライトが消える問題。
-- `VRConfigExample` の VR 実機不具合 — UI の微振動（`TrackedPoseDriver` による姿勢取得へ変更）、スティック押し込み / Menu ボタンが反応しない（OpenXR の実コントロール名にバインド）、右手 Menu ボタンは Quest の OS 予約でアプリに届かないため左手のみに変更。
+- `VRConfigExample` の VR 実機不具合 — UI の微振動（`TrackedPoseDriver` による姿勢取得へ変更）、スティック押し込み / Menu ボタンが反応しない（OpenXR の実コントロール名にバインド）、右手 Menu ボタンは Quest の OS 予約でアプリに届かないため左手のみに変更。起動時 UI が実際の頭の位置から左下にずれる問題（`OnEnable` の recenter が XR トラッキング確立前に走り、シーン上の初期カメラ位置を基準にしていた）は、ヘッドロック化と起動時 recenter の削除で解消しました。
 - Showcase の `AddressOverrideDemo` を `Z4_Stream` 直下の独立した GameObject に配線し直しました（Canvas 配下にあったため上記の入れ子問題が発生していました）。
 
 ---

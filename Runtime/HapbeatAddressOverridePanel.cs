@@ -20,6 +20,27 @@ namespace Hapbeat
     }
 
     /// <summary>
+    /// How a <see cref="HapbeatAddressOverridePanelSpace.WorldSpace"/> panel is
+    /// anchored in the world. Ignored in
+    /// <see cref="HapbeatAddressOverridePanelSpace.ScreenSpaceOverlay"/>.
+    /// </summary>
+    public enum HapbeatAddressOverridePanelWorldAttach
+    {
+        /// <summary>
+        /// Stays wherever it was placed (parented to this GameObject, offset by
+        /// <c>World Local Position</c>) — the wearer can look away from it.
+        /// </summary>
+        WorldFixed,
+
+        /// <summary>
+        /// Always centered in the rendering camera's view: the panel's Canvas is
+        /// made a <b>child of the camera Transform</b> at a fixed local offset,
+        /// so it inherits the camera's transform hierarchy directly. Default.
+        /// </summary>
+        HeadLocked,
+    }
+
+    /// <summary>
     /// Runtime UI for the global Player / Group address override
     /// (<see cref="HapbeatManager.SetAddressOverride"/>). Builds a small
     /// self-contained uGUI panel entirely at runtime (no scene wiring beyond
@@ -46,6 +67,17 @@ namespace Hapbeat
     /// <b>Layout.</b> Two rows on the left (Player -/value/+, Group -/value/+),
     /// and to their right, spanning both rows' combined height, three
     /// square-ish action buttons in this order: Apply, Play, Exit.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>World-space anchoring.</b> In
+    /// <see cref="HapbeatAddressOverridePanelSpace.WorldSpace"/>, <c>World Attach Mode</c>
+    /// picks between <see cref="HapbeatAddressOverridePanelWorldAttach.WorldFixed"/>
+    /// (stays where it was placed) and
+    /// <see cref="HapbeatAddressOverridePanelWorldAttach.HeadLocked"/> (default —
+    /// always centered in view). Head-lock parents the Canvas to the camera
+    /// Transform rather than writing its pose every frame; see the comment in
+    /// <see cref="Build"/> for why that distinction matters in XR.
     /// </para>
     ///
     /// <para>
@@ -145,7 +177,24 @@ namespace Hapbeat
         [SerializeField]
         private Vector2 _worldSize = new Vector2(0.5f, 0.13f);
 
-        [Tooltip("World-space local position offset relative to this GameObject (ignored in ScreenSpaceOverlay).")]
+        [Tooltip("World-space anchoring. HeadLocked (default) parents the panel's Canvas to the camera Transform " +
+            "so it is always centered in view; WorldFixed leaves it where it was placed. Ignored in ScreenSpaceOverlay.")]
+        [SerializeField]
+        private HapbeatAddressOverridePanelWorldAttach _worldAttachMode = HapbeatAddressOverridePanelWorldAttach.HeadLocked;
+
+        [Tooltip("Camera Transform to parent the Canvas to in HeadLocked mode. Leave empty to use Camera.main.")]
+        [SerializeField]
+        private Transform _headLockedCamera;
+
+        [Tooltip("HeadLocked distance in front of the camera, in meters.")]
+        [SerializeField]
+        private float _headLockedDistance = 1.5f;
+
+        [Tooltip("HeadLocked vertical offset from the view center, in meters. Negative moves the panel down.")]
+        [SerializeField]
+        private float _headLockedVerticalOffset = 0f;
+
+        [Tooltip("World-space local position offset relative to this GameObject (WorldFixed only; ignored in ScreenSpaceOverlay).")]
         [SerializeField]
         private Vector3 _worldLocalPosition = Vector3.zero;
 
@@ -183,6 +232,12 @@ namespace Hapbeat
         // scene root — see the nested-Canvas guard below — which decouples it
         // from this component's own transform hierarchy.
         private GameObject _canvasGo;
+
+        // Camera Transform the Canvas was actually parented to in HeadLocked
+        // mode (see Build / ResolveHeadLockedCamera). Null whenever head-lock
+        // isn't in effect — ScreenSpaceOverlay, WorldFixed, no camera found, or
+        // the nested-Canvas guard had to move the Canvas to the scene root.
+        private Transform _headLockedParent;
 
         // --- 2D focus-navigation grid ---
 
@@ -222,13 +277,44 @@ namespace Hapbeat
         /// </summary>
         public event Action OnExitRequested;
 
+        /// <summary>
+        /// The runtime-built Canvas's Transform (built on first access if this
+        /// component hasn't been enabled yet). External controllers that need to
+        /// place their own world-space UI alongside this panel — e.g.
+        /// <c>VRConfigExampleController</c>'s guide text — should parent to
+        /// <c>PanelCanvasTransform.parent</c> and offset from its
+        /// <c>localPosition</c>, so their UI shares whatever anchoring this panel
+        /// resolved (head-locked camera child, this GameObject, or the scene
+        /// root) instead of re-deriving it.
+        /// </summary>
+        public Transform PanelCanvasTransform
+        {
+            get { EnsureBuilt(); return _canvasGo != null ? _canvasGo.transform : null; }
+        }
+
+        /// <summary>
+        /// True while the panel's Canvas is actually parented to a camera
+        /// Transform (world-space + <see cref="HapbeatAddressOverridePanelWorldAttach.HeadLocked"/>
+        /// + a camera was resolved). Callers that reposition the panel in the
+        /// world (e.g. a "recenter in front of me" binding) should treat this as
+        /// "already centered, nothing to do" — moving this GameObject has no
+        /// effect on a camera-parented Canvas.
+        /// </summary>
+        public bool IsHeadLocked
+        {
+            get { EnsureBuilt(); return _headLockedParent != null; }
+        }
+
+        private void EnsureBuilt()
+        {
+            if (_built) return;
+            Build();
+            _built = true;
+        }
+
         private void OnEnable()
         {
-            if (!_built)
-            {
-                Build();
-                _built = true;
-            }
+            EnsureBuilt();
 
             // Build() may have moved the Canvas out from under this GameObject
             // (nested-Canvas guard) — re-sync its active state explicitly since
@@ -283,38 +369,72 @@ namespace Hapbeat
                     "panel needs to be interactive.");
             }
 
-            // --- Canvas (child of self, so it toggles with this GameObject) ---
+            bool worldSpace = _space == HapbeatAddressOverridePanelSpace.WorldSpace;
+
+            // Head-lock is implemented by making the Canvas an actual CHILD of the
+            // camera Transform — deliberately NOT by re-deriving its pose every
+            // frame. A per-frame position/rotation write is sampled at a different
+            // point in the frame than the XR compositor's own late-latch/
+            // reprojection pass, so the UI visibly micro-jitters relative to the
+            // reprojected view. As a child of the camera it goes through the exact
+            // same transform hierarchy as the rendered view, so no lag or jitter
+            // is possible by construction.
+            Transform headLockParent = (worldSpace && _worldAttachMode == HapbeatAddressOverridePanelWorldAttach.HeadLocked)
+                ? ResolveHeadLockedCamera()
+                : null;
+
+            // --- Canvas (child of the head-lock camera, else of self so it
+            // toggles with this GameObject) ---
             var canvasGo = new GameObject("AddressOverrideCanvas");
-            canvasGo.transform.SetParent(transform, false);
+            Transform desiredParent = headLockParent != null ? headLockParent : transform;
+            canvasGo.transform.SetParent(desiredParent, false);
             var canvas = canvasGo.AddComponent<Canvas>();
             canvas.sortingOrder = 50;
 
             // Nested-Canvas guard: a child Canvas inherits its parent Canvas's
             // render settings and cannot have its own RenderMode/anchoring — so
-            // if this panel is attached under another Canvas (e.g. a screen-space
-            // HUD), our ScreenSpaceOverlay/WorldSpace choice and screen anchors
-            // above would silently be ignored and the panel would render wherever
-            // the ancestor Canvas positions it. Detect that and re-parent our
-            // Canvas to the scene root so it becomes independent, as intended.
-            var ancestorCanvas = GetComponentInParent<Canvas>(true);
+            // if our Canvas ends up under another Canvas (e.g. this panel is
+            // attached under a screen-space HUD, or the head-lock camera itself
+            // is somehow parented under one), our ScreenSpaceOverlay/WorldSpace
+            // choice and screen anchors above would silently be ignored and the
+            // panel would render wherever the ancestor Canvas positions it.
+            // Detect that and re-parent our Canvas to the scene root so it
+            // becomes independent, as intended — which also means head-lock
+            // can't apply, so it degrades to WorldFixed.
+            var ancestorCanvas = desiredParent.GetComponentInParent<Canvas>(true);
             if (ancestorCanvas != null && ancestorCanvas.gameObject != canvasGo)
             {
                 Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: found under an ancestor Canvas " +
                     $"(\"{ancestorCanvas.name}\") — moved its own Canvas (\"{canvasGo.name}\") to the scene " +
                     "root so it can render as an independent RenderMode/anchor instead of inheriting the " +
-                    "parent Canvas's settings.", this);
+                    "parent Canvas's settings." + (headLockParent != null
+                        ? " HeadLocked is therefore not applied; the panel behaves as WorldFixed."
+                        : string.Empty), this);
                 canvasGo.transform.SetParent(null, false);
+                headLockParent = null;
             }
             _canvasGo = canvasGo;
+            _headLockedParent = headLockParent;
 
-            bool worldSpace = _space == HapbeatAddressOverridePanelSpace.WorldSpace;
             if (worldSpace)
             {
                 canvas.renderMode = RenderMode.WorldSpace;
                 float scale = Mathf.Max(_worldScale, 0.0001f);
                 var canvasRt = canvasGo.GetComponent<RectTransform>();
                 canvasRt.sizeDelta = new Vector2(_worldSize.x / scale, _worldSize.y / scale);
-                canvasGo.transform.localPosition = _worldLocalPosition;
+                if (headLockParent != null)
+                {
+                    // Camera-local: straight ahead at _headLockedDistance, no
+                    // rotation of its own (identity = facing the same way the
+                    // camera does, i.e. square to the viewer).
+                    canvasGo.transform.localPosition = new Vector3(
+                        0f, _headLockedVerticalOffset, Mathf.Max(0.01f, _headLockedDistance));
+                    canvasGo.transform.localRotation = Quaternion.identity;
+                }
+                else
+                {
+                    canvasGo.transform.localPosition = _worldLocalPosition;
+                }
                 canvasGo.transform.localScale = Vector3.one * scale;
                 // Text on a world-space canvas is rasterized at the canvas's own
                 // pixel density, then scaled into world units — at the default 1
@@ -453,6 +573,33 @@ namespace Hapbeat
             var statusLayoutElement = _statusText.gameObject.AddComponent<LayoutElement>();
             statusLayoutElement.minHeight = 16f;
             statusLayoutElement.preferredHeight = 16f;
+
+            // The Canvas may live outside this GameObject's hierarchy (head-lock
+            // camera child, or the scene root via the nested-Canvas guard), so
+            // Unity won't inherit our active state to it. Seed it explicitly —
+            // OnEnable/OnDisable keep it in sync from here on. Matters because
+            // Build() can now run from PanelCanvasTransform/IsHeadLocked before
+            // this component has ever been enabled.
+            canvasGo.SetActive(isActiveAndEnabled);
+        }
+
+        /// <summary>
+        /// Resolves the Transform to parent the Canvas to in HeadLocked mode:
+        /// <c>_headLockedCamera</c> if set, else <c>Camera.main</c>. Returns null
+        /// (with a single warning) if neither is available — the caller then
+        /// falls back to WorldFixed placement.
+        /// </summary>
+        private Transform ResolveHeadLockedCamera()
+        {
+            if (_headLockedCamera != null) return _headLockedCamera;
+
+            var mainCamera = Camera.main;
+            if (mainCamera != null) return mainCamera.transform;
+
+            Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: World Attach Mode is HeadLocked but no " +
+                "camera was found — assign \"Head Locked Camera\", or tag your camera MainCamera. " +
+                "Falling back to WorldFixed placement.", this);
+            return null;
         }
 
         private Text CreateStepperRow(Transform parent, string label, int row, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc,

@@ -369,6 +369,10 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier: Hapbeat.Runtime::Hapbeat.HapbeatAddressOverridePanel
   _space: 1
+  _worldAttachMode: 1
+  _headLockedCamera: {fileID: 200102}
+  _headLockedDistance: 1.5
+  _headLockedVerticalOffset: 0
   _worldSize: {x: 0.9, y: 0.5}
   _worldLocalPosition: {x: 0, y: 0, z: 0}
   _worldScale: 0.0018

@@ -49,7 +49,9 @@ namespace Hapbeat.Samples.VRConfigExample
     /// <see cref="HapbeatAddressOverridePanel.ActivateFocused"/>, i.e. "press"
     /// whichever button currently has focus. Keyboard: Enter/Space.</item>
     /// <item>Stick click (either hand) — <see cref="Recenter"/> the panel + guide
-    /// in front of the camera. Keyboard: R.</item>
+    /// in front of the camera. Keyboard: R. Only meaningful when the panel's
+    /// World Attach Mode is WorldFixed — the default is HeadLocked, where the
+    /// panel is always centered in view and this is a logged no-op.</item>
     /// <item>Left-hand Menu button / Keyboard Esc — <see cref="ExitToScene"/>
     /// directly (in addition to the panel's own Exit button, reachable via the
     /// focus grid). <b>Not</b> bound to the right controller: on Quest, the
@@ -202,9 +204,15 @@ namespace Hapbeat.Samples.VRConfigExample
         // runtime, so it never causes a layout shift.
         private const string GuideActionsText = "Stick: move / Trigger or A: press";
 
-        // Guide canvas transform, kept relative to _panel (see BuildGuideText /
-        // RepositionGuideRelativeToPanel) so Recenter() can move both together.
+        // Guide canvas transform. Parented alongside the panel's own Canvas (see
+        // AttachGuideToPanelAnchor) so it inherits the same anchoring — with the
+        // panel head-locked by default, that means both are children of the
+        // camera Transform and move as one.
         private Transform _guideCanvasTransform;
+
+        // Guide canvas offset below the panel, in meters, in the shared parent's
+        // local space (see AttachGuideToPanelAnchor).
+        private const float GuideBelowPanelMeters = -0.5f;
 
         private void OnEnable()
         {
@@ -234,10 +242,15 @@ namespace Hapbeat.Samples.VRConfigExample
                 _panel.ShowFocusHighlight();
             }
 
-            // Startup recenter — puts the panel/guide in front of wherever the
-            // headset happens to be looking the moment this scene loads, rather
-            // than at a fixed world position that may be behind the wearer.
-            Recenter();
+            // Deliberately NO startup Recenter() here. The panel defaults to
+            // HeadLocked (its Canvas is a child of the camera Transform), so it
+            // is centered in view by construction — and a startup recenter was
+            // actively harmful: OnEnable runs before XR tracking is established,
+            // so the camera is still at its authored scene position and the panel
+            // was placed relative to that, ending up well off to the lower-left
+            // of where the wearer actually was. Recenter() remains bound to stick
+            // click / R for WorldFixed setups, where it is still meaningful.
+            AttachGuideToPanelAnchor();
 
             _diagnosticTimer = 0f;
             PollControllerDiagnostics(); // don't wait a full second for the first reading
@@ -553,16 +566,31 @@ namespace Hapbeat.Samples.VRConfigExample
 
         /// <summary>
         /// Moves the Address Override panel (and the guide text, which follows
-        /// it — see <see cref="RepositionGuideRelativeToPanel"/>) to
+        /// it — see <see cref="AttachGuideToPanelAnchor"/>) to
         /// <see cref="RecenterDistanceMeters"/> in front of the camera, at the
         /// camera's current eye height, facing the camera's yaw only (pitch/roll
         /// ignored so the panel never tips when the wearer looks up/down).
-        /// Called once at startup (<see cref="OnEnable"/>) and on every
-        /// stick-click / Keyboard R afterwards.
+        /// Bound to stick-click / Keyboard R.
+        ///
+        /// <para>
+        /// <b>No-op while the panel is head-locked</b> (its default — see
+        /// <see cref="HapbeatAddressOverridePanel.IsHeadLocked"/>): the panel's
+        /// Canvas is a child of the camera Transform there, so it is already
+        /// centered in view and moving this rig's Transform would do nothing.
+        /// Only meaningful for WorldFixed panels.
+        /// </para>
         /// </summary>
         public void Recenter()
         {
             if (_cameraTransform == null || _panel == null) return;
+
+            if (_panel.IsHeadLocked)
+            {
+                Debug.Log("[Hapbeat] VRConfigExampleController: recenter ignored — the panel is head-locked " +
+                    "(always centered in view). Set the panel's World Attach Mode to WorldFixed if you want " +
+                    "a recenterable, world-anchored panel instead.");
+                return;
+            }
 
             Vector3 camPos = _cameraTransform.position;
             Vector3 fwd = _cameraTransform.forward;
@@ -579,7 +607,6 @@ namespace Hapbeat.Samples.VRConfigExample
             Quaternion targetRot = Quaternion.LookRotation(fwd, Vector3.up);
 
             _panel.transform.SetPositionAndRotation(targetPos, targetRot);
-            RepositionGuideRelativeToPanel();
         }
 
         // ---------------------------------------------------------------
@@ -647,20 +674,10 @@ namespace Hapbeat.Samples.VRConfigExample
 
             _guideCanvasTransform = canvasGo.transform;
 
-            // Anchor just below the Address Override panel so both stay
-            // legible together in-headset; fall back to a spot in front of
-            // this rig if no panel is wired. Recenter() re-applies this same
-            // relative offset (RepositionGuideRelativeToPanel) whenever the
-            // panel moves, so this initial placement is superseded by the
-            // startup Recenter() call in OnEnable when a panel is wired.
-            if (_panel != null)
-            {
-                RepositionGuideRelativeToPanel();
-            }
-            else
-            {
-                canvasGo.transform.localPosition = new Vector3(0f, 1.0f, 1.5f);
-            }
+            // Fallback placement (in front of this rig) for when no panel is
+            // wired. With a panel wired, AttachGuideToPanelAnchor() re-parents
+            // this canvas next to the panel's own Canvas and supersedes this.
+            canvasGo.transform.localPosition = new Vector3(0f, 1.0f, 1.5f);
 
             var bg = new GameObject("Background", typeof(RectTransform));
             bg.transform.SetParent(canvasGo.transform, false);
@@ -697,16 +714,34 @@ namespace Hapbeat.Samples.VRConfigExample
         }
 
         /// <summary>
-        /// Keeps the guide canvas positioned just below the panel, matching its
-        /// rotation — the same relative offset <see cref="BuildGuideText"/> used
-        /// to set up once. Re-applied by <see cref="Recenter"/> every time the
-        /// panel moves so the two always travel together.
+        /// Parents the guide canvas to the SAME Transform the panel parented its
+        /// own Canvas to (the head-lock camera by default — see
+        /// <see cref="HapbeatAddressOverridePanel.PanelCanvasTransform"/>), at the
+        /// panel's local pose offset down by <see cref="GuideBelowPanelMeters"/>.
+        ///
+        /// <para>
+        /// Parenting, not per-frame following: a guide canvas whose pose is
+        /// rewritten every frame is sampled at a different point in the frame
+        /// than the XR compositor's reprojection pass and visibly micro-jitters
+        /// against the head-locked panel right above it. Sharing the panel's
+        /// parent makes the two rigidly co-moving by construction. Called once
+        /// from <see cref="OnEnable"/>; nothing re-applies it per frame.
+        /// </para>
         /// </summary>
-        private void RepositionGuideRelativeToPanel()
+        private void AttachGuideToPanelAnchor()
         {
             if (_guideCanvasTransform == null || _panel == null) return;
-            _guideCanvasTransform.position = _panel.transform.position + new Vector3(0f, -0.5f, 0f);
-            _guideCanvasTransform.rotation = _panel.transform.rotation;
+
+            Transform panelCanvas = _panel.PanelCanvasTransform;
+            if (panelCanvas == null) return; // panel built no canvas — keep the fallback placement
+
+            // worldPositionStays: false — the guide canvas keeps its own
+            // localScale (its UI-pixel-to-meter scale, see BuildGuideText),
+            // which a world-preserving re-parent would rewrite.
+            _guideCanvasTransform.SetParent(panelCanvas.parent, false);
+            _guideCanvasTransform.localPosition =
+                panelCanvas.localPosition + new Vector3(0f, GuideBelowPanelMeters, 0f);
+            _guideCanvasTransform.localRotation = panelCanvas.localRotation;
         }
 
         // ---------------------------------------------------------------
