@@ -323,12 +323,28 @@ namespace Hapbeat
         private float _compositionLayerWaitDeadline;
 
         // How long to wait for a layer provider before giving up (seconds, unscaled).
-        private const float CompositionLayerWaitSeconds = 2f;
+        // Generous on purpose: the provider is only assigned when the XR session begins,
+        // and over a link connection (Air Link / Link) that can take several seconds after
+        // the scene has loaded. Giving up early would report a configuration problem for
+        // what is only a slow handshake.
+        private const float CompositionLayerWaitSeconds = 10f;
 
         // Non-null once the panel is actually being composited as a quad layer. All
         // Composition Layers API usage lives behind this type — see
         // HapbeatPanelCompositionLayerSurface.
         private HapbeatPanelCompositionLayerSurface _compositionSurface;
+
+        // Whether the surface is currently capturing. Goes false if the provider disappears
+        // mid-run (an XR session end clears it — an ordinary headset doff does that), and
+        // back to true when the next session begins, so the panel stays visible throughout.
+        private bool _compositionLayerEngaged;
+
+        // Texture-less layer held from build time so that a CompositionLayerManager instance
+        // exists when the XR session begins — without it the OpenXR feature never hands the
+        // manager a layer provider and no layer created later is ever composited. See
+        // HapbeatPanelCompositionLayerSurface.CreateManagerKeepAlive for the full reasoning.
+        // Destroyed once the real layer takes over that role (or when we give up).
+        private GameObject _compositionLayerKeepAlive;
 #endif
 
         // Translation counterpart of _followDeadzoneDegrees: the wearer can walk
@@ -528,6 +544,7 @@ namespace Hapbeat
                 _compositionSurface.Dispose();
                 _compositionSurface = null;
             }
+            DestroyCompositionLayerKeepAlive();
 #endif
         }
 
@@ -571,11 +588,21 @@ namespace Hapbeat
                 {
                     _compositionLayerPending = true;
                     _compositionLayerWaitDeadline = Time.unscaledTime + CompositionLayerWaitSeconds;
+
+                    // Must happen HERE, not when the provider shows up: the provider is only
+                    // assigned at XR session begin, and only if a composition layer manager
+                    // is alive at that instant. The manager shuts itself down whenever no
+                    // layer exists, which is the state of every scene that (like this one)
+                    // would otherwise create its first layer on demand — so waiting for a
+                    // provider without holding a layer waits forever.
+                    _compositionLayerKeepAlive = HapbeatPanelCompositionLayerSurface.CreateManagerKeepAlive();
                 }
                 // followCamera == null: ResolveFollowCamera already warned, and without a
                 // camera there is no view to fix the layer to — WorldFixed placement stands.
 #else
-                WarnCompositionLayerFallback("the com.unity.xr.compositionlayers package is not installed");
+                WarnCompositionLayerFallback("this build was compiled without the com.unity.xr.compositionlayers " +
+                    "package (HAPBEAT_HAS_COMPOSITION_LAYERS is not defined), so the composition layer code is not " +
+                    "part of it — install the package to enable this mode");
 #endif
             }
 
@@ -822,12 +849,40 @@ namespace Hapbeat
 
             if (_compositionSurface != null)
             {
-                // Hard follow: the layer is composited after reprojection, so there is no
-                // TimeWarp swim to avoid and therefore no reason to hold it world-static —
-                // the deadzone/smoothing that LazyFollow needs would only read as lag here.
-                GetCompositionLayerPose(out Vector3 layerPos, out Quaternion layerRot);
-                _compositionSurface.SetPose(layerPos, layerRot);
-                return;
+                // The provider is live state, not a one-shot: OnSessionEnd clears it (a plain
+                // headset doff does that) and the next OnSessionBegin restores it. Suspend the
+                // capture while it is gone so the panel falls back to the eye buffer instead of
+                // going blank, and resume when it returns.
+                bool providerLive = HapbeatPanelCompositionLayerSurface.ProviderAvailable;
+                if (providerLive != _compositionLayerEngaged)
+                {
+                    _compositionLayerEngaged = providerLive;
+                    _compositionSurface.SetCaptureEngaged(providerLive);
+                    if (providerLive)
+                    {
+                        Debug.Log("[Hapbeat] HapbeatAddressOverridePanel: XR composition layer provider is back — " +
+                            "resuming composition layer rendering.", this);
+                    }
+                    else
+                    {
+                        // Re-place the Canvas in front of the wearer on the first eye-buffer
+                        // frame instead of easing in from the park position.
+                        _followSnapPending = true;
+                        Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: the XR composition layer provider " +
+                            "went away (the XR session ended — e.g. the headset was taken off). Rendering the panel " +
+                            "in the eye buffer until it returns.", this);
+                    }
+                }
+
+                if (_compositionLayerEngaged)
+                {
+                    // Hard follow: the layer is composited after reprojection, so there is no
+                    // TimeWarp swim to avoid and therefore no reason to hold it world-static —
+                    // the deadzone/smoothing that LazyFollow needs would only read as lag here.
+                    GetCompositionLayerPose(out Vector3 layerPos, out Quaternion layerRot);
+                    _compositionSurface.SetPose(layerPos, layerRot);
+                    return;
+                }
             }
 #endif
 
@@ -838,9 +893,9 @@ namespace Hapbeat
         /// <summary>
         /// Switches the panel over to a quad composition layer once a layer provider is
         /// running. Until then the panel keeps rendering as a LazyFollow Canvas, so a slow
-        /// XR startup never leaves a blank spot in the view. Gives up (one warning, stays
-        /// LazyFollow) after <see cref="CompositionLayerWaitSeconds"/> — the normal cause is
-        /// the OpenXR <c>Composition Layers</c> feature being disabled in the project.
+        /// XR startup never leaves a blank spot in the view. Gives up (one warning naming
+        /// which of the two failure modes was observed, stays LazyFollow) after
+        /// <see cref="CompositionLayerWaitSeconds"/>.
         /// </summary>
         private void TryPromoteToCompositionLayer()
         {
@@ -849,9 +904,19 @@ namespace Hapbeat
                 if (Time.unscaledTime < _compositionLayerWaitDeadline) return;
 
                 _compositionLayerPending = false;
-                WarnCompositionLayerFallback("no XR composition layer provider became available — enable " +
-                    "\"Composition Layers\" under Project Settings > XR Plug-in Management > OpenXR for the " +
-                    "target platform");
+                DestroyCompositionLayerKeepAlive();
+
+                // Two genuinely different failures, and telling a user to "enable the feature"
+                // when it is already enabled only sends them in circles — so name what was
+                // actually observed.
+                WarnCompositionLayerFallback(HapbeatPanelCompositionLayerSurface.ManagerAlive
+                    ? "the XR composition layer manager is running but no layer provider was ever assigned to it. " +
+                      "The OpenXR \"Composition Layers\" feature assigns one only once, when the XR session begins " +
+                      "— so this means either the feature is disabled for this platform under Project Settings > " +
+                      "XR Plug-in Management > OpenXR, or the XR session had already begun (and its one chance to " +
+                      "assign a provider had passed) before this panel existed"
+                    : "the XR composition layer manager is not running, so the OpenXR feature had nothing to assign " +
+                      "a layer provider to when the session began");
                 return;
             }
 
@@ -861,20 +926,36 @@ namespace Hapbeat
             var surface = HapbeatPanelCompositionLayerSurface.TryCreate(canvas, _worldSize, _worldPixelDensity, _worldScale);
             if (surface == null)
             {
+                DestroyCompositionLayerKeepAlive();
                 WarnCompositionLayerFallback("the composition layer could not be created");
                 return;
             }
 
             _compositionSurface = surface;
+            _compositionLayerEngaged = true;
             _compositionSurface.SetActive(isActiveAndEnabled);
+
+            // The real layer now keeps the manager alive on its own.
+            DestroyCompositionLayerKeepAlive();
+
+            Debug.Log("[Hapbeat] HapbeatAddressOverridePanel: rendering as an OpenXR quad composition layer " +
+                $"({surface.Describe()}).", this);
+        }
+
+        private void DestroyCompositionLayerKeepAlive()
+        {
+            if (_compositionLayerKeepAlive == null) return;
+            Destroy(_compositionLayerKeepAlive);
+            _compositionLayerKeepAlive = null;
         }
 
         /// <summary>
         /// Head-fixed pose for the composition layer: <c>_followDistance</c> straight down
         /// the gaze, offset by <c>_followVerticalOffset</c> along the camera's own up axis
         /// (not world up — a view-fixed panel must keep the same screen position when the
-        /// wearer looks up or down), and facing the camera with pitch included but roll
-        /// dropped, so it stays level with the horizon rather than rolling with the head.
+        /// wearer looks up or down), and squarely facing the camera position (see
+        /// <see cref="ComputeLookAtRotation"/>) so the vertical offset does not leave it
+        /// tilted away from the wearer.
         /// </summary>
         private void GetCompositionLayerPose(out Vector3 position, out Quaternion rotation)
         {
@@ -892,9 +973,32 @@ namespace Hapbeat
             up.Normalize();
 
             position = cam.position + gaze * Mathf.Max(0.01f, _followDistance) + up * _followVerticalOffset;
-            rotation = Quaternion.LookRotation(gaze, up);
+            rotation = ComputeLookAtRotation(position, cam.position, Quaternion.LookRotation(gaze, up));
         }
 #endif
+
+        /// <summary>
+        /// Rotation that makes a panel at <paramref name="panelPosition"/> face
+        /// <paramref name="cameraPosition"/> squarely: the Canvas's forward (+Z, its
+        /// back face) points along camera→panel, so the readable side points at the
+        /// camera. <c>up</c> is world up, so the panel never rolls however the wearer
+        /// tilts their head, but it does pitch — which is the whole point: a panel
+        /// placed above or below eye level would otherwise present an oblique face.
+        ///
+        /// <para>
+        /// Falls back to <paramref name="fallback"/> when the direction degenerates —
+        /// zero length (camera standing on the panel) or near-vertical, where world up
+        /// is no longer a usable reference for <see cref="Quaternion.LookRotation"/>.
+        /// </para>
+        /// </summary>
+        private static Quaternion ComputeLookAtRotation(Vector3 panelPosition, Vector3 cameraPosition, Quaternion fallback)
+        {
+            Vector3 forward = panelPosition - cameraPosition;
+            if (forward.sqrMagnitude < 1e-8f) return fallback;
+            forward.Normalize();
+            if (Mathf.Abs(Vector3.Dot(forward, Vector3.up)) > 0.999f) return fallback;
+            return Quaternion.LookRotation(forward, Vector3.up);
+        }
 
         /// <summary>
         /// One warning per panel instance explaining why
@@ -981,9 +1085,18 @@ namespace Hapbeat
         /// raised by <c>_followVerticalOffset</c>.
         ///
         /// <para>
-        /// The panel's <i>orientation</i> still uses yaw only, so it stays level
-        /// (upright, never tipped) however the wearer tilts their head. Position
-        /// follows the gaze; rotation stays horizon-aligned.
+        /// The panel's <i>orientation</i> squarely faces the camera <i>position</i>
+        /// (see <see cref="ComputeLookAtRotation"/>) rather than merely matching the
+        /// view's yaw: with a vertical offset — or a wearer standing higher or lower
+        /// than the panel — a yaw-only heading leaves the panel facing past them
+        /// instead of at them. Roll is always zero (world up), so the panel never
+        /// tips however the wearer tilts their head; only its pitch tracks them.
+        /// </para>
+        ///
+        /// <para>
+        /// This is the <i>target</i> pose only. Whether it is applied at all is still
+        /// governed by the deadzone in <see cref="UpdateLazyFollow"/> — a panel resting
+        /// inside the deadzone stays byte-for-byte world-static, rotation included.
         /// </para>
         /// </summary>
         private void GetFollowTarget(out Vector3 position, out Quaternion rotation)
@@ -996,20 +1109,10 @@ namespace Hapbeat
             gaze.Normalize();
             position = cam.position + gaze * Mathf.Max(0.01f, _followDistance) + Vector3.up * _followVerticalOffset;
 
-            // Orientation: yaw only, so the panel never tips with head pitch/roll.
-            Vector3 fwd = gaze;
-            fwd.y = 0f;
-            if (fwd.sqrMagnitude < 1e-6f)
-            {
-                // Looking straight up/down — the gaze carries no yaw. Hold the
-                // panel's current heading rather than snapping to an arbitrary
-                // one (the wearer looking at their feet must not spin it).
-                fwd = _canvasGo.transform.forward;
-                fwd.y = 0f;
-                if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
-            }
-            fwd.Normalize();
-            rotation = Quaternion.LookRotation(fwd, Vector3.up);
+            // Orientation: look at the camera. Degenerate cases (the wearer standing on
+            // the panel, or it being directly overhead/underfoot) hold the panel's current
+            // heading rather than snapping it to an arbitrary one.
+            rotation = ComputeLookAtRotation(position, cam.position, _canvasGo.transform.rotation);
         }
 
         /// <summary>

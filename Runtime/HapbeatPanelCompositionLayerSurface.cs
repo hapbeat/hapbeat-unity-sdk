@@ -1,4 +1,5 @@
 #if HAPBEAT_HAS_COMPOSITION_LAYERS
+using System.Collections.Generic;
 using Unity.XR.CompositionLayers;
 using Unity.XR.CompositionLayers.Extensions;
 using Unity.XR.CompositionLayers.Layers;
@@ -38,6 +39,12 @@ namespace Hapbeat
     /// allows — by writing the layer GameObject's world pose from the camera pose every
     /// <c>LateUpdate</c> (see <see cref="SetPose"/>).
     /// </para>
+    ///
+    /// <para>
+    /// <b>Why a keep-alive layer is needed.</b> See <see cref="CreateManagerKeepAlive"/> —
+    /// the OpenXR side only ever hands the manager a layer provider once, at session begin,
+    /// and only if a manager instance happens to be alive at that exact moment.
+    /// </para>
     /// </summary>
     internal sealed class HapbeatPanelCompositionLayerSurface
     {
@@ -56,26 +63,51 @@ namespace Hapbeat
         private const int MinTextureSize = 64;
         private const int MaxTextureSize = 2048;
 
+        private readonly Canvas _canvas;
         private readonly GameObject _cameraGo;
         private readonly GameObject _layerGo;
         private readonly Camera _camera;
+        private readonly CompositionLayer _layer;
+
+        // Layer indices every object under the Canvas had before it was moved onto the UI
+        // layer for capture — restored whenever capture is suspended (see SetCaptureEngaged),
+        // so the panel goes back to rendering exactly as it did before.
+        private readonly GameObject[] _canvasObjects;
+        private readonly int[] _canvasOriginalLayers;
+
+        // Effective visibility is (panel enabled) AND (a provider is actually running):
+        // the panel toggles the first via SetActive, the second via SetCaptureEngaged.
+        private bool _panelActive = true;
+        private bool _captureEngaged = true;
+
         private RenderTexture _renderTexture;
 
-        private HapbeatPanelCompositionLayerSurface(GameObject cameraGo, Camera camera, GameObject layerGo, RenderTexture renderTexture)
+        private HapbeatPanelCompositionLayerSurface(
+            Canvas canvas, GameObject cameraGo, Camera camera, GameObject layerGo, CompositionLayer layer,
+            RenderTexture renderTexture, GameObject[] canvasObjects, int[] canvasOriginalLayers)
         {
+            _canvas = canvas;
             _cameraGo = cameraGo;
             _camera = camera;
             _layerGo = layerGo;
+            _layer = layer;
             _renderTexture = renderTexture;
+            _canvasObjects = canvasObjects;
+            _canvasOriginalLayers = canvasOriginalLayers;
         }
 
         /// <summary>
         /// True once a composition layer provider is actually running — i.e. the OpenXR
-        /// <c>Composition Layers</c> feature is enabled and its subsystem has started
-        /// (<c>OpenXRCompositionLayersFeature</c> assigns
-        /// <see cref="CompositionLayerManager.LayerProvider"/> on subsystem start). False
-        /// means submitting a layer would render nothing, so the caller should keep using
-        /// its in-eye-buffer fallback.
+        /// <c>Composition Layers</c> feature is enabled, the XR session has begun, and a
+        /// manager instance existed at that moment (see <see cref="CreateManagerKeepAlive"/>).
+        /// False means submitting a layer would render nothing, so the caller should keep
+        /// using its in-eye-buffer fallback.
+        ///
+        /// <para>
+        /// Note this can go false again mid-run: <c>OpenXRCompositionLayersFeature.OnSessionEnd</c>
+        /// clears the provider, which happens on an ordinary headset doff, and restores it on
+        /// the next session begin. Callers must treat it as a live signal, not a one-shot.
+        /// </para>
         /// </summary>
         public static bool ProviderAvailable
         {
@@ -84,6 +116,51 @@ namespace Hapbeat
                 var manager = CompositionLayerManager.Instance;
                 return manager != null && manager.LayerProvider != null;
             }
+        }
+
+        /// <summary>
+        /// True while a <c>CompositionLayerManager</c> instance exists. Purely diagnostic:
+        /// it separates "the manager isn't even running" from "the manager is running but
+        /// nobody gave it a provider" in the panel's fallback warning.
+        /// </summary>
+        public static bool ManagerAlive => CompositionLayerManager.Instance != null;
+
+        /// <summary>
+        /// Creates a texture-less quad layer whose only job is to keep a
+        /// <c>CompositionLayerManager</c> instance alive, and returns its GameObject so the
+        /// caller can destroy it once a real layer exists.
+        ///
+        /// <para>
+        /// <b>Why.</b> <c>OpenXRCompositionLayersFeature</c> assigns the layer provider in
+        /// exactly one place — <c>OnSessionBegin</c> — and it does so only
+        /// <c>if (CompositionLayerManager.Instance != null)</c>. The manager, in turn, stops
+        /// itself (<c>StopCompositionLayerManager</c>) as soon as an update finds no active
+        /// and no known layers, and once stopped its <c>Instance</c> property returns null
+        /// until something creates a layer again. So in a scene that contains no composition
+        /// layer at startup — which is every scene that only creates one on demand, like this
+        /// panel — the manager is already stopped when the session begins, the feature
+        /// silently skips the assignment, and no layer created later will ever be composited,
+        /// no matter how long the panel waits for a provider. Holding one enabled layer from
+        /// the moment the panel is built keeps the manager alive across session begin (and
+        /// across the end/begin cycle of a headset doff) so the assignment actually happens.
+        /// </para>
+        ///
+        /// <para>
+        /// The keep-alive carries no <see cref="TexturesExtension"/>, so
+        /// <c>OpenXRQuadLayer.CreateSwapchain</c> returns false for it and nothing is
+        /// allocated or drawn — it only occupies a layer order slot.
+        /// </para>
+        /// </summary>
+        public static GameObject CreateManagerKeepAlive()
+        {
+            var go = new GameObject("HapbeatCompositionLayerKeepAlive");
+            go.SetActive(false);
+            var layer = go.AddComponent<CompositionLayer>();
+            layer.ChangeLayerDataType<QuadLayerData>();
+            if (layer.LayerData is QuadLayerData quad)
+                quad.Size = Vector2.zero;
+            go.SetActive(true);
+            return go;
         }
 
         /// <summary>
@@ -117,18 +194,25 @@ namespace Hapbeat
             };
             renderTexture.Create();
 
-            // Park the Canvas. Everything under it moves to the UI layer so the capture
-            // camera's culling mask can be narrowed to just this content.
-            canvas.transform.SetPositionAndRotation(k_ParkPosition, Quaternion.identity);
             int uiLayer = LayerMask.NameToLayer("UI");
             if (uiLayer < 0) uiLayer = 5; // built-in UI layer index; NameToLayer only fails if it was renamed
-            SetLayerRecursively(canvas.gameObject, uiLayer);
+
+            // Snapshot the Canvas's layer assignment before touching it, so suspending
+            // capture (provider lost) can put the panel back exactly as it was.
+            var canvasObjects = new List<GameObject>();
+            CollectRecursively(canvas.gameObject, canvasObjects);
+            var originalLayers = new int[canvasObjects.Count];
+            for (int i = 0; i < canvasObjects.Count; i++)
+                originalLayers[i] = canvasObjects[i].layer;
 
             // Capture camera: orthographic, framed exactly on the panel rect, clearing to
             // fully transparent so the quad's alpha comes from the panel's own graphics.
+            // Placed on the +Z side looking back down -Z, because a Canvas faces its own +Z:
+            // viewing it from -Z would capture its back and mirror every glyph.
             var cameraGo = new GameObject("HapbeatAddressOverrideLayerCamera");
             cameraGo.transform.SetPositionAndRotation(
-                k_ParkPosition - Vector3.forward * CaptureCameraDistance, Quaternion.identity);
+                k_ParkPosition + Vector3.forward * CaptureCameraDistance,
+                Quaternion.LookRotation(-Vector3.forward, Vector3.up));
             var camera = cameraGo.AddComponent<Camera>();
             camera.orthographic = true;
             camera.orthographicSize = height * 0.5f;
@@ -176,7 +260,20 @@ namespace Hapbeat
 
             layerGo.SetActive(true);
 
-            return new HapbeatPanelCompositionLayerSurface(cameraGo, camera, layerGo, renderTexture);
+            var surface = new HapbeatPanelCompositionLayerSurface(
+                canvas, cameraGo, camera, layerGo, compositionLayer, renderTexture,
+                canvasObjects.ToArray(), originalLayers);
+            surface.ParkCanvas(uiLayer);
+            return surface;
+        }
+
+        /// <summary>One-line description of what was actually created, for the success log.</summary>
+        public string Describe()
+        {
+            int w = _renderTexture != null ? _renderTexture.width : 0;
+            int h = _renderTexture != null ? _renderTexture.height : 0;
+            int order = _layer != null ? _layer.Order : 0;
+            return $"{w}x{h} RenderTexture, layer order {order}";
         }
 
         /// <summary>
@@ -193,18 +290,72 @@ namespace Hapbeat
         /// <summary>Shows/hides the layer and stops/starts the capture camera with it.</summary>
         public void SetActive(bool active)
         {
-            if (_layerGo != null) _layerGo.SetActive(active);
-            if (_camera != null) _camera.enabled = active;
+            _panelActive = active;
+            ApplyVisibility();
+        }
+
+        /// <summary>
+        /// Engages or suspends the capture. Suspending un-parks the Canvas and restores its
+        /// original layers so the panel renders in the eye buffer again — used when the
+        /// provider disappears mid-run (an XR session end clears it), so a headset doff
+        /// leaves the panel visible instead of blank.
+        /// </summary>
+        public void SetCaptureEngaged(bool engaged)
+        {
+            if (_captureEngaged == engaged) return;
+            _captureEngaged = engaged;
+
+            if (engaged)
+            {
+                int uiLayer = LayerMask.NameToLayer("UI");
+                if (uiLayer < 0) uiLayer = 5;
+                ParkCanvas(uiLayer);
+            }
+            else
+            {
+                RestoreCanvasLayers();
+            }
+
+            ApplyVisibility();
         }
 
         /// <summary>Destroys the capture camera, the layer GameObject and the RenderTexture.</summary>
         public void Dispose()
         {
+            RestoreCanvasLayers();
             if (_camera != null) _camera.targetTexture = null;
             if (_layerGo != null) Object.Destroy(_layerGo);
             if (_cameraGo != null) Object.Destroy(_cameraGo);
             ReleaseTexture(_renderTexture);
             _renderTexture = null;
+        }
+
+        private void ApplyVisibility()
+        {
+            bool visible = _panelActive && _captureEngaged;
+            if (_layerGo != null) _layerGo.SetActive(visible);
+            if (_camera != null) _camera.enabled = visible;
+        }
+
+        private void ParkCanvas(int uiLayer)
+        {
+            if (_canvas == null) return;
+            _canvas.transform.SetPositionAndRotation(k_ParkPosition, Quaternion.identity);
+            for (int i = 0; i < _canvasObjects.Length; i++)
+            {
+                if (_canvasObjects[i] != null)
+                    _canvasObjects[i].layer = uiLayer;
+            }
+        }
+
+        private void RestoreCanvasLayers()
+        {
+            if (_canvasObjects == null) return;
+            for (int i = 0; i < _canvasObjects.Length; i++)
+            {
+                if (_canvasObjects[i] != null)
+                    _canvasObjects[i].layer = _canvasOriginalLayers[i];
+            }
         }
 
         private static void ReleaseTexture(RenderTexture renderTexture)
@@ -214,11 +365,11 @@ namespace Hapbeat
             Object.Destroy(renderTexture);
         }
 
-        private static void SetLayerRecursively(GameObject go, int layer)
+        private static void CollectRecursively(GameObject go, List<GameObject> into)
         {
-            go.layer = layer;
+            into.Add(go);
             for (int i = 0; i < go.transform.childCount; i++)
-                SetLayerRecursively(go.transform.GetChild(i).gameObject, layer);
+                CollectRecursively(go.transform.GetChild(i).gameObject, into);
         }
     }
 }
