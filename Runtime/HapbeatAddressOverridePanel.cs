@@ -153,6 +153,11 @@ namespace Hapbeat
         [SerializeField]
         private float _worldScale = 0.001f;
 
+        [Tooltip("World-space text sharpness (dynamic pixels per unit). Higher renders glyphs at a higher resolution for the same physical size — raise it if text looks soft in a headset, lower it to save font atlas memory. Ignored in ScreenSpaceOverlay.")]
+        [SerializeField]
+        [Range(1f, 8f)]
+        private float _worldPixelDensity = 3f;
+
         private int _editingPlayer = -1;
         private int _editingGroup = -1;
 
@@ -311,6 +316,18 @@ namespace Hapbeat
                 canvasRt.sizeDelta = new Vector2(_worldSize.x / scale, _worldSize.y / scale);
                 canvasGo.transform.localPosition = _worldLocalPosition;
                 canvasGo.transform.localScale = Vector3.one * scale;
+                // Text on a world-space canvas is rasterized at the canvas's own
+                // pixel density, then scaled into world units — at the default 1
+                // px/unit the glyphs end up soft once the panel is a metre or two
+                // away in a headset (an editor Game view hides this because it
+                // renders at desktop resolution). Raising the dynamic density
+                // makes the font atlas render at a higher resolution for the same
+                // physical size; it costs atlas memory, not draw calls.
+                canvas.referencePixelsPerUnit = 100f;
+                var scaler = canvasGo.AddComponent<CanvasScaler>();
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ConstantPixelSize;
+                scaler.dynamicPixelsPerUnit = _worldPixelDensity;
+                scaler.referencePixelsPerUnit = 100f;
             }
             else
             {
