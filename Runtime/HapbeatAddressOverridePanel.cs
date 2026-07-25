@@ -740,7 +740,7 @@ namespace Hapbeat
 
             if (!_followEngaged)
             {
-                if (YawErrorDegrees(cam.position, canvas.position, targetPos) <= deadzone &&
+                if (ViewAngleErrorDegrees(cam.position, canvas.position, targetPos) <= deadzone &&
                     Vector3.Distance(canvas.position, targetPos) <= FollowPositionDeadzoneMeters)
                     return;
 
@@ -756,7 +756,7 @@ namespace Hapbeat
             float rotT = 1f - Mathf.Exp(-deltaTime / smooth);
             canvas.SetPositionAndRotation(nextPos, Quaternion.Slerp(canvas.rotation, targetRot, rotT));
 
-            if (YawErrorDegrees(cam.position, canvas.position, targetPos) <= deadzone * FollowReleaseAngleFraction &&
+            if (ViewAngleErrorDegrees(cam.position, canvas.position, targetPos) <= deadzone * FollowReleaseAngleFraction &&
                 Vector3.Distance(canvas.position, targetPos) <= FollowReleasePositionMeters)
             {
                 _followEngaged = false;
@@ -774,28 +774,40 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Resting pose for the panel: <c>_followDistance</c> ahead of the camera
-        /// along its <b>yaw only</b> (pitch/roll dropped, so the panel stays level
-        /// and at eye height however the wearer tilts their head), raised by
-        /// <c>_followVerticalOffset</c>, facing back along that same yaw.
+        /// Resting pose for the panel: <c>_followDistance</c> along the camera's
+        /// full gaze direction — <b>including pitch</b>, so looking up or down
+        /// brings the panel with you rather than leaving it at eye height —
+        /// raised by <c>_followVerticalOffset</c>.
+        ///
+        /// <para>
+        /// The panel's <i>orientation</i> still uses yaw only, so it stays level
+        /// (upright, never tipped) however the wearer tilts their head. Position
+        /// follows the gaze; rotation stays horizon-aligned.
+        /// </para>
         /// </summary>
         private void GetFollowTarget(out Vector3 position, out Quaternion rotation)
         {
             Transform cam = _followCameraResolved;
-            Vector3 fwd = cam.forward;
+
+            // Position: full gaze direction (pitch included).
+            Vector3 gaze = cam.forward;
+            if (gaze.sqrMagnitude < 1e-6f) gaze = Vector3.forward;
+            gaze.Normalize();
+            position = cam.position + gaze * Mathf.Max(0.01f, _followDistance) + Vector3.up * _followVerticalOffset;
+
+            // Orientation: yaw only, so the panel never tips with head pitch/roll.
+            Vector3 fwd = gaze;
             fwd.y = 0f;
             if (fwd.sqrMagnitude < 1e-6f)
             {
-                // Camera pointing straight up/down — its forward carries no yaw.
-                // Hold the panel's current heading rather than snapping to an
-                // arbitrary one (the wearer looking at their feet must not spin it).
+                // Looking straight up/down — the gaze carries no yaw. Hold the
+                // panel's current heading rather than snapping to an arbitrary
+                // one (the wearer looking at their feet must not spin it).
                 fwd = _canvasGo.transform.forward;
                 fwd.y = 0f;
                 if (fwd.sqrMagnitude < 1e-6f) fwd = Vector3.forward;
             }
             fwd.Normalize();
-
-            position = cam.position + fwd * Mathf.Max(0.01f, _followDistance) + Vector3.up * _followVerticalOffset;
             rotation = Quaternion.LookRotation(fwd, Vector3.up);
         }
 
@@ -806,12 +818,16 @@ namespace Hapbeat
         /// either direction degenerates, e.g. the camera is standing exactly on the
         /// panel's own position.
         /// </summary>
-        private static float YawErrorDegrees(Vector3 cameraPos, Vector3 currentPos, Vector3 targetPos)
+        /// <summary>
+        /// Angle between "where the panel is" and "where it wants to be", as seen
+        /// from the camera — the full 3D angle, not just yaw, because the follow
+        /// target tracks pitch too (see <see cref="GetFollowTarget"/>). Measuring
+        /// yaw alone would leave looking up/down undetected by the deadzone.
+        /// </summary>
+        private static float ViewAngleErrorDegrees(Vector3 cameraPos, Vector3 currentPos, Vector3 targetPos)
         {
             Vector3 toCurrent = currentPos - cameraPos;
             Vector3 toTarget = targetPos - cameraPos;
-            toCurrent.y = 0f;
-            toTarget.y = 0f;
             if (toCurrent.sqrMagnitude < 1e-8f || toTarget.sqrMagnitude < 1e-8f) return 180f;
             return Vector3.Angle(toCurrent, toTarget);
         }
