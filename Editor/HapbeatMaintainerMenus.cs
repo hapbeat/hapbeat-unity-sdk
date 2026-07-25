@@ -35,6 +35,16 @@ namespace Hapbeat.Editor
     /// <c>Assets/HapbeatSDK/SDK_Samples/&lt;sample&gt;/</c> and let sync
     /// be the single source of truth into the package.
     /// </para>
+    ///
+    /// <para>
+    /// Exception — <c>Samples~/VRConfigExample/</c> is authored directly in
+    /// the package repo and has no <c>SDK_Samples/</c> counterpart, so it is
+    /// deliberately NOT covered by any sync menu here. Do not add one (there
+    /// is no source to sync from), and do not extend the wipe to it: a
+    /// "sync everything" convenience that deletes <c>Samples~/</c> wholesale
+    /// would destroy the only copy. Edit it in the package repo, or import it
+    /// into a project, edit, and copy the changed files back by hand.
+    /// </para>
     /// </summary>
     public static class HapbeatMaintainerMenus
     {
