@@ -331,6 +331,19 @@ namespace Hapbeat
         /// to <b>this Transform</b> and offset it in its local space, so it rides
         /// along with whatever pose the panel resolves (lazy-follow glide,
         /// WorldFixed placement) instead of re-deriving or re-following it.
+        ///
+        /// <para>
+        /// Can still return null, in exactly two cases — <see cref="Build"/> itself
+        /// has no early-return path that skips creating the Canvas, it assigns
+        /// <c>_canvasGo</c> before any of its optional branches:
+        /// (1) <see cref="OnDestroy"/> has already run and destroyed the Canvas;
+        /// (2) a previous <see cref="Build"/> call threw part-way through (which
+        /// leaves <c>_built</c> false, so the next access retries it — i.e. a
+        /// caller that retries recovers on its own).
+        /// Callers that depend on this Transform should therefore retry rather than
+        /// give up on the first null; see <c>VRConfigExampleController</c>'s
+        /// guide-attach retry.
+        /// </para>
         /// </summary>
         public Transform PanelCanvasTransform
         {

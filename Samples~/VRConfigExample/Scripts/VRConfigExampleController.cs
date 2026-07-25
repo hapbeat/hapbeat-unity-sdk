@@ -221,6 +221,20 @@ namespace Hapbeat.Samples.VRConfigExample
         // be a flat -0.5 m center offset, which left them visibly unrelated).
         private const float GuideGapMeters = 0.02f;
 
+        // --- Guide attach retry (see TryAttachGuideToPanel / LateUpdate) ---
+        // The attach can legitimately fail on the OnEnable pass — every one of its
+        // preconditions (the panel's Canvas existing, its RectTransform having a
+        // usable scale) depends on script execution order, which differs between
+        // the Editor and a standalone player build. So it isn't attempted once and
+        // abandoned: it retries every LateUpdate until it succeeds, and gives up
+        // (with the specific reason it kept failing for) after the budget below.
+        private const float GuideAttachRetryBudgetSeconds = 5f;
+        private bool _guideAttached;
+        private bool _guideAttachGaveUp;
+        private float _guideAttachElapsed;
+        private int _guideAttachAttempts;
+        private string _guideAttachLastFailure = "(not attempted)";
+
         private void OnEnable()
         {
             SetupHmdPoseDriver();
@@ -256,7 +270,16 @@ namespace Hapbeat.Samples.VRConfigExample
             // tracking is established, so the camera is still at its authored scene
             // position and the panel was placed relative to that, ending up well
             // off to the lower-left of where the wearer actually was.
-            AttachGuideToPanel();
+
+            // First attempt only — if any precondition isn't ready yet at this
+            // point in the enable order, LateUpdate keeps retrying (see the
+            // retry-state fields above).
+            _guideAttached = false;
+            _guideAttachGaveUp = false;
+            _guideAttachElapsed = 0f;
+            _guideAttachAttempts = 0;
+            _guideAttachLastFailure = "(not attempted)";
+            TryAttachGuideToPanel();
 
             _diagnosticTimer = 0f;
             PollControllerDiagnostics(); // don't wait a full second for the first reading
@@ -270,6 +293,32 @@ namespace Hapbeat.Samples.VRConfigExample
             if (_diagnosticTimer < DiagnosticRefreshIntervalSeconds) return;
             _diagnosticTimer = 0f;
             PollControllerDiagnostics();
+        }
+
+        /// <summary>
+        /// Drives the guide-attach retry. LateUpdate, not Update: the panel places
+        /// itself in LateUpdate, so retrying here keeps the attach in the same
+        /// phase as the pose it is attaching to, and a retry that succeeds takes
+        /// effect on the very frame it runs rather than one frame later.
+        /// Costs nothing once attached (a bool check).
+        /// </summary>
+        private void LateUpdate()
+        {
+            if (_guideAttached || _guideAttachGaveUp) return;
+
+            if (TryAttachGuideToPanel()) return;
+
+            _guideAttachElapsed += Time.unscaledDeltaTime;
+            if (_guideAttachElapsed < GuideAttachRetryBudgetSeconds) return;
+
+            // Budget exhausted. Report WHICH precondition kept failing — the whole
+            // point of the retry is that a platform-specific ordering difference
+            // can no longer hide as "the guide just doesn't follow".
+            _guideAttachGaveUp = true;
+            Debug.LogWarning("[Hapbeat] VRConfigExampleController: gave up parenting the guide text to the " +
+                $"panel after {_guideAttachAttempts} attempts over {GuideAttachRetryBudgetSeconds:0.#}s — " +
+                $"{_guideAttachLastFailure}. The guide stays at its fallback placement and will NOT follow " +
+                "the panel.", this);
         }
 
         private void OnDisable()
@@ -730,8 +779,18 @@ namespace Hapbeat.Samples.VRConfigExample
         /// Parenting, not per-frame following: this controller must not run a
         /// second follow of its own. As a child of the panel's Canvas the guide
         /// inherits the panel's lazy-follow motion exactly, so the two can never
-        /// drift or jitter against each other. Called from <see cref="OnEnable"/>;
-        /// nothing re-applies it per frame.
+        /// drift or jitter against each other. Called from <see cref="OnEnable"/>
+        /// and then re-attempted from <see cref="LateUpdate"/> until it succeeds
+        /// (see the retry-state fields); once parented, nothing re-applies it per
+        /// frame.
+        /// </para>
+        ///
+        /// <para>
+        /// Returns true once the guide is parented. Every failure path records a
+        /// human-readable reason in <c>_guideAttachLastFailure</c> instead of
+        /// returning silently — the preconditions depend on script execution
+        /// order, so which one blocks can differ between the Editor and a
+        /// standalone player, and the give-up warning has to be able to say which.
         /// </para>
         ///
         /// <para>
@@ -742,19 +801,30 @@ namespace Hapbeat.Samples.VRConfigExample
         /// <see cref="GuideCanvasScale"/> regardless of what the panel uses.
         /// </para>
         /// </summary>
-        private void AttachGuideToPanel()
+        private bool TryAttachGuideToPanel()
         {
-            if (_guideCanvasTransform == null || _panel == null) return;
+            _guideAttachAttempts++;
 
+            if (_guideCanvasTransform == null)
+                return FailGuideAttach("the guide canvas was not built (BuildGuideText did not run)");
+            if (_panel == null)
+                return FailGuideAttach("no Address Override Panel is wired on this controller");
+
+            // Getter-driven build: this is what makes the panel's Canvas exist even
+            // if the panel component itself hasn't been enabled yet.
             Transform panelCanvas = _panel.PanelCanvasTransform;
-            if (panelCanvas == null) return; // panel built no canvas — keep the fallback placement
+            if (panelCanvas == null)
+                return FailGuideAttach("the panel canvas was still null (panel built no canvas, or was destroyed)");
 
             var panelRt = panelCanvas as RectTransform;
-            if (panelRt == null) return;
+            if (panelRt == null)
+                return FailGuideAttach("the panel canvas transform is not a RectTransform");
 
             // Uniform scale by construction (the panel sets Vector3.one * scale).
             float panelScale = panelCanvas.lossyScale.y;
-            if (Mathf.Abs(panelScale) < 1e-6f) return;
+            if (Mathf.Abs(panelScale) < 1e-6f)
+                return FailGuideAttach($"the panel canvas world scale was ~0 ({panelScale:G4}) — " +
+                    "an inactive ancestor or a not-yet-applied canvas scale");
 
             float panelHeight = panelRt.rect.height * panelScale;
             float centerToCenter = panelHeight * 0.5f + GuideGapMeters + GuideWorldHeight * 0.5f;
@@ -784,6 +854,26 @@ namespace Hapbeat.Samples.VRConfigExample
                 // instead of on the wearer's next large head turn.
                 _panel.SnapToView();
             }
+
+            _guideAttached = true;
+            // One line, once: the "guide doesn't follow the panel" symptom is
+            // otherwise indistinguishable from "the attach never happened", and
+            // this is the only record that separates the two on-device.
+            Debug.Log("[Hapbeat] VRConfigExampleController: guide text parented to the panel canvas " +
+                $"(attempt {_guideAttachAttempts}, panel scale {panelScale:G4}).", this);
+            return true;
+        }
+
+        /// <summary>
+        /// Records why <see cref="TryAttachGuideToPanel"/> could not attach this
+        /// frame and returns false. The reason is only surfaced if the retry budget
+        /// runs out (<see cref="LateUpdate"/>) — failing on the first few frames is
+        /// expected, so it must not log per attempt.
+        /// </summary>
+        private bool FailGuideAttach(string reason)
+        {
+            _guideAttachLastFailure = reason;
+            return false;
         }
 
         // ---------------------------------------------------------------
