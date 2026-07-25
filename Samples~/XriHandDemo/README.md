@@ -22,7 +22,10 @@ scene **you** import from the XRI package.
 2. **Package Manager → Hapbeat SDK → Samples**: import *XR Helpers* and
    *XRI Hand Demo (haptics add-on)*.
 3. Menu **Hapbeat → Samples → Augment XRI Hand Demo**.
-4. Deploy `Kit/hand-demo-kit` to the device with Hapbeat Studio, then press Play.
+4. Press Play. No Kit deployment is needed: every entry in the EventMap is a
+   StreamClip (CLIP), so the waveform is streamed from the app at playback time.
+   `Kit/hand-demo-kit` ships alongside it only so the Editor can read the
+   manifest for per-event intensity — installing it on the device is optional.
 
 Use **Augment XRI Hand Demo (+ diagnostic Event Logger)** instead of step 3 if you want
 the poke button to also log every XRI interactable event to the Console — useful when

@@ -3,8 +3,7 @@
     "rootNamespace": "Hapbeat",
     "references": [
         "Unity.InputSystem",
-        "UnityEngine.UI",
-        "GUID:3f088b6c6874b1b49a97747d1259079a"
+        "UnityEngine.UI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -18,11 +17,6 @@
             "name": "com.unity.inputsystem",
             "expression": "1.0.0",
             "define": "HAPBEAT_HAS_INPUT_SYSTEM"
-        },
-        {
-            "name": "com.unity.xr.compositionlayers",
-            "expression": "1.0.0",
-            "define": "HAPBEAT_HAS_COMPOSITION_LAYERS"
         }
     ],
     "noEngineReferences": false

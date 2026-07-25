@@ -49,39 +49,6 @@ namespace Hapbeat
         /// </para>
         /// </summary>
         LazyFollow,
-
-        /// <summary>
-        /// Renders the panel as an OpenXR <b>quad composition layer</b> hard-fixed to the
-        /// view — the "Quest boot logo" behaviour: it never drifts, never lags, and stays
-        /// sharp regardless of the project's Render Scale.
-        ///
-        /// <para>
-        /// Unlike <see cref="LazyFollow"/>, the panel is not drawn into the application's
-        /// eye buffer at all: its Canvas is captured to a RenderTexture and handed to the
-        /// XR compositor, which composites it <i>after</i> reprojection. That removes both
-        /// problems a camera-fixed Canvas has — the inverse-TimeWarp swim, and the
-        /// resampling that makes small text soft at Render Scale &lt; 1.
-        /// </para>
-        ///
-        /// <para>
-        /// <b>Opt-in.</b> Requires the <c>com.unity.xr.compositionlayers</c> package in the
-        /// project <i>and</i> <c>Project Settings &gt; XR Plug-in Management &gt; OpenXR &gt;
-        /// Composition Layers</c> enabled for the target platform. If either is missing the
-        /// panel logs one warning and falls back to <see cref="LazyFollow"/>, so selecting
-        /// this mode is never fatal.
-        /// </para>
-        ///
-        /// <para>
-        /// <b>Trade-offs.</b> The captured Canvas is parked out of the scene, so pointer
-        /// (mouse / ray) interaction with it no longer works — drive the panel through the
-        /// focus grid (<see cref="HapbeatAddressOverridePanel.MoveFocus"/> /
-        /// <see cref="HapbeatAddressOverridePanel.ActivateFocused"/>) in this mode. Only
-        /// content inside the panel's own Canvas rect is captured; UI a controller parents
-        /// to <see cref="HapbeatAddressOverridePanel.PanelCanvasTransform"/> and offsets
-        /// <i>outside</i> that rect is framed out.
-        /// </para>
-        /// </summary>
-        CompositionLayer,
     }
 
     /// <summary>
@@ -222,9 +189,7 @@ namespace Hapbeat
 
         [Tooltip("World-space anchoring. LazyFollow (default) keeps the panel world-fixed while it is roughly in " +
             "front of the wearer and glides it to a new resting spot once they look away; WorldFixed leaves it " +
-            "where it was placed; CompositionLayer hard-fixes it to the view via an OpenXR quad layer (requires " +
-            "the com.unity.xr.compositionlayers package and the OpenXR Composition Layers feature — falls back to " +
-            "LazyFollow otherwise). Ignored in ScreenSpaceOverlay.")]
+            "where it was placed. Ignored in ScreenSpaceOverlay.")]
         [SerializeField]
         private HapbeatAddressOverridePanelWorldAttach _worldAttachMode = HapbeatAddressOverridePanelWorldAttach.LazyFollow;
 
@@ -305,40 +270,6 @@ namespace Hapbeat
         private bool _followSnapPending;
 
         private Vector3 _followVelocity;
-
-        // --- CompositionLayer mode state ---
-
-        // True while the panel wants to be a composition layer but hasn't become one yet:
-        // the OpenXR Composition Layers feature assigns its layer provider on subsystem
-        // start, which can happen after this component builds. Rather than deciding once at
-        // build time (and permanently falling back on a timing accident), the panel keeps
-        // rendering the LazyFollow way and polls until the provider shows up — or until
-        // _compositionLayerWaitDeadline passes, at which point it warns once and stays
-        // LazyFollow for good.
-        // Warning gate is unguarded: the no-package build path warns from Build() too.
-        private bool _compositionLayerWarned;
-
-#if HAPBEAT_HAS_COMPOSITION_LAYERS
-        private bool _compositionLayerPending;
-        private float _compositionLayerWaitDeadline;
-
-        // How long to wait for a layer provider before giving up (seconds, unscaled).
-        // Generous on purpose: the provider is only assigned when the XR session begins,
-        // and over a link connection (Air Link / Link) that can take several seconds after
-        // the scene has loaded. Giving up early would report a configuration problem for
-        // what is only a slow handshake.
-        private const float CompositionLayerWaitSeconds = 10f;
-
-        // Non-null once the panel is actually being composited as a quad layer. All
-        // Composition Layers API usage lives behind this type — see
-        // HapbeatPanelCompositionLayerSurface.
-        private HapbeatPanelCompositionLayerSurface _compositionSurface;
-
-        // Whether the surface is currently capturing. Goes false if the provider disappears
-        // mid-run (an XR session end clears it — an ordinary headset doff does that), and
-        // back to true when the next session begins, so the panel stays visible throughout.
-        private bool _compositionLayerEngaged;
-#endif
 
         // Translation counterpart of _followDeadzoneDegrees: the wearer can walk
         // (or the tracking origin can jump) without any yaw change at all, which a
@@ -471,17 +402,6 @@ namespace Hapbeat
             if (_canvasGo != null)
                 _canvasGo.SetActive(true);
 
-#if HAPBEAT_HAS_COMPOSITION_LAYERS
-            // Same reasoning for the composition layer + its capture camera: they live on
-            // their own GameObjects, so nothing re-enables them for us.
-            _compositionSurface?.SetActive(true);
-
-            // Re-arm the provider wait if we were still waiting when the panel was hidden —
-            // time spent disabled shouldn't count against the deadline.
-            if (_compositionLayerPending)
-                _compositionLayerWaitDeadline = Time.unscaledTime + CompositionLayerWaitSeconds;
-#endif
-
             // Re-appearing after being hidden: place the panel where the wearer is
             // looking *now* rather than easing in from wherever it was left.
             _followSnapPending = true;
@@ -513,10 +433,6 @@ namespace Hapbeat
             // longer a child that Unity disables automatically.
             if (_canvasGo != null)
                 _canvasGo.SetActive(false);
-
-#if HAPBEAT_HAS_COMPOSITION_LAYERS
-            _compositionSurface?.SetActive(false);
-#endif
         }
 
         private void OnDestroy()
@@ -528,16 +444,6 @@ namespace Hapbeat
                 Destroy(_canvasGo);
                 _canvasGo = null;
             }
-
-#if HAPBEAT_HAS_COMPOSITION_LAYERS
-            // Releases the capture camera, the layer GameObject and — importantly — the
-            // RenderTexture, which is not garbage collected on its own.
-            if (_compositionSurface != null)
-            {
-                _compositionSurface.Dispose();
-                _compositionSurface = null;
-            }
-#endif
         }
 
         private void Build()
@@ -561,46 +467,9 @@ namespace Hapbeat
             // during the small, fast head motions reprojection actually corrects
             // for, and any residual lag during the (rare, deliberate) glide reads
             // as intentional easing rather than as a tracking fault.
-            //
-            // CompositionLayer mode needs the same camera (it writes the layer's pose from
-            // it every frame, see GetCompositionLayerPose) AND uses the lazy follow as
-            // its fallback, so it resolves a camera here too. Without the package define it
-            // degrades to LazyFollow immediately; with it, the decision is deferred to
-            // LateUpdate — see TryPromoteToCompositionLayer.
-            bool wantsCompositionLayer = worldSpace &&
-                _worldAttachMode == HapbeatAddressOverridePanelWorldAttach.CompositionLayer;
-            Transform followCamera = (worldSpace && _worldAttachMode != HapbeatAddressOverridePanelWorldAttach.WorldFixed)
+            Transform followCamera = (worldSpace && _worldAttachMode == HapbeatAddressOverridePanelWorldAttach.LazyFollow)
                 ? ResolveFollowCamera()
                 : null;
-
-            if (wantsCompositionLayer)
-            {
-#if HAPBEAT_HAS_COMPOSITION_LAYERS
-                if (!HapbeatCompositionLayerBootstrap.SupportEnabled)
-                {
-                    // Nothing kept a composition layer manager alive across XR session begin,
-                    // so the OpenXR feature's one chance to assign a layer provider is already
-                    // gone — no amount of waiting here would produce one. Say so now rather
-                    // than timing out and pointing at the OpenXR feature, which may well
-                    // already be enabled. See HapbeatCompositionLayerBootstrap.
-                    WarnCompositionLayerFallback("Composition Layer support is turned off in HapbeatConfig — " +
-                        "enable \"Enable Composition Layer Support\" in the Hapbeat Settings window (it has to " +
-                        "start the composition layer manager before the XR session begins, which is before this " +
-                        "scene loads, so it cannot be switched on from here)");
-                }
-                else if (followCamera != null)
-                {
-                    _compositionLayerPending = true;
-                    _compositionLayerWaitDeadline = Time.unscaledTime + CompositionLayerWaitSeconds;
-                }
-                // followCamera == null: ResolveFollowCamera already warned, and without a
-                // camera there is no view to fix the layer to — WorldFixed placement stands.
-#else
-                WarnCompositionLayerFallback("this build was compiled without the com.unity.xr.compositionlayers " +
-                    "package (HAPBEAT_HAS_COMPOSITION_LAYERS is not defined), so the composition layer code is not " +
-                    "part of it — install the package to enable this mode");
-#endif
-            }
 
             // --- Canvas (child of self so it toggles with this GameObject) ---
             var canvasGo = new GameObject("AddressOverrideCanvas");
@@ -839,129 +708,8 @@ namespace Hapbeat
         {
             if (_canvasGo == null || _followCameraResolved == null) return;
 
-#if HAPBEAT_HAS_COMPOSITION_LAYERS
-            if (_compositionLayerPending)
-                TryPromoteToCompositionLayer();
-
-            if (_compositionSurface != null)
-            {
-                // The provider is live state, not a one-shot: OnSessionEnd clears it (a plain
-                // headset doff does that) and the next OnSessionBegin restores it. Suspend the
-                // capture while it is gone so the panel falls back to the eye buffer instead of
-                // going blank, and resume when it returns.
-                bool providerLive = HapbeatPanelCompositionLayerSurface.ProviderAvailable;
-                if (providerLive != _compositionLayerEngaged)
-                {
-                    _compositionLayerEngaged = providerLive;
-                    _compositionSurface.SetCaptureEngaged(providerLive);
-                    if (providerLive)
-                    {
-                        Debug.Log("[Hapbeat] HapbeatAddressOverridePanel: XR composition layer provider is back — " +
-                            "resuming composition layer rendering.", this);
-                    }
-                    else
-                    {
-                        // Re-place the Canvas in front of the wearer on the first eye-buffer
-                        // frame instead of easing in from the park position.
-                        _followSnapPending = true;
-                        Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: the XR composition layer provider " +
-                            "went away (the XR session ended — e.g. the headset was taken off). Rendering the panel " +
-                            "in the eye buffer until it returns.", this);
-                    }
-                }
-
-                if (_compositionLayerEngaged)
-                {
-                    // Hard follow: the layer is composited after reprojection, so there is no
-                    // TimeWarp swim to avoid and therefore no reason to hold it world-static —
-                    // the deadzone/smoothing that LazyFollow needs would only read as lag here.
-                    GetCompositionLayerPose(out Vector3 layerPos, out Quaternion layerRot);
-                    _compositionSurface.SetPose(layerPos, layerRot);
-                    return;
-                }
-            }
-#endif
-
             UpdateLazyFollow(Time.deltaTime);
         }
-
-#if HAPBEAT_HAS_COMPOSITION_LAYERS
-        /// <summary>
-        /// Switches the panel over to a quad composition layer once a layer provider is
-        /// running. Until then the panel keeps rendering as a LazyFollow Canvas, so a slow
-        /// XR startup never leaves a blank spot in the view. Gives up (one warning naming
-        /// which of the two failure modes was observed, stays LazyFollow) after
-        /// <see cref="CompositionLayerWaitSeconds"/>.
-        /// </summary>
-        private void TryPromoteToCompositionLayer()
-        {
-            if (!HapbeatPanelCompositionLayerSurface.ProviderAvailable)
-            {
-                if (Time.unscaledTime < _compositionLayerWaitDeadline) return;
-
-                _compositionLayerPending = false;
-
-                // Two genuinely different failures, and telling a user to "enable the feature"
-                // when it is already enabled only sends them in circles — so name what was
-                // actually observed. Composition Layer support is on at this point (Build()
-                // handles the off case), so the manager was kept alive from subsystem
-                // registration and the remaining suspect is the OpenXR feature itself.
-                WarnCompositionLayerFallback(HapbeatPanelCompositionLayerSurface.ManagerAlive
-                    ? "the XR composition layer manager is running but no layer provider was ever assigned to it. " +
-                      "The OpenXR \"Composition Layers\" feature assigns one only once, when the XR session begins " +
-                      "— so this means the feature is disabled for the platform being run under Project Settings > " +
-                      "XR Plug-in Management > OpenXR, or the XR runtime does not support the composition layer " +
-                      "extensions it needs"
-                    : "the XR composition layer manager is not running, so the OpenXR feature had nothing to assign " +
-                      "a layer provider to when the session began");
-                return;
-            }
-
-            _compositionLayerPending = false;
-
-            var canvas = _canvasGo != null ? _canvasGo.GetComponent<Canvas>() : null;
-            var surface = HapbeatPanelCompositionLayerSurface.TryCreate(canvas, _worldSize, _worldPixelDensity, _worldScale);
-            if (surface == null)
-            {
-                WarnCompositionLayerFallback("the composition layer could not be created");
-                return;
-            }
-
-            _compositionSurface = surface;
-            _compositionLayerEngaged = true;
-            _compositionSurface.SetActive(isActiveAndEnabled);
-
-            Debug.Log("[Hapbeat] HapbeatAddressOverridePanel: rendering as an OpenXR quad composition layer " +
-                $"({surface.Describe()}).", this);
-        }
-
-        /// <summary>
-        /// Head-fixed pose for the composition layer: <c>_followDistance</c> straight down
-        /// the gaze, offset by <c>_followVerticalOffset</c> along the camera's own up axis
-        /// (not world up — a view-fixed panel must keep the same screen position when the
-        /// wearer looks up or down), and squarely facing the camera position (see
-        /// <see cref="ComputeLookAtRotation"/>) so the vertical offset does not leave it
-        /// tilted away from the wearer.
-        /// </summary>
-        private void GetCompositionLayerPose(out Vector3 position, out Quaternion rotation)
-        {
-            Transform cam = _followCameraResolved;
-
-            Vector3 gaze = cam.forward;
-            if (gaze.sqrMagnitude < 1e-6f) gaze = Vector3.forward;
-            gaze.Normalize();
-
-            // Roll-free up reference: the component of world up perpendicular to the gaze.
-            // Degenerates when looking straight up/down, where the camera's own up is the
-            // only sensible reference left.
-            Vector3 up = Vector3.up - gaze * Vector3.Dot(Vector3.up, gaze);
-            if (up.sqrMagnitude < 1e-6f) up = cam.up;
-            up.Normalize();
-
-            position = cam.position + gaze * Mathf.Max(0.01f, _followDistance) + up * _followVerticalOffset;
-            rotation = ComputeLookAtRotation(position, cam.position, Quaternion.LookRotation(gaze, up));
-        }
-#endif
 
         /// <summary>
         /// Rotation that makes a panel at <paramref name="panelPosition"/> face
@@ -984,21 +732,6 @@ namespace Hapbeat
             forward.Normalize();
             if (Mathf.Abs(Vector3.Dot(forward, Vector3.up)) > 0.999f) return fallback;
             return Quaternion.LookRotation(forward, Vector3.up);
-        }
-
-        /// <summary>
-        /// One warning per panel instance explaining why
-        /// <see cref="HapbeatAddressOverridePanelWorldAttach.CompositionLayer"/> could not be
-        /// used, followed by a silent fallback to <see cref="HapbeatAddressOverridePanelWorldAttach.LazyFollow"/>
-        /// (which is what the panel is already rendering as at that point — nothing else has
-        /// to change).
-        /// </summary>
-        private void WarnCompositionLayerFallback(string reason)
-        {
-            if (_compositionLayerWarned) return;
-            _compositionLayerWarned = true;
-            Debug.LogWarning("[Hapbeat] HapbeatAddressOverridePanel: World Attach Mode is CompositionLayer but " +
-                $"{reason}. Falling back to LazyFollow.", this);
         }
 
         /// <summary>
