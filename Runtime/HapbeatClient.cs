@@ -51,13 +51,33 @@ namespace Hapbeat
         private int _overridePlayer = -1;
         private int _overrideGroup = -1;
 
-        // Unicast destinations for STREAM_BEGIN/DATA/END, or null to use broadcast
-        // (the default _targetEndPoint). Snapshotted once per stream session by
-        // HapbeatManager (see SetStreamUnicastTargets) from known device PONG
-        // endpoints. Read from the background stream mixer thread (SendStreamData)
-        // without locking — array reference assignment is atomic, and the array
-        // itself is never mutated in place after being published, only replaced.
+        // Unicast destinations for STREAM_BEGIN/DATA/END. Three states:
+        //   null            -> no unicast snapshot taken (or explicitly cleared):
+        //                      fall back to broadcast, same as before target
+        //                      filtering existed.
+        //   empty array     -> a snapshot WAS taken and every known device's
+        //                      address failed to match the session target
+        //                      (SetStreamUnicastTargets filtered all of them
+        //                      out): send nowhere this session, do NOT fall
+        //                      back to broadcast (that would defeat the point
+        //                      of filtering — see SendStreamRaw).
+        //   non-empty array -> unicast to exactly these endpoints.
+        // Snapshotted once per stream session by HapbeatManager (see
+        // SetStreamUnicastTargets) from known device PONG endpoints. Read from
+        // the background stream mixer thread (SendStreamData) without locking —
+        // array reference assignment is atomic, and the array itself is never
+        // mutated in place after being published, only replaced.
         private volatile IPEndPoint[] _streamUnicastTargets;
+
+        // Last known device-addressing address string per sender IP, learned from
+        // the PONG extension fields (device-addressing.md §5.4). Written from the
+        // background receive thread (HandlePong); read from the main thread
+        // (GetKnownDeviceAddress, called by SetStreamUnicastTargets). A device with
+        // no entry here is "unknown" — callers must fail open (treat as matching)
+        // rather than as a hard mismatch, since firmware predating this extension,
+        // or a PONG that hasn't arrived yet, shouldn't silently lose its stream.
+        private readonly ConcurrentDictionary<IPAddress, string> _deviceAddresses =
+            new ConcurrentDictionary<IPAddress, string>();
 
         // Queue for dispatching callbacks to the main thread
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
@@ -183,26 +203,136 @@ namespace Hapbeat
         /// the main thread, before the session's first STREAM_BEGIN — see
         /// HapbeatManager.StreamAudioClip / StopStream.
         /// <para>
+        /// <paramref name="deviceIps"/> is further filtered down to the devices whose
+        /// last-known address (from PONG, see <see cref="GetKnownDeviceAddress"/>)
+        /// matches <paramref name="target"/> per <see cref="AddressMatches"/> — this is
+        /// what keeps a 1-person-multiple-device / many-simultaneous-pairs LAN from
+        /// fanning every stream chunk out to everyone else's devices too. A device
+        /// with no known address yet (no PONG parsed for it, or an older firmware
+        /// that doesn't send the address extension) is kept in rather than dropped —
+        /// fail-open, since firmware still applies its own target filter on receipt,
+        /// so worst case is an extra unicast packet, never a silently lost stream.
+        /// Pass <c>null</c>/<c>""</c> for <paramref name="target"/> (the default) to
+        /// disable filtering entirely (matches everyone, same as before this existed).
+        /// </para>
+        /// <para>
         /// Devices that join after the snapshot is taken (e.g. their first PONG arrives
         /// mid-session) are not added retroactively; they'll be picked up starting with
         /// the next session. This keeps the hot path (SendStreamData, called every
         /// ~10 ms from the background mixer thread) lock-free.
         /// </para>
         /// </summary>
-        public void SetStreamUnicastTargets(IReadOnlyCollection<IPAddress> deviceIps)
+        /// <returns>
+        /// The number of endpoints actually targeted this session — a non-negative
+        /// count when a snapshot was taken (0 if every candidate's known address
+        /// failed <paramref name="target"/>'s match), or -1 when no snapshot was
+        /// taken at all (<paramref name="deviceIps"/> was null/empty) and streaming
+        /// falls back to broadcast. Callers (see <see cref="HapbeatManager"/>) use
+        /// this to log the actual outcome instead of guessing from the input count.
+        /// </returns>
+        public int SetStreamUnicastTargets(IReadOnlyCollection<IPAddress> deviceIps, string target = null)
         {
             if (deviceIps == null || deviceIps.Count == 0)
             {
                 _streamUnicastTargets = null;
-                return;
+                return -1;
             }
 
             int port = _targetEndPoint != null ? _targetEndPoint.Port : 0;
-            var targets = new IPEndPoint[deviceIps.Count];
-            int i = 0;
+
+            var filtered = new List<IPAddress>(deviceIps.Count);
             foreach (var ip in deviceIps)
-                targets[i++] = new IPEndPoint(ip, port);
+            {
+                string knownAddress = GetKnownDeviceAddress(ip);
+                // Fail open: unknown address => keep. Known address => must match.
+                if (knownAddress == null || AddressMatches(target, knownAddress))
+                    filtered.Add(ip);
+            }
+
+            if (filtered.Count == 0)
+            {
+                // Every candidate had a *known* address and none matched target —
+                // an explicit "nobody" result, not "we don't have info yet". Use the
+                // empty-array sentinel so SendStreamRaw skips the session entirely
+                // instead of falling back to broadcasting to unrelated devices.
+                _streamUnicastTargets = Array.Empty<IPEndPoint>();
+                return 0;
+            }
+
+            var targets = new IPEndPoint[filtered.Count];
+            for (int i = 0; i < filtered.Count; i++)
+                targets[i] = new IPEndPoint(filtered[i], port);
             _streamUnicastTargets = targets;
+            return targets.Length;
+        }
+
+        /// <summary>
+        /// Last known device-addressing address string for <paramref name="ip"/>, as
+        /// reported in its most recent parsed PONG (device-addressing.md §5.4). Null
+        /// if unknown — no PONG received/parsed from this IP yet, or its firmware
+        /// predates the address extension field. See <see cref="SetStreamUnicastTargets"/>
+        /// for how callers should treat "unknown" (fail open, not a mismatch).
+        /// </summary>
+        public string GetKnownDeviceAddress(IPAddress ip)
+        {
+            return _deviceAddresses.TryGetValue(ip, out var address) ? address : null;
+        }
+
+        /// <summary>
+        /// Device-addressing target/address match, mirroring firmware's
+        /// <c>addressMatch()</c> (hapbeat-device-firmware/src/address_match.cpp) and
+        /// the contracts pseudocode (device-addressing.md §4.3). Firmware is the
+        /// authority where the two differ, since it decides what actually plays:
+        /// <list type="bullet">
+        /// <item>An empty/null <paramref name="target"/> matches every address.</item>
+        /// <item>Both strings are split on <c>/</c> and compared segment-by-segment,
+        /// left to right.</item>
+        /// <item>A <c>*</c> target segment matches any single address segment.</item>
+        /// <item>If <paramref name="target"/> has fewer segments than
+        /// <paramref name="deviceAddress"/>, matching the segments present is enough
+        /// (front-match / prefix match) — extra address segments (e.g. an omitted
+        /// group) don't cause a mismatch.</item>
+        /// <item>If <paramref name="target"/> has *more* segments than
+        /// <paramref name="deviceAddress"/>, it's a mismatch (target too specific for
+        /// this device's address).</item>
+        /// <item>A single trailing <c>/</c> on <paramref name="target"/> is ignored
+        /// ("player_1/" == "player_1"), matching firmware's pointer walk. The §4.3
+        /// pseudocode's naive split would mismatch here; we follow firmware so the
+        /// SDK never filters out a device that would have accepted the packet.</item>
+        /// </list>
+        /// Pure, UnityEngine-independent — see Tests/Runtime/AddressMatchesTests.cs
+        /// (transcribed from device-addressing.md §4.2's example table).
+        /// </summary>
+        public static bool AddressMatches(string target, string deviceAddress)
+        {
+            if (string.IsNullOrEmpty(target))
+                return true;
+
+            string[] targetSegments = target.Split('/');
+            string[] addressSegments = (deviceAddress ?? string.Empty).Split('/');
+
+            // A single trailing '/' terminates the target rather than adding an
+            // empty segment: firmware's loop advances past the separator and then
+            // exits on `while (*tp)`, so "player_1/" behaves exactly like
+            // "player_1". Splitting naively would compare a "" segment against the
+            // device's next real segment and mismatch — i.e. the SDK would drop a
+            // device the firmware WOULD have accepted, silently losing its stream.
+            // Only the last empty segment is dropped, and only once ("a//" really
+            // does compare an empty segment in firmware, and still mismatches).
+            int targetCount = targetSegments.Length;
+            if (targetCount > 1 && targetSegments[targetCount - 1].Length == 0)
+                targetCount--;
+
+            for (int i = 0; i < targetCount; i++)
+            {
+                if (i >= addressSegments.Length)
+                    return false; // target longer than address = mismatch
+
+                if (targetSegments[i] != "*" && targetSegments[i] != addressSegments[i])
+                    return false;
+            }
+
+            return true; // front-match or exact match
         }
 
         /// <summary>
@@ -507,9 +637,20 @@ namespace Hapbeat
             // replaced wholesale (never mutated in place), so a single local
             // snapshot is safe even if another thread swaps it mid-loop below.
             IPEndPoint[] targets = _streamUnicastTargets;
-            if (!IsBroadcast || targets == null || targets.Length == 0)
+            if (!IsBroadcast || targets == null)
             {
+                // null = no snapshot taken this session (or explicitly cleared):
+                // same broadcast fallback as before target filtering existed.
                 SendRaw(data);
+                return;
+            }
+
+            if (targets.Length == 0)
+            {
+                // Empty (not null) = SetStreamUnicastTargets took a snapshot and every
+                // known device's address failed to match the session target. Falling
+                // back to broadcast here would defeat the point of filtering (leak
+                // this stream to unrelated devices on the LAN), so send nowhere.
                 return;
             }
 
@@ -619,8 +760,15 @@ namespace Hapbeat
 
         private void HandlePong(ushort seq, byte[] payload, IPEndPoint sender)
         {
-            var (timestamp, serverTime) = HapbeatProtocol.ParsePong(payload);
+            var (timestamp, serverTime, _, address, _, _, _) = HapbeatProtocol.ParsePongExtended(payload);
             long nowUs = GetLocalTimestampUs();
+
+            // sender.Address (IPAddress) is immutable, so caching it directly here
+            // (unlike the mutable IPEndPoint captured below for the main-thread
+            // closure) is safe even though it's read later from the main thread via
+            // GetKnownDeviceAddress.
+            if (!string.IsNullOrEmpty(address))
+                _deviceAddresses[sender.Address] = address;
 
             // Calculate RTT using the original ping timestamp
             long rttUs;

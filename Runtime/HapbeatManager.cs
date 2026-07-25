@@ -707,9 +707,26 @@ namespace Hapbeat
                 if (_client.IsBroadcast && _config != null && _config.streamUnicast)
                 {
                     var aliveIps = GetAliveDeviceIPs();
-                    _client.SetStreamUnicastTargets(aliveIps);
-                    if (aliveIps.Count > 0)
-                        Log($"\u266a Stream unicast: targeting {aliveIps.Count} known device(s) (broadcast fallback if none respond).");
+                    // Filter aliveIps down to devices whose known address (from PONG)
+                    // matches the *resolved* target \u2014 the same string SendStreamBegin
+                    // below will actually put on the wire (address-override player/
+                    // group applied), not the raw EventMap target \u2014 so filtering
+                    // agrees with what firmware will match on its end. Unknown-
+                    // address devices are kept (fail open); this is what keeps a
+                    // 1-person-multiple-device / many-simultaneous-pairs LAN from
+                    // fanning every stream chunk out to everyone else's devices too.
+                    string resolvedTarget = HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup);
+                    int matchedCount = _client.SetStreamUnicastTargets(aliveIps, resolvedTarget);
+                    // Log what actually happened, not what we hoped for: matchedCount
+                    // reflects post-filter reality (see SetStreamUnicastTargets), so a
+                    // 0 here after known devices existed means the send is skipped
+                    // this session, not silently broadcast.
+                    if (matchedCount > 0)
+                        Log($"\u266a Stream unicast: targeting {matchedCount} known device(s).");
+                    else if (aliveIps.Count > 0)
+                        Log($"\u266a Stream unicast: target '{resolvedTarget}' matched 0 of {aliveIps.Count} known device(s); skipping stream send this session.");
+                    else
+                        Log("\u266a Stream unicast: no known devices yet; broadcasting this session.");
                 }
                 else
                 {

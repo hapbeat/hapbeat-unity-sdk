@@ -11,6 +11,13 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Added（追加）
 
+- **Stream unicast の宛先を target アドレスで絞り込み** — 1人が複数台装着する構成や、同一 LAN 上に複数のプレイヤー/デバイスペアが同時に存在する構成で、各アプリが自分のペア以外にも STREAM_BEGIN/DATA/END を unicast 複製していた挙動を修正。
+  - `HapbeatProtocol.ParsePongExtended(byte[])` を追加。PONG (0x11) payload の拡張フィールド (device_name / address / firmware_version / volume_level / volume_wiper、device-addressing.md §5.4) をパースする。旧仕様の短い payload やフィールド欠落は例外を投げず null/-1 で返す（既存の `ParsePong` はそのまま維持、内部で流用）。
+  - `HapbeatClient.AddressMatches(string target, string deviceAddress)` (static) を追加。firmware `address_match.cpp` / device-addressing.md §4.3 の擬似コードと同一セマンティクスの target/address マッチ判定（空 target = 全マッチ、`/` 区切り位置比較、`*` ワイルドカード、target 前方一致は OK・target が長ければ不一致）。`Tests/Runtime/AddressMatchesTests.cs` に仕様書 §4.2 の例表を移植したユニットテストを追加。
+  - `HapbeatClient` は PONG 受信時に送信元 IP ごとの address を学習・キャッシュする（`GetKnownDeviceAddress(IPAddress)`）。address 未取得（未知）のデバイスは安全側フォールバックとしてマッチ扱いのまま残す。
+  - `HapbeatClient.SetStreamUnicastTargets(IReadOnlyCollection<IPAddress>, string target = null)` に `target` 引数を追加。alive デバイス一覧を「known address が target と一致する」デバイスだけに絞り込んでから unicast する。マッチ 0 件（かつ全 address 既知）の場合はその session は送信自体をスキップ（broadcast へのフォールバックはしない — フォールバックすると絞り込みの意味がなくなるため）。`HapbeatManager.StreamAudioClip` の呼び出し側で、address-override 適用後の解決済み target を渡すよう更新。
+  - `HapbeatConfig` に新規トグルは追加しない — `streamUnicast` が有効な時の下位挙動として自動的に効く。
+
 - **Address Override（player/group の実行時上書き）** — 同一ビルドを複数 HMD に配布し、各端末を自分の Hapbeat に 1:1 で向けたいユースケース向け。
   - `HapbeatConfig` に `Addressing` セクション (`overridePlayer` / `overrideGroup`、-1 = 無効・1-99 = 強制適用) を追加。設定すると EventMap 側の target 文字列に関わらず、全ての送信 (Play/Stop/StopAll/StreamBegin) にこの player/group が強制適用される。
   - `HapbeatManager.SetAddressOverride(int player, int group, bool persist = false)` を追加。実行時に override を切り替え可能。`persist: true` で PlayerPrefs に保存し、次回起動時も復元される。

@@ -338,6 +338,67 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Parse a PONG response payload including the device-addressing extension
+        /// fields (device-addressing.md §5.4 / message-format.md §0x11): device_name,
+        /// address, firmware_version, volume_level, volume_wiper — appended after the
+        /// base timestamp/server_time pair in that order, each string null-terminated.
+        /// <para>
+        /// The extension is best-effort: a legacy/short/truncated payload (or one from
+        /// a future/older firmware that packs fewer fields) yields <c>null</c> strings
+        /// and <c>-1</c> byte fields for whatever wasn't present, rather than throwing —
+        /// only the base 16-byte timestamp/server_time pair is required (same
+        /// precondition as <see cref="ParsePong"/>). Callers that need the device's
+        /// address for target matching (see <see cref="HapbeatClient.AddressMatches"/>)
+        /// must treat a null <c>address</c> as "unknown, assume it matches" rather than
+        /// as a hard failure.
+        /// </para>
+        /// </summary>
+        public static (long timestamp, long serverTime, string deviceName, string address,
+            string firmwareVersion, int volumeLevel, int volumeWiper) ParsePongExtended(byte[] payload)
+        {
+            var (timestamp, serverTime) = ParsePong(payload); // throws if < 16 bytes, same as before
+
+            string deviceName = null;
+            string address = null;
+            string firmwareVersion = null;
+            int volumeLevel = -1;
+            int volumeWiper = -1;
+
+            // No try/catch here: ReadNullTerminatedString and the volumeLevel/
+            // volumeWiper reads below are all bounds-checked against payload.Length
+            // before indexing (see ReadNullTerminatedString), so a malformed/
+            // truncated extension tail simply yields null/-1 for the missing
+            // fields rather than throwing — there is no exception this could catch.
+            int offset = 16;
+            deviceName = ReadNullTerminatedString(payload, ref offset);
+            address = ReadNullTerminatedString(payload, ref offset);
+            firmwareVersion = ReadNullTerminatedString(payload, ref offset);
+            if (offset < payload.Length) volumeLevel = payload[offset++];
+            if (offset < payload.Length) volumeWiper = payload[offset++];
+
+            return (timestamp, serverTime, deviceName, address, firmwareVersion, volumeLevel, volumeWiper);
+        }
+
+        /// <summary>
+        /// Read a null-terminated UTF-8 string starting at <paramref name="offset"/>,
+        /// advancing <paramref name="offset"/> past the terminator. Returns null
+        /// (without advancing) if <paramref name="offset"/> is already at or past the
+        /// end of the buffer — i.e. this field simply wasn't present in the payload.
+        /// </summary>
+        private static string ReadNullTerminatedString(byte[] buffer, ref int offset)
+        {
+            if (offset >= buffer.Length) return null;
+
+            int start = offset;
+            int end = start;
+            while (end < buffer.Length && buffer[end] != 0) end++;
+
+            string value = Encoding.UTF8.GetString(buffer, start, end - start);
+            offset = (end < buffer.Length) ? end + 1 : end; // skip null terminator if present
+            return value;
+        }
+
+        /// <summary>
         /// Parse an ERROR response payload.
         /// </summary>
         /// <param name="payload">ERROR payload bytes.</param>
