@@ -110,6 +110,48 @@ namespace Hapbeat
         /// (-1) if this axis doesn't override the EventMap target's group. See <see cref="SetAddressOverride"/>.</summary>
         public int OverrideGroup => _overrideGroup;
 
+        /// <summary>Build-wide forced player number from <see cref="HapbeatConfig.buildOverridePlayer"/>,
+        /// or <see cref="AddressOverrideDisabled"/> (-1) when this axis is left to the device.
+        /// See <see cref="ResolveEffectiveOverride"/>.</summary>
+        public int BuildOverridePlayer =>
+            _config != null ? HapbeatClient.NormalizeOverride(_config.buildOverridePlayer) : AddressOverrideDisabled;
+
+        /// <summary>Build-wide forced group number from <see cref="HapbeatConfig.buildOverrideGroup"/>,
+        /// or <see cref="AddressOverrideDisabled"/> (-1). See <see cref="BuildOverridePlayer"/>.</summary>
+        public int BuildOverrideGroup =>
+            _config != null ? HapbeatClient.NormalizeOverride(_config.buildOverrideGroup) : AddressOverrideDisabled;
+
+        /// <summary>True when the player axis is pinned by the build's config and therefore
+        /// cannot be changed on this device (<see cref="SetAddressOverride"/> ignores it,
+        /// and UI should present it as read-only).</summary>
+        public bool IsPlayerForcedByBuild => BuildOverridePlayer >= 1;
+
+        /// <summary>True when the group axis is pinned by the build's config. See <see cref="IsPlayerForcedByBuild"/>.</summary>
+        public bool IsGroupForcedByBuild => BuildOverrideGroup >= 1;
+
+        /// <summary>
+        /// Per-axis address-override resolution, shared by <see cref="Initialize"/> and
+        /// <see cref="SetAddressOverride"/>. Pure and UnityEngine-independent so it can be
+        /// unit tested directly (see Tests/Runtime/AddressOverrideResolutionTests.cs).
+        /// <para>
+        /// A config value in 1..99 wins unconditionally — that's the "this whole build is
+        /// pinned to this player/group" case, which no per-device state may undo. Otherwise
+        /// the per-device value (a PlayerPrefs-restored number, or whatever the runtime panel
+        /// asked for) applies, normalized the usual way so anything outside 1..99 means
+        /// "don't override this axis".
+        /// </para>
+        /// </summary>
+        /// <param name="configValue">Raw <see cref="HapbeatConfig.buildOverridePlayer"/> /
+        /// <see cref="HapbeatConfig.buildOverrideGroup"/> value. -1 (or anything outside 1..99) = not forced.</param>
+        /// <param name="perDeviceValue">Per-device value (PlayerPrefs / runtime request). Only used
+        /// when the build doesn't force this axis.</param>
+        /// <returns>The effective, already-normalized override for this axis.</returns>
+        public static int ResolveEffectiveOverride(int configValue, int perDeviceValue)
+        {
+            int forced = HapbeatClient.NormalizeOverride(configValue);
+            return forced >= 1 ? forced : HapbeatClient.NormalizeOverride(perDeviceValue);
+        }
+
         /// <summary>App name shown on device OLED. Uses config value (with &lt;p&gt;/&lt;g&gt;
         /// address-override placeholders applied) or falls back to Application.productName.</summary>
         public string AppName => _config != null && !string.IsNullOrEmpty(_config.appName)
@@ -387,6 +429,13 @@ namespace Hapbeat
         /// When <paramref name="persist"/> is true the values are stored in PlayerPrefs
         /// and restored on next launch — this is the intended flow for "one identical
         /// build deployed to many HMDs, each bound to its own Hapbeat".
+        /// <para>
+        /// An axis pinned by the build (<see cref="IsPlayerForcedByBuild"/> /
+        /// <see cref="IsGroupForcedByBuild"/>) is <b>not</b> changed here: the requested
+        /// value for that axis is ignored (verbose-logged), the forced value is kept, and
+        /// nothing is written to PlayerPrefs for it. Only the non-forced axes are
+        /// per-device state at all — see <see cref="ResolveEffectiveOverride"/>.
+        /// </para>
         /// </summary>
         /// <param name="player">Forced player number (1-99), or <see cref="AddressOverrideDisabled"/>
         /// to leave the EventMap target's player as-is.</param>
@@ -395,16 +444,32 @@ namespace Hapbeat
         /// <param name="persist">If true, saves to PlayerPrefs so the override survives an app restart.</param>
         public void SetAddressOverride(int player, int group, bool persist = false)
         {
-            _overridePlayer = HapbeatClient.NormalizeOverride(player);
-            _overrideGroup = HapbeatClient.NormalizeOverride(group);
+            int requestedPlayer = HapbeatClient.NormalizeOverride(player);
+            int requestedGroup = HapbeatClient.NormalizeOverride(group);
+
+            bool playerForced = IsPlayerForcedByBuild;
+            bool groupForced = IsGroupForcedByBuild;
+
+            _overridePlayer = ResolveEffectiveOverride(BuildOverridePlayer, requestedPlayer);
+            _overrideGroup = ResolveEffectiveOverride(BuildOverrideGroup, requestedGroup);
+
+            if (playerForced && requestedPlayer != _overridePlayer)
+                LogVerbose($"Address override: player={requestedPlayer} ignored — forced to {_overridePlayer} by HapbeatConfig.buildOverridePlayer.");
+            if (groupForced && requestedGroup != _overrideGroup)
+                LogVerbose($"Address override: group={requestedGroup} ignored — forced to {_overrideGroup} by HapbeatConfig.buildOverrideGroup.");
 
             if (_client != null)
                 _client.SetAddressOverride(_overridePlayer, _overrideGroup);
 
-            if (persist)
+            // Persist only the axes the build leaves to this device. Writing a
+            // forced axis would bake the build's value into PlayerPrefs, so a
+            // later build that un-forces that axis would silently inherit it.
+            if (persist && (!playerForced || !groupForced))
             {
-                PlayerPrefs.SetInt(PlayerPrefsKeyOverridePlayer, _overridePlayer);
-                PlayerPrefs.SetInt(PlayerPrefsKeyOverrideGroup, _overrideGroup);
+                if (!playerForced)
+                    PlayerPrefs.SetInt(PlayerPrefsKeyOverridePlayer, _overridePlayer);
+                if (!groupForced)
+                    PlayerPrefs.SetInt(PlayerPrefsKeyOverrideGroup, _overrideGroup);
                 PlayerPrefs.Save();
             }
 
@@ -438,8 +503,10 @@ namespace Hapbeat
         /// <summary>
         /// Clears the per-device address override saved by <see cref="SetAddressOverride"/>
         /// (persist: true) and reverts the runtime override back to disabled
-        /// (<see cref="AddressOverrideDisabled"/> on both axes) — there is no config-level
-        /// default to fall back to; clearing simply means "stop overriding".
+        /// (<see cref="AddressOverrideDisabled"/>) on every axis the build leaves to this
+        /// device. An axis pinned by the build (<see cref="IsPlayerForcedByBuild"/> /
+        /// <see cref="IsGroupForcedByBuild"/>) stays on its config value — it was never
+        /// per-device state, so there is nothing to clear for it.
         /// <para>
         /// Reuses <see cref="SetAddressOverride"/> (with <c>persist: false</c>, so the
         /// just-cleared keys aren't immediately re-saved) to push the reverted values
@@ -453,9 +520,12 @@ namespace Hapbeat
             PlayerPrefs.DeleteKey(PlayerPrefsKeyOverrideGroup);
             PlayerPrefs.Save();
 
+            // Build-forced axes are restored to their config value by
+            // SetAddressOverride itself (it ignores the -1 for those axes).
             SetAddressOverride(AddressOverrideDisabled, AddressOverrideDisabled, persist: false);
 
-            Log("Persisted address override cleared — reverted to disabled.");
+            Log($"Persisted address override cleared — player={_overridePlayer}, group={_overrideGroup} " +
+                "(build-forced axes keep their config value).");
         }
 
         /// <summary>
@@ -1281,18 +1351,19 @@ namespace Hapbeat
                 Log("No HapbeatConfig found. Using default settings.");
             }
 
-            // PlayerPrefs (if present) restores a per-device address override saved
-            // by a prior SetAddressOverride(..., persist: true) call. There is no
-            // config-level default to fall back to — an override is either
-            // persisted from a previous run, or starts disabled.
+            // Per axis: a build-wide value in HapbeatConfig (1..99) wins and is not
+            // changeable on this device; otherwise PlayerPrefs (if present) restores a
+            // per-device override saved by a prior SetAddressOverride(..., persist: true)
+            // call, and failing that the axis starts disabled.
+            // See ResolveEffectiveOverride.
             int player = PlayerPrefs.HasKey(PlayerPrefsKeyOverridePlayer)
                 ? PlayerPrefs.GetInt(PlayerPrefsKeyOverridePlayer)
                 : AddressOverrideDisabled;
             int group = PlayerPrefs.HasKey(PlayerPrefsKeyOverrideGroup)
                 ? PlayerPrefs.GetInt(PlayerPrefsKeyOverrideGroup)
                 : AddressOverrideDisabled;
-            _overridePlayer = HapbeatClient.NormalizeOverride(player);
-            _overrideGroup = HapbeatClient.NormalizeOverride(group);
+            _overridePlayer = ResolveEffectiveOverride(BuildOverridePlayer, player);
+            _overrideGroup = ResolveEffectiveOverride(BuildOverrideGroup, group);
 
             _client = CreateClient();
             _isInitialized = true;

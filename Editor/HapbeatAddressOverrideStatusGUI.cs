@@ -57,18 +57,65 @@ namespace Hapbeat.Editor
         public static void DrawFull(HapbeatManager manager, System.Action repaint)
         {
             EditorGUILayout.LabelField("Address Override (this device)", EditorStyles.boldLabel);
+            DrawBuildRow(manager);
             DrawSavedRow();
             DrawActiveRow(manager);
             DrawClearButton(manager, repaint);
         }
 
-        /// <summary>Compact variant: just the two status rows, no button (callers
+        /// <summary>Compact variant: just the status rows, no button (callers
         /// that want the Clear action point users at the full Runtime Status window instead).</summary>
         public static void DrawCompact(HapbeatManager manager)
         {
             EditorGUILayout.LabelField("Address Override (this device)", EditorStyles.boldLabel);
+            DrawBuildRow(manager);
             DrawSavedRow();
             DrawActiveRow(manager);
+        }
+
+        /// <summary>
+        /// Reads the build-wide forced player/group (HapbeatConfig). Prefers a live
+        /// <paramref name="manager"/> (it may hold an explicitly assigned config asset)
+        /// and falls back to the Resources-loaded default, which is what the runtime
+        /// itself loads when nothing is assigned. Values are already normalized:
+        /// -1 = this axis is left to the device.
+        /// </summary>
+        public static void GetBuildOverride(HapbeatManager manager, out int player, out int group)
+        {
+            if (manager != null)
+            {
+                player = manager.BuildOverridePlayer;
+                group = manager.BuildOverrideGroup;
+                return;
+            }
+
+            var config = Resources.Load<HapbeatConfig>("HapbeatConfig");
+            player = config != null ? HapbeatClient.NormalizeOverride(config.buildOverridePlayer) : -1;
+            group = config != null ? HapbeatClient.NormalizeOverride(config.buildOverrideGroup) : -1;
+        }
+
+        /// <summary>True when at least one axis is pinned by the build — the point at which
+        /// "Save to this device" / "Clear Saved Override" stop being the whole story.</summary>
+        public static bool HasAnyBuildOverride(HapbeatManager manager)
+        {
+            GetBuildOverride(manager, out int player, out int group);
+            return player >= 1 || group >= 1;
+        }
+
+        /// <summary>Build-wide forced values row. Always drawn (never inserted/removed) —
+        /// see the layout-shift note on this class.</summary>
+        public static void DrawBuildRow(HapbeatManager manager)
+        {
+            GetBuildOverride(manager, out int player, out int group);
+            EditorGUILayout.LabelField(
+                $"Build (forced): player={Colorize(FormatOverrideValue(player, "per-device"))}, " +
+                $"group={Colorize(FormatOverrideValue(group, "per-device"))}",
+                MiniLabelRichText);
+            EditorGUILayout.LabelField(
+                player >= 1 || group >= 1
+                    ? "   A forced axis always wins over the saved/edited value below and cannot be changed on the device."
+                    : "   Set in HapbeatConfig (Hapbeat > Settings > Addressing). 'per-device' = decided by the values below.",
+                EditorStyles.miniLabel);
         }
 
         public static void DrawSavedRow()
@@ -104,7 +151,12 @@ namespace Hapbeat.Editor
         {
             bool hasSaved = HapbeatManager.TryGetPersistedAddressOverride(out _, out _);
 
-            EditorGUI.BeginDisabledGroup(!hasSaved);
+            // Both axes pinned by the build ⇒ nothing about the routing is
+            // per-device, so clearing the saved values would change nothing.
+            GetBuildOverride(manager, out int buildPlayer, out int buildGroup);
+            bool allForced = buildPlayer >= 1 && buildGroup >= 1;
+
+            EditorGUI.BeginDisabledGroup(!hasSaved || allForced);
             if (GUILayout.Button("Clear Saved Override"))
             {
                 if (Application.isPlaying && manager != null)

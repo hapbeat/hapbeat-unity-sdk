@@ -24,6 +24,26 @@ namespace Hapbeat
         /// Longer strings are truncated when serialized.</summary>
         public const int MaxAppNameLength = 16;
 
+        [Header("Addressing")]
+        [Tooltip("Build-wide forced player number.\n\n" +
+                 "  1-99 = force this player for the whole build (cannot be changed on the device —\n" +
+                 "         the runtime panel / SetAddressOverride / PlayerPrefs are all ignored for this axis)\n" +
+                 "  -1   = per-device (the runtime panel / SetAddressOverride / PlayerPrefs decide)\n\n" +
+                 "Typical setup for running several demos at once: force 'group' in the build so each " +
+                 "demo build only ever reaches its own devices, and leave 'player' at -1 so each " +
+                 "headset can be paired with its own Hapbeat on site.")]
+        [Range(-1, 99)]
+        public int buildOverridePlayer = -1;
+
+        [Tooltip("Build-wide forced group number.\n\n" +
+                 "  1-99 = force this group for the whole build (cannot be changed on the device —\n" +
+                 "         the runtime panel / SetAddressOverride / PlayerPrefs are all ignored for this axis)\n" +
+                 "  -1   = per-device (the runtime panel / SetAddressOverride / PlayerPrefs decide)\n\n" +
+                 "Forcing the group here is the intended way to keep simultaneous demos from " +
+                 "cross-talking: every build ships with its own group number baked in.")]
+        [Range(-1, 99)]
+        public int buildOverrideGroup = -1;
+
         [Header("Bridge (ESP-NOW)")]
         [Tooltip("Use Bridge for ESP-NOW multi-device transmission. When disabled (default), connects directly to devices via Wi-Fi UDP.")]
         public bool useBridge = false;

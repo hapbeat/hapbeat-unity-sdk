@@ -13,12 +13,19 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### ⚠ 破壊的変更（移行ガイド）
 
-- `HapbeatConfig` の `group` / `overridePlayer` / `overrideGroup` / `discoveryTimeoutMs` を削除しました。`group` と `discoveryTimeoutMs` はどこからも読まれていない dead field で、値を変えても挙動は変わりませんでした。player / group の指定は実行時 API（`SetAddressOverride`）に一本化しています。
+- `HapbeatConfig` の `group` / `overridePlayer` / `overrideGroup` / `discoveryTimeoutMs` を削除しました。`group` と `discoveryTimeoutMs` はどこからも読まれていない dead field で、値を変えても挙動は変わりませんでした。旧 `overridePlayer` / `overrideGroup`（起動時の既定値）は、端末ごとの実行時 API（`SetAddressOverride`）と、ビルド全体を固定する `buildOverridePlayer` / `buildOverrideGroup`（下記 Added）に役割を分けています。
 - `HapbeatManager.DefaultGroup` / `EffectiveGroup` を削除しました。CONNECT_STATUS (0x20) の group バイトはデバイス側で保存後に一切読まれないレガシーフィールドであることが確認できたため、内部処理に単純化しています。
 - `HapbeatClient.SendPlay` / `SendStop` / `SendStopAll` の戻り値が `void` から `CommandSendResult`（`Broadcast` / `Unicast`）に変わりました。戻り値を使わない既存の呼び出しはそのままコンパイルできます。
 
 ### Added（追加）
 
+- **ビルド単位の Address Override 固定（`HapbeatConfig` > Addressing）** — 複数のデモを同時開催しても混線しないよう、player / group を**ビルド全体で固定**できるようにしました。軸ごとに独立して指定します。
+  - `HapbeatConfig.buildOverridePlayer` / `buildOverrideGroup`（既定 `-1`）— `1-99` = そのビルド全体で強制（端末側の設定パネル / `SetAddressOverride` / `PlayerPrefs` では変更不可）。`-1` = 従来どおり端末ごと。
+  - 想定運用: `group` をビルドで固定してデモを分離し、`player` は `-1` のまま端末ごとにペアリングする。
+  - 優先順位は軸ごとに「config が `1-99` → それを強制 / config が `-1` → 保存値（`PlayerPrefs`）→ 無効」。`HapbeatManager.ResolveEffectiveOverride(int, int)`（static・純粋関数）として切り出し、ユニットテスト（`AddressOverrideResolutionTests`）を追加しています。
+  - `HapbeatManager.BuildOverridePlayer` / `BuildOverrideGroup` / `IsPlayerForcedByBuild` / `IsGroupForcedByBuild` — UI が「この軸はビルド固定」と表示するための公開判定。
+  - 強制軸は `SetAddressOverride` が無視し（`PlayerPrefs` にも書きません）、`ClearPersistedAddressOverride` 後も config 値のまま維持されます。`HapbeatAddressOverridePanel` は該当軸の -/+ を無効化し値に `(build)` を付記、`Hapbeat > Open Runtime Status` は `Build (forced)` 行を表示します。
+  - 既定値（`-1` / `-1`）では従来の挙動と完全に同一です。
 - **Address Override — 実行時に player / group を上書き**
   同一ビルドを複数の VR HMD に配布し、端末ごとに自分の Hapbeat へ 1:1 で送りたい、というユースケース向けの機能です。有効にすると EventMap 側の target に関わらず、すべての送信（Play / Stop / StopAll / StreamBegin）の宛先が指定した player / group に強制されます。
   - `HapbeatManager.SetAddressOverride(int player, int group, bool persist = false)` — 実行時に切り替え。`persist: true` で `PlayerPrefs` に保存し、次回起動時に復元します（端末ごとの設定なので、プロジェクト共有の `HapbeatConfig` には保存しません）。

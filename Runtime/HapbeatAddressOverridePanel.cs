@@ -160,6 +160,17 @@ namespace Hapbeat
         private Text _groupValueText;
         private Text _statusText;
 
+        // Stepper buttons, kept so an axis pinned by the build
+        // (HapbeatConfig.buildOverridePlayer / buildOverrideGroup) can be shown
+        // as non-interactable. The steppers themselves also refuse to move such
+        // an axis (see PlayerUp/PlayerDown/GroupUp/GroupDown) — interactable is
+        // only the visual half, and ActivateFocused() invokes onClick directly,
+        // which bypasses it.
+        private Button _playerDecButton;
+        private Button _playerIncButton;
+        private Button _groupDecButton;
+        private Button _groupIncButton;
+
         private bool _built;
 
         // The Canvas this panel builds at runtime. Kept as a field (rather than
@@ -394,8 +405,10 @@ namespace Hapbeat
             leftColumnLayout.childForceExpandWidth = true;
             leftColumnLayout.childForceExpandHeight = false;
 
-            _playerValueText = CreateStepperRow(leftColumn.transform, "Player", 0, PlayerDown, PlayerUp);
-            _groupValueText = CreateStepperRow(leftColumn.transform, "Group", 1, GroupDown, GroupUp);
+            _playerValueText = CreateStepperRow(leftColumn.transform, "Player", 0, PlayerDown, PlayerUp,
+                out _playerDecButton, out _playerIncButton);
+            _groupValueText = CreateStepperRow(leftColumn.transform, "Group", 1, GroupDown, GroupUp,
+                out _groupDecButton, out _groupIncButton);
 
             var rightColumn = new GameObject("Actions", typeof(RectTransform));
             rightColumn.transform.SetParent(mainRow.transform, false);
@@ -425,7 +438,8 @@ namespace Hapbeat
             statusLayoutElement.preferredHeight = 16f;
         }
 
-        private Text CreateStepperRow(Transform parent, string label, int row, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc)
+        private Text CreateStepperRow(Transform parent, string label, int row, UnityEngine.Events.UnityAction onDec, UnityEngine.Events.UnityAction onInc,
+            out Button decButtonOut, out Button incButtonOut)
         {
             var rowGo = new GameObject(label + "Row", typeof(RectTransform));
             rowGo.transform.SetParent(parent, false);
@@ -467,6 +481,8 @@ namespace Hapbeat
             var incButton = CreateSmallButton(rowGo.transform, "Inc", "+", onInc);
             RegisterFocusable(new Vector2Int(1, row), incButton);
 
+            decButtonOut = decButton;
+            incButtonOut = incButton;
             return valueText;
         }
 
@@ -807,17 +823,36 @@ namespace Hapbeat
             _flashCoroutine = null;
         }
 
-        /// <summary>Step the editing Player number down. Wireable from UnityEvents / external controllers.</summary>
-        public void PlayerDown() { _editingPlayer = StepDown(_editingPlayer); RefreshLabels(); DeselectEventSystem(); }
+        /// <summary>Step the editing Player number down. No-op while the player axis is
+        /// pinned by the build (see <see cref="PlayerForcedByBuild"/>). Wireable from
+        /// UnityEvents / external controllers.</summary>
+        public void PlayerDown() { if (PlayerForcedByBuild) return; _editingPlayer = StepDown(_editingPlayer); RefreshLabels(); DeselectEventSystem(); }
 
-        /// <summary>Step the editing Player number up. Wireable from UnityEvents / external controllers.</summary>
-        public void PlayerUp() { _editingPlayer = StepUp(_editingPlayer); RefreshLabels(); DeselectEventSystem(); }
+        /// <summary>Step the editing Player number up. No-op while the player axis is
+        /// pinned by the build. Wireable from UnityEvents / external controllers.</summary>
+        public void PlayerUp() { if (PlayerForcedByBuild) return; _editingPlayer = StepUp(_editingPlayer); RefreshLabels(); DeselectEventSystem(); }
 
-        /// <summary>Step the editing Group number down. Wireable from UnityEvents / external controllers.</summary>
-        public void GroupDown() { _editingGroup = StepDown(_editingGroup); RefreshLabels(); DeselectEventSystem(); }
+        /// <summary>Step the editing Group number down. No-op while the group axis is
+        /// pinned by the build. Wireable from UnityEvents / external controllers.</summary>
+        public void GroupDown() { if (GroupForcedByBuild) return; _editingGroup = StepDown(_editingGroup); RefreshLabels(); DeselectEventSystem(); }
 
-        /// <summary>Step the editing Group number up. Wireable from UnityEvents / external controllers.</summary>
-        public void GroupUp() { _editingGroup = StepUp(_editingGroup); RefreshLabels(); DeselectEventSystem(); }
+        /// <summary>Step the editing Group number up. No-op while the group axis is
+        /// pinned by the build. Wireable from UnityEvents / external controllers.</summary>
+        public void GroupUp() { if (GroupForcedByBuild) return; _editingGroup = StepUp(_editingGroup); RefreshLabels(); DeselectEventSystem(); }
+
+        /// <summary>Whether the player axis is fixed for the whole build
+        /// (<c>HapbeatConfig.buildOverridePlayer</c> in 1..99) and therefore not
+        /// editable here. False when there's no manager instance yet.</summary>
+        private static bool PlayerForcedByBuild
+        {
+            get { var mgr = HapbeatManager.Instance; return mgr != null && mgr.IsPlayerForcedByBuild; }
+        }
+
+        /// <summary>Whether the group axis is fixed for the whole build. See <see cref="PlayerForcedByBuild"/>.</summary>
+        private static bool GroupForcedByBuild
+        {
+            get { var mgr = HapbeatManager.Instance; return mgr != null && mgr.IsGroupForcedByBuild; }
+        }
 
         /// <summary>
         /// Clears the EventSystem's <c>currentSelectedGameObject</c> after this panel's
@@ -874,12 +909,29 @@ namespace Hapbeat
 
         private void RefreshLabels()
         {
-            if (_playerValueText != null) _playerValueText.text = LabelFor(_editingPlayer);
-            if (_groupValueText != null) _groupValueText.text = LabelFor(_editingGroup);
-
             var mgr = HapbeatManager.Instance;
             int appliedPlayer = mgr != null ? mgr.OverridePlayer : -1;
             int appliedGroup = mgr != null ? mgr.OverrideGroup : -1;
+
+            // A build-pinned axis has exactly one legal value — keep the editing
+            // buffer on it so the value label and the status preview below can
+            // never show something Apply would refuse to set.
+            bool playerForced = PlayerForcedByBuild;
+            bool groupForced = GroupForcedByBuild;
+            if (playerForced) _editingPlayer = appliedPlayer;
+            if (groupForced) _editingGroup = appliedGroup;
+
+            // Steppers for a pinned axis are dimmed (they also refuse to move it —
+            // see PlayerDown/PlayerUp/GroupDown/GroupUp), and the value label says
+            // why. The suffix rides inside the existing fixed-size value rect, so
+            // no row is added or removed (see workspace layout-shift rule).
+            if (_playerDecButton != null) _playerDecButton.interactable = !playerForced;
+            if (_playerIncButton != null) _playerIncButton.interactable = !playerForced;
+            if (_groupDecButton != null) _groupDecButton.interactable = !groupForced;
+            if (_groupIncButton != null) _groupIncButton.interactable = !groupForced;
+
+            if (_playerValueText != null) _playerValueText.text = LabelFor(_editingPlayer, playerForced);
+            if (_groupValueText != null) _groupValueText.text = LabelFor(_editingGroup, groupForced);
 
             string editingResolved = HapbeatClient.ResolveTarget(PreviewTarget, _editingPlayer, _editingGroup);
 
@@ -932,6 +984,12 @@ namespace Hapbeat
             return sb.ToString();
         }
 
-        private static string LabelFor(int value) => value >= 1 ? value.ToString() : "disabled";
+        /// <summary>Value label for one stepper row. <paramref name="forcedByBuild"/> appends
+        /// "(build)" so a pinned axis reads as fixed rather than merely un-edited.</summary>
+        private static string LabelFor(int value, bool forcedByBuild)
+        {
+            string text = value >= 1 ? value.ToString() : "disabled";
+            return forcedByBuild ? text + " (build)" : text;
+        }
     }
 }

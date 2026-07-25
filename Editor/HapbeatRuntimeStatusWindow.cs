@@ -76,42 +76,73 @@ namespace Hapbeat.Editor
                 _editGroupField = savedGroup;
             }
 
+            // An axis pinned by the build isn't per-device state at all: its field
+            // shows the forced value read-only, and Save skips it (see below).
+            HapbeatAddressOverrideStatusGUI.GetBuildOverride(HapbeatManager.Instance, out int buildPlayer, out int buildGroup);
+            bool playerForced = buildPlayer >= 1;
+            bool groupForced = buildGroup >= 1;
+
             EditorGUILayout.LabelField("Edit (works outside Play Mode too)", EditorStyles.miniBoldLabel);
 
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Player", GUILayout.Width(50));
-            _editPlayerField = EditorGUILayout.IntField(_editPlayerField, GUILayout.Width(50));
+            using (new EditorGUI.DisabledGroupScope(playerForced))
+            {
+                int shownPlayer = playerForced ? buildPlayer : _editPlayerField;
+                shownPlayer = EditorGUILayout.IntField(shownPlayer, GUILayout.Width(50));
+                if (!playerForced) _editPlayerField = shownPlayer;
+            }
             GUILayout.Space(10);
             EditorGUILayout.LabelField("Group", GUILayout.Width(50));
-            _editGroupField = EditorGUILayout.IntField(_editGroupField, GUILayout.Width(50));
+            using (new EditorGUI.DisabledGroupScope(groupForced))
+            {
+                int shownGroup = groupForced ? buildGroup : _editGroupField;
+                shownGroup = EditorGUILayout.IntField(shownGroup, GUILayout.Width(50));
+                if (!groupForced) _editGroupField = shownGroup;
+            }
             EditorGUILayout.EndHorizontal();
 
-            EditorGUILayout.LabelField("(< 1 = disabled; normalized to -1 outside 1..99 on Save)", EditorStyles.miniLabel);
+            // One line in every state (text swaps, no row appears/disappears).
+            EditorGUILayout.LabelField(
+                playerForced && groupForced
+                    ? "(both axes forced by the build — nothing to save on this device)"
+                    : (playerForced || groupForced)
+                        ? $"(the {(playerForced ? "Player" : "Group")} axis is forced by the build and is not saved here)"
+                        : "(< 1 = disabled; normalized to -1 outside 1..99 on Save)",
+                EditorStyles.miniLabel);
 
-            if (GUILayout.Button("Save to this device"))
+            using (new EditorGUI.DisabledGroupScope(playerForced && groupForced))
             {
-                int normPlayer = HapbeatClient.NormalizeOverride(_editPlayerField);
-                int normGroup = HapbeatClient.NormalizeOverride(_editGroupField);
-
-                if (Application.isPlaying && HapbeatManager.Instance != null)
+                if (GUILayout.Button("Save to this device"))
                 {
-                    // Play mode: go through the manager so the live client / any
-                    // connected device (CONNECT_STATUS) picks it up immediately,
-                    // not just PlayerPrefs.
-                    HapbeatManager.Instance.SetAddressOverride(normPlayer, normGroup, persist: true);
-                }
-                else
-                {
-                    PlayerPrefs.SetInt(HapbeatManager.PlayerPrefsKeyOverridePlayer, normPlayer);
-                    PlayerPrefs.SetInt(HapbeatManager.PlayerPrefsKeyOverrideGroup, normGroup);
-                    PlayerPrefs.Save();
-                }
+                    int normPlayer = HapbeatClient.NormalizeOverride(_editPlayerField);
+                    int normGroup = HapbeatClient.NormalizeOverride(_editGroupField);
 
-                // Reflect the normalized values back into the edit fields so the
-                // UI doesn't show a stale un-normalized number after Save.
-                _editPlayerField = normPlayer;
-                _editGroupField = normGroup;
-                Repaint();
+                    if (Application.isPlaying && HapbeatManager.Instance != null)
+                    {
+                        // Play mode: go through the manager so the live client / any
+                        // connected device (CONNECT_STATUS) picks it up immediately,
+                        // not just PlayerPrefs. It also drops any forced axis on its own.
+                        HapbeatManager.Instance.SetAddressOverride(normPlayer, normGroup, persist: true);
+                    }
+                    else
+                    {
+                        // Same rule as SetAddressOverride: never write a forced axis to
+                        // PlayerPrefs, or a later build that un-forces it would inherit
+                        // the value silently.
+                        if (!playerForced)
+                            PlayerPrefs.SetInt(HapbeatManager.PlayerPrefsKeyOverridePlayer, normPlayer);
+                        if (!groupForced)
+                            PlayerPrefs.SetInt(HapbeatManager.PlayerPrefsKeyOverrideGroup, normGroup);
+                        PlayerPrefs.Save();
+                    }
+
+                    // Reflect the normalized values back into the edit fields so the
+                    // UI doesn't show a stale un-normalized number after Save.
+                    _editPlayerField = normPlayer;
+                    _editGroupField = normGroup;
+                    Repaint();
+                }
             }
         }
 

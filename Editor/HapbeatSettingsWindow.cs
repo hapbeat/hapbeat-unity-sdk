@@ -99,6 +99,28 @@ namespace Hapbeat.Editor
                 (len == 0 ? "  (empty: uses Application.productName)" : ""),
                 EditorStyles.miniLabel);
 
+            // ── Addressing ───────────────────────────────────────────
+            // Build-wide player/group pinning. -1 keeps an axis per-device
+            // (runtime panel / SetAddressOverride / PlayerPrefs); 1-99 forces it
+            // for every device running this build.
+            EditorGUILayout.Space(5);
+            EditorGUILayout.LabelField("Addressing", EditorStyles.boldLabel);
+
+            EditorGUILayout.HelpBox(
+                "-1 = per-device (set on the device via the Address Override panel / API; saved in PlayerPrefs)\n" +
+                "1-99 = forced for this whole build (cannot be changed on the device)\n\n" +
+                "Running several demos at once: force Group here so each build only reaches its own\n" +
+                "devices, and leave Player at -1 so each headset is paired on site.",
+                MessageType.Info);
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("buildOverridePlayer"),
+                new GUIContent("Build Player", "-1 = per-device. 1-99 = forced for this whole build."));
+
+            EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("buildOverrideGroup"),
+                new GUIContent("Build Group", "-1 = per-device. 1-99 = forced for this whole build."));
+
             EditorGUILayout.Space(5);
             EditorGUILayout.LabelField("Behavior", EditorStyles.boldLabel);
 
