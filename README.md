@@ -2,8 +2,10 @@
 
 Hapbeat デバイスを Unity から制御する公式 SDK。2D / 3D / XR 対応。
 
-> **📚 公式ドキュメント**: [https://devtools.hapbeat.com/docs/unity-sdk/](https://devtools.hapbeat.com/docs/unity-sdk/)
-> Getting Started / Trigger コンポーネント / EventMap / Parameter Binding 等の解説はポータルに集約しています。
+> **📚 公式ドキュメント**: [https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/)
+> Getting Started / Trigger コンポーネント / EventMap / Parameter Binding / ターゲティング等の解説はポータルに集約しています。本 README は概要と入口です。
+
+要件: **Unity 6 (6000.0) 以上**
 
 ## インストール
 
@@ -13,13 +15,20 @@ Unity Package Manager → `+` → **`Add package from git URL...`** → 以下�
 https://github.com/Hapbeat/hapbeat-unity-sdk.git
 ```
 
-詳細は [インストール手順](https://devtools.hapbeat.com/docs/unity-sdk/installation/) を参照。
+詳細は [インストール手順](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/installation/) を参照。
 
 ## クイックスタート
 
-1. シーンに HapbeatManager を配置: `GameObject > Hapbeat > Event Router`
-2. 起動時に自動で Wi-Fi UDP ブロードキャストが開始される
+1. `Hapbeat > Initial Scene Setup` を実行（シーンに Event Router を配置し、EventMap アセットを生成）
+   - 個別に作る場合は `GameObject > Hapbeat > Event Router` / `Assets > Create > Hapbeat > Event Map`
+2. 起動時に自動で UDP ソケットが開き、デバイスの検出（PING / PONG）が始まる
 3. 以下のいずれかの方法で触覚イベントを発火
+
+## 送信の仕組み（0.3.0 以降）
+
+`PLAY` / `STOP` / `STOP_ALL` / `STREAM_*` は、PONG で判明済みのデバイスへ**ユニキャスト**で送ります（`commandUnicast` / `streamUnicast`、いずれも既定 ON）。Wi-Fi AP の省電力バッファ（DTIM）でブロードキャストフレームが 100〜300 ms 保留され、遅延や CLIP の途切れとして現れる問題を避けるためです。既知デバイスが 0 台のときは自動でブロードキャストにフォールバックします。`PING` / `CONNECT_STATUS` は検出のため従来どおりブロードキャストです。
+
+詳細は [通信モデル](https://devtools.hapbeat.com/docs/concepts/communication-model/) を参照。
 
 ## イベント割り当て方法
 
@@ -30,11 +39,11 @@ https://github.com/Hapbeat/hapbeat-unity-sdk.git
 ```csharp
 using Hapbeat;
 
-// 即時再生
-HapbeatManager.Instance.Play("impact.landing", gain: 0.3f);
+// 即時再生（event ID は <kit-name>.<clip-name>）
+HapbeatManager.Instance.Play("sample-kit.sine_100hz", gain: 0.3f);
 
 // 停止
-HapbeatManager.Instance.Stop("impact.landing");
+HapbeatManager.Instance.Stop("sample-kit.sine_100hz");
 
 // 全停止
 HapbeatManager.Instance.StopAll();
@@ -47,191 +56,54 @@ HapbeatManager.Instance.StopAll();
 
 ### 方法2: EventMap + Trigger コンポーネント（推奨・コード不要）
 
-イベント定義を一元管理し、Inspector だけで設定。既存コード変更不要。
+イベント定義を EventMap に一元管理し、発火は Inspector だけで設定します。既存コードの変更は不要です。
+
+Trigger は EventMap のエントリを **stable GUID** で参照するため、エントリを並べ替えても配線は壊れません。
 
 #### Step 1: EventMap 作成
 
 `Assets > Create > Hapbeat > Event Map` → エントリを追加
 
-| displayName | eventId | gain |
-|---|---|---|
-| 着地 | impact.landing | 0.3 |
-| ジャンプ | jump.takeoff | 0.2 |
-| 敵衝突 | impact.enemy | 0.8 |
+| displayName | category | eventName | gain |
+|---|---|---|---|
+| 着地 | my-kit | landing | 0.3 |
+| ジャンプ | my-kit | jump | 0.2 |
+| 敵衝突 | my-kit | enemy_hit | 0.8 |
+
+`eventId` は `category.eventName`（= `<kit-name>.<clip-name>`）として自動合成されます。
 
 #### Step 2: Trigger コンポーネントを配置
 
-**A. 衝突トリガー（CollisionTrigger）** — 対象 GO にアタッチ
+`Add Component > Hapbeat/...` から追加します。
 
-物理衝突やトリガーイベントで発火。2D / 3D 自動判定。
+| コンポーネント | 用途 |
+|---|---|
+| **Hapbeat Collision Trigger** | 物理衝突 / Trigger Enter・Exit で発火。2D / 3D 自動判定、速度連動ゲイン対応。衝突する GO にアタッチ |
+| **Hapbeat UnityEvent Trigger** | `Fire()` / `FireWithGain(float)` / `Stop()` を任意の UnityEvent から呼ぶ。UI Button の OnClick、XRI のイベント、Animation Event 等 |
+| **Hapbeat Sequence Trigger** | 掴む → 保持（ループ）→ 離す の 3 フェーズを 1 コンポーネントで管理 |
+| **Hapbeat Tick Trigger** | Slider / ScrollRect など連続値の変化からスナップ触覚を生成 |
+| **Hapbeat Parameter Binding** | Transform / 値を再生中の StreamClip の gain / pan にリアルタイムマッピング |
+| **Hapbeat Action Helper** | `Stop` / `StopAll` / `StopStream` / `Ping` を UnityEvent から呼べるようにするラッパー |
+| **Hapbeat Key Dispatcher** | キー入力 → UnityEvent（Input System） |
+| **Hapbeat Status Overlay** | 接続状態 / RTT を画面に表示するデバッグ HUD |
 
-```
-設定項目:
-  Event Map    → 作成した EventMap
-  Event        → ドロップダウンで選択
-  Trigger Event → CollisionEnter / TriggerEnter / Exit 系
-  Tag Filter   → "Player" 等（空なら全対象）
-  Layer Mask   → レイヤーフィルタ
-  Gain Mode    → Fixed（固定）/ VelocityScaled（速度連動）
-  Cooldown     → 連続発火防止（秒）
-```
+**Animator との連携は `HapbeatStateBehaviour`**（コンポーネントではありません）
 
-速度連動ゲイン（VelocityScaled）を使うと、衝突速度に応じて振動の強さが変わります。AnimationCurve で速度→ゲインの変換カーブを設定できます。
+Animator Controller の対象 state を選択 → `Add Behaviour` → `HapbeatStateBehaviour` を追加します。state の Enter / Exit にそれぞれ別エントリを割り当てられ、`Required Previous State` で A→B の遷移に限定した発火もできます。ループする StreamClip は state を抜けたときに自動停止します。
 
-複数イベントを同じ GO から発火したい場合は、CollisionTrigger を複数アタッチし、Tag Filter や Layer Mask で対象を分けます。
+> v0.1 期の `HapbeatAnimatorTrigger`（Animator パラメータの変化を監視する方式）は v0.2.0 で廃止されました。
 
-**B. Animator トリガー（AnimatorTrigger）** — 専用 GO に配置可能
-
-Animator パラメータの変化を検知して発火。対象 Animator はドラッグで参照指定。
-
-```
-設定項目:
-  Event Map        → EventMap
-  Event            → ドロップダウン
-  Target Animator  → 監視対象（別 GO の Animator もOK）
-  Parameter        → ドロップダウンで選択（Animator から自動取得）
-  Condition        → BoolBecameTrue / BoolBecameFalse / FloatAbove 等
-  Threshold        → Float/Int 条件の閾値
-```
-
-例: `grounded` が `true` になった瞬間 → 着地振動
-
-**C. UnityEvent トリガー（UnityEventTrigger）** — 専用 GO に配置可能
-
-`Fire()` メソッドを任意の UnityEvent から呼び出し。
-
-- UI Button の OnClick
-- XR Interaction Toolkit の OnSelectEntered / OnActivated
-- Animation Event
-- その他任意の UnityEvent
-
-```
-設定項目:
-  Event Map → EventMap
-  Event     → ドロップダウン
-```
-
-#### UnityEventTrigger の詳細: コントローラー入力で振動させる
-
-ここでは VR コントローラーのトリガー（人差し指ボタン）を押したら振動する設定を、コード不要で行う手順を説明します。
-
-**前提**: XR Interaction Toolkit がプロジェクトに入っていること（VR テンプレートなら最初から入っています）
-
-**Step 1: EventMap にイベントを登録**
-
-1. Project ウィンドウの Assets フォルダで右クリック → `Create > Hapbeat > Event Map`
-2. 作成された `HapbeatEventMap` をクリックして Inspector を開く
-3. `Entries` の `+` ボタンを押してエントリを追加:
-   - Display Name: `トリガー振動`
-   - Event Id: `input.trigger`
-   - Gain: `0.5`
-
-**Step 2: Hapbeat Event Router を作成**
-
-1. Hierarchy ウィンドウで右クリック → `Hapbeat > Event Router`
-2. `[Hapbeat Event Router]` という GO が作成される
-
-**Step 3: UnityEventTrigger を追加**
-
-1. Hierarchy で `[Hapbeat Event Router]` を選択
-2. Inspector 下部の `Add Component` をクリック
-3. 検索欄に `Hapbeat` と入力 → `Hapbeat/UnityEvent Trigger` を選択
-4. 追加された HapbeatUnityEventTrigger の設定:
-   - Event Map → Step 1 で作った `HapbeatEventMap` をドラッグ
-   - Event → ドロップダウンから「トリガー振動」を選択
-
-**Step 4: XR Controller の入力イベントと接続**
-
-ここが核心です。VR テンプレートのシーンには `XR Origin` の下にコントローラーの GO があります。
-
-1. Hierarchy で `XR Origin > Camera Offset > Right Controller` を探す
-   （テンプレートによっては `Right Hand Controller` 等の名前）
-2. この GO には `XR Controller` コンポーネントがあるはず
-3. さらに `XR Interactor` 系のコンポーネント（`XR Ray Interactor` や `XR Direct Interactor`）があれば、そこに UnityEvent があります
-
-**接続方法A: XR Interactor の Activate イベントを使う**
-
-1. Right Controller の `XR Ray Interactor`（または `XR Direct Interactor`）を Inspector で開く
-2. 下の方にある `Interactor Events` セクションを展開
-3. `Activate` の `On Activated` イベントを見つける（トリガーを引いた時に発火）
-4. `+` ボタンを押して新しいイベントを追加
-5. 設定:
-   - 左の欄に `[Hapbeat Event Router]` を Hierarchy からドラッグ
-   - 右のドロップダウン → `HapbeatUnityEventTrigger > Fire()` を選択
-
-```
-On Activated:
-  ┌─────────────────────────────────────────────────┐
-  │ [Hapbeat Event Router]  │ HapbeatUnityEvent... ▼│
-  │                         │ Fire()                │
-  └─────────────────────────────────────────────────┘
-```
-
-これで**右コントローラーのトリガーを引く → Hapbeat が振動**します。
-
-**接続方法B: Input Action の Events を使う（より汎用的）**
-
-XR Interactor がない場合や、特定のボタンを直接使いたい場合:
-
-1. `[Hapbeat Event Router]` に `Player Input` コンポーネントを追加
-2. Actions に XR の Input Action Asset を設定
-3. Behavior を `Invoke Unity Events` に変更
-4. 表示される Events セクションで、目的のアクション（例: `XRI Right Hand > Activate`）の欄に:
-   - `[Hapbeat Event Router]` の `HapbeatUnityEventTrigger.Fire()` を設定
-
-**接続方法C: 最もシンプル — Button の OnClick**
-
-UI ボタンの場合はさらに簡単:
-
-1. UI Button の Inspector → `On Click ()` イベント
-2. `+` → `[Hapbeat Event Router]` をドラッグ → `HapbeatUnityEventTrigger > Fire()`
-
-**複数ボタンに異なる振動を割り当てる場合:**
-
-Router に UnityEventTrigger を複数追加し、それぞれ違う EventMap エントリを設定:
-
-```
-[Hapbeat Event Router]
-  ├─ UnityEventTrigger (Event: トリガー振動)  ← 右トリガー → Fire()
-  ├─ UnityEventTrigger (Event: グリップ振動)  ← 右グリップ → Fire()
-  └─ UnityEventTrigger (Event: パンチ)        ← 左トリガー → Fire()
-```
-
-各 XR Controller のイベントから、対応する UnityEventTrigger の `Fire()` に接続します。
-
-#### 推奨配置
-
-```
-シーン Hierarchy:
-  [Hapbeat Event Router]     ← GameObject > Hapbeat > Event Router で作成
-    ├─ HapbeatManager        ← 自動追加
-    ├─ AnimatorTrigger (着地) ← Target Animator = Player
-    ├─ AnimatorTrigger (ジャンプ)
-    └─ UnityEventTrigger (UI操作)
-
-  Enemy (prefab)
-    └─ CollisionTrigger (敵衝突) ← 物理コールバックのため対象 GO にアタッチ
-
-  Token (prefab)
-    └─ CollisionTrigger (コイン取得)
-```
+各 Trigger の詳細は [Trigger コンポーネント](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/triggers/) を参照。
 
 #### 一覧管理
 
-`Window > Hapbeat > Event Map` でダッシュボードを開くと、全エントリとトリガーの配置先を一覧表示:
-
-```
-Name     │ Event ID       │ Gain │ Type      │ Attached To
-着地     │ impact.landing │ 0.3  │ Animator  │ [Router]
-敵衝突   │ impact.enemy   │ 0.8  │ Collision │ Enemy (3)
-コイン   │ collect.token  │ 0.1  │ Collision │ Token (5)
-```
+`Hapbeat > Open Event Map` でダッシュボードを開くと、全エントリと配線先（どの GameObject / Animator state / スクリプトが参照しているか）を一覧できます。Bulk Edit による一括編集や Test Play もここから行えます。
 
 ---
 
-### 方法3: HapbeatBridge サブクラス（コードベース・集約管理）
+### 方法3: HapbeatBridge サブクラス（コードベース・任意）
 
-速度連動ゲインや条件分岐など、Inspector だけでは表現しきれないロジックを1ファイルに集約。
+速度連動や条件分岐など、Inspector だけでは表現しきれないロジックを 1 ファイルに集約したい場合の選択肢です（標準は方法2）。
 
 ```csharp
 using Hapbeat;
@@ -239,60 +111,36 @@ using UnityEngine;
 
 public class MyHapbeatBridge : HapbeatBridge
 {
-    [Header("Game References")]
-    [SerializeField] private PlayerController _player;
-
-    // 衝突速度に応じてゲインを変える
-    public void OnPlayerLanded(Collision2D col)
+    public void OnPlayerLanded(Collision col)
     {
         float speed = col.relativeVelocity.magnitude;
         if (speed < 1f) return;
-        PlayScaled("着地", speed, minVel: 1f, maxVel: 15f);
+        PlayScaled("着地", speed, minVelocity: 1f, maxVelocity: 15f);
     }
 
-    // AnimationCurve でゲインを制御
     [SerializeField] private AnimationCurve _impactCurve;
-    public void OnEnemyHit(Collision2D col)
+    public void OnEnemyHit(Collision col)
     {
-        float speed = col.relativeVelocity.magnitude;
-        PlayWithCurve("敵衝突", speed, _impactCurve, maxValue: 20f);
-    }
-
-    // 固定ゲインで発火
-    public void OnTokenCollected()
-    {
-        Play("コイン取得");
+        PlayWithCurve("敵衝突", col.relativeVelocity.magnitude, _impactCurve);
     }
 }
 ```
 
-`HapbeatBridge` の提供メソッド:
+`HapbeatBridge` の提供メソッド（いずれも EventMap の `displayName` で発火）:
 
 | メソッド | 用途 |
 |---|---|
-| `Play(displayName)` | EventMap の displayName で発火（固定ゲイン） |
-| `Play(displayName, gainOverride)` | ゲイン上書き |
-| `PlayScaled(displayName, value, min, max)` | 値を 0-1 に正規化してゲインに |
-| `PlayWithCurve(displayName, value, curve, max)` | AnimationCurve でゲイン変換 |
-| `Stop(displayName)` | 停止 |
-
-**利点**: 複雑なロジックも1ファイルに集約、EventMap で ID 管理は維持
-**用途**: 速度連動、条件分岐、複数イベント同時発火、カスタムロジック
+| `Play(displayName, gainOverride = -1f)` | 発火（`gainOverride` 省略時は EventMap の gain） |
+| `PlayByIndex(entryIndex, gainOverride = -1f)` | インデックス指定で発火 |
+| `PlayScaled(displayName, velocity, minVelocity, maxVelocity)` | 値を 0-1 に正規化してゲインに |
+| `PlayWithCurve(displayName, inputValue, curve)` | AnimationCurve でゲイン変換 |
+| `Stop(displayName)` / `StopAll()` | 停止 |
 
 ---
 
 ### 方法4: Animation Event（足音など特定フレーム発火）
 
-Animation ウィンドウでアニメーションクリップの特定フレームにイベントを追加し、`HapbeatUnityEventTrigger.Fire()` を呼ぶ。コード変更不要。
-
-```
-Run アニメーション:
-  0.0 ─── 0.25 ─── 0.5 ─── 0.75 ─── 1.0
-           ↑ 左足接地        ↑ 右足接地
-       Fire() 呼出        Fire() 呼出
-```
-
----
+Animation ウィンドウでクリップの特定フレームにイベントを追加し、`HapbeatUnityEventTrigger.Fire()` を呼びます。コード変更不要。
 
 ## 方法の使い分け
 
@@ -303,61 +151,98 @@ Run アニメーション:
 | 複雑なゲインロジック | 方法3（HapbeatBridge） |
 | アニメーション同期 | 方法4（Animation Event） |
 
-方法2〜4は組み合わせ可能です。例えば大部分を Trigger コンポーネントで設定し、特殊なケースだけ Bridge サブクラスで処理する構成が実用的です。
+方法2〜4は組み合わせ可能です。大部分を Trigger コンポーネントで設定し、特殊なケースだけ Bridge サブクラスで処理する構成が実用的です。
 
-## サンプルシーン
+## Address Override — 同一ビルドを複数台に配布する
+
+同じビルドを複数の VR HMD に配布し、端末ごとに自分の Hapbeat へ 1:1 で送りたい場合の機能です。有効にすると EventMap 側の target に関わらず、すべての送信（Play / Stop / StopAll / StreamBegin）の宛先が指定した player / group に強制されます。
+
+```csharp
+// 実行時に切り替え（persist: true で PlayerPrefs に保存 → 次回起動時に復元）
+HapbeatManager.Instance.SetAddressOverride(player: 3, group: 2, persist: true);
+
+// 解除（保存値も削除）
+HapbeatManager.Instance.ClearPersistedAddressOverride();
+
+// 軸ごとに「上書きしない」を表す定数（= -1）
+HapbeatManager.AddressOverrideDisabled;
+```
+
+- **端末ごと（実行時）** — `HapbeatAddressOverridePanel` を GameObject に 1 つ追加するだけで設定 UI が出ます。`ScreenSpaceOverlay` / `WorldSpace`（VR 用・遅延追従）の 2 モード対応。
+- **ビルド全体で固定** — `Hapbeat > Open Settings` の *Override Addressing (this build)* で `buildOverridePlayer` / `buildOverrideGroup` を `1-99` にすると、その軸は端末側から変更できなくなります（既定 `-1` = 端末ごと）。複数デモの同時開催で group を分離する用途を想定しています。
+- `appName` に `<p>` / `<g>` を含めると、送信時に現在の override 番号（無効時は `-`）に置換され、デバイスの OLED に表示されます。
+- 現在値の確認は `Hapbeat > Open Runtime Status`（保存値 / 実行時値 / ビルド固定を表示）。
+
+詳細は [ターゲティング](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/targeting/) を参照。
+
+## サンプル
 
 Package Manager > Hapbeat SDK > Samples からインポートできます。
 
 > ⚠️ **SDK バージョンを上げて Sample を再 import する場合**
 > 古いバージョンの `Assets/Samples/Hapbeat SDK/<旧バージョン>/` フォルダを **必ず削除** してください。Unity は package 更新時に古い import を自動削除しないため、放置すると同一クラスが二重定義になり compile error やシーン重複の原因になります。
-> SDK は起動時に `Assets/Samples/Hapbeat SDK/` 配下を scan し、複数バージョンが見つかると Console に警告を出します (`Hapbeat > Diagnostics > Check Sample Versions` から手動再実行可)。
+> SDK は起動時に `Assets/Samples/Hapbeat SDK/` 配下を scan し、複数バージョンが見つかると Console に警告を出します（`Hapbeat > Diagnostics > Check Sample Versions` から手動再実行可）。
 
 | サンプル | 内容 | 前提 |
 |---|---|---|
-| Basic Example | キーボード操作（Space/S/X/P）で基本 API を確認 | なし |
-| Player Demo | Hub + Zone A-D の5シーンで VR フィードバックを体験 | XR Interaction Toolkit 3.x |
-| Creator Tutorial | 既存 VR ゲームに Hapbeat を組み込むステップバイステップガイド | XR Interaction Toolkit 3.x |
+| **BasicExample** | 最小シーン。キーボード（Space: CLIP 単発 / R: CLIP ループ / F: FIRE / S: 全停止 / C: Ping）で疎通確認 | なし |
+| **Showcase** | 1 シーン 5 ゾーンで主要な配線パターンを一通り体験（衝突 / Animator state / シーケンス / Tick / スクリプト）。キーボード + マウスのみ | なし |
+| **XR Helpers** | XR Interaction Toolkit 用のフィルタコンポーネント（`HapbeatXRGrabFilter` / `HapbeatXRSocketFilter`） | XRI |
+| **XRI Hand Demo (haptics add-on)** | XRI の *Hands Interaction Demo* シーンに触覚を後付け。EventMap と Kit のみ同梱し、配線は Editor コマンドで適用 | XRI + XR Helpers サンプル |
+| **VR Config Example** | Quest 等の実機で Address Override を設定・テスト再生する最小シーン。XRI 非依存（Input System のみ） | なし |
 
-Player Demo は `PlayerDemoHub.unity` と `PlayerDemoZoneA`〜`PlayerDemoZoneD` の5シーン構成です。Basic Example 以外の `.unity` は開発中のため、SceneBuilder で生成してから調整します。
+### XRI Hand Demo の使い方
 
-### VR クイックスタート
+XRI のサンプルシーンは Unity Companion License のため改変版を再配布できません。そのため配線を Editor コマンドで後付けする構成になっています。
 
-1. Unity Hub で VR テンプレートからプロジェクトを作成
-2. Hapbeat SDK をインポート（Package Manager > Add from disk）
-3. Samples > Player Demo をインポート
-4. `Hapbeat > Build Samples > 2a. Player Demo - All Scenes` で5シーンを生成
-5. Build Settings に Hub + Zone A-D を登録
-6. `PlayerDemoHub.unity` を開いて Play
-7. Hapbeat デバイスを同じネットワークに接続
+1. XR Interaction Toolkit 側で *Hands Interaction Demo* を import してシーンを開く
+2. `Hapbeat > Samples > Augment XRI Hand Demo` を実行
 
-### 開発者向け
+冪等（既存のコンポーネント・同一の配線はスキップ）で、全操作は 1 つの Undo にまとまります。診断用の Event Logger 配線が必要な場合は `Hapbeat > Samples > Augment XRI Hand Demo (+ diagnostic Event Logger)` を使います。
 
-1. Samples > Creator Tutorial をインポート
-2. `CreatorTutorial_Before.unity`（触覚なし）で動作確認
-3. README の手順に従って Hapbeat を組み込む
-4. `CreatorTutorial_After.unity` で完成形を確認
+手順の詳細は [XRI Hand Demo クイックスタート](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/xri-handdemo-quickstart/) を参照。
+
+### VR 実機での確認
+
+`VR Config Example` は Quest 等で override を設定・確認するための最小シーンです。操作はスティックでフォーカス移動、トリガー / A(X) / B(Y) のいずれかで決定の 2 アクションのみ。テスト再生は StreamClip（100 Hz sine 同梱）なので、デバイスに Kit を配備しなくても振動を確認できます。戻り先シーンを設定すれば Exit で自分のシーンへ復帰できるため、自プロジェクトの設定画面としてそのまま流用できます。
+
+詳細は [VR Config Example](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/vr-config-example/) を参照。
 
 ## 接続設定
 
-`Window > Hapbeat > Settings` または `Assets > Create > Hapbeat > Config`
+`Hapbeat > Open Settings` または `Assets > Create > Hapbeat > Config`
 
 | 設定 | デフォルト | 説明 |
 |---|---|---|
 | Port | 7700 | UDP ポート |
-| アプリ名 | (productName) | デバイス OLED に表示する名前。最大 16 文字 |
-| Use Bridge | OFF | ESP-NOW 経由の場合のみ ON |
-| Ping Interval | 5秒 | キープアライブ間隔 |
-
-グループ指定はデバイスアドレスの suffix として `group_<N>` 形式で指定します（[複数アプリの共存](https://devtools.hapbeat.com/docs/unity-sdk/multi-app/)参照）。
+| App Name | (productName) | デバイス OLED に表示する名前。最大 16 文字。`<p>` / `<g>` は override 番号に置換 |
+| Override Addressing (this build) | -1 / -1 | ビルド全体で player / group を固定（`1-99`）。`-1` = 端末ごと |
+| Ping Interval (s) | 5 | キープアライブ間隔 |
+| Stream Buffer (s) | 0.05 | ストリームの先行送信バッファ（10–200 ms） |
+| Stream Unicast / Command Unicast | ON | 既知デバイスへユニキャスト送信（OFF でブロードキャスト） |
+| Haptic Delay (ms) | 0 | 音声出力遅延に合わせた触覚の遅延補正（0–500 ms） |
+| Enable Logging / Verbose Log | ON / OFF | Console へのログ出力 |
+| Advanced: Bridge (ESP-NOW) | OFF | ESP-NOW 経由の場合のみ ON |
 
 ## Edit モード操作
 
 プレイモードに入らなくても、Inspector の HapbeatManager から以下が可能:
 
-- **接続 (Edit)** — ブロードキャスト開始
-- **検出 (Edit)** — LAN 上の Hapbeat を検出
-- **Play / Stop / Ping** — テスト送信
+- **Connect / Disconnect** — 送信ソケットの開閉
+- **Discover (Edit)** — LAN 上の Hapbeat を検出
+- **Play / Stop / Stop All / Ping** — テスト送信
+
+## Editor メニュー
+
+`Hapbeat` メニューの主な項目:
+
+- `Open Event Map` / `Open Batch Setup` / `Open Settings` / `Open Runtime Status`
+- `Create Event Router` / `Create Event Map` / `Create HapbeatSDK Folder` / `Initial Scene Setup`
+- `Samples/Augment XRI Hand Demo`（および `(+ diagnostic Event Logger)`）
+- `Export Event Map (Selected)` / `(All in Project)`、`Normalize Audio Folder (16kHz · 2ch · PCM16)`
+- 診断系: `Attach Event Logger to Selected`、`Logs/...`、`Disable Verbose Log on All Hapbeat Components`、`Diagnostics/Check Sample Versions`
+
+全項目の逆引きは [Editor メニュー](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/editor-menus/) を参照。
 
 ## 対応プラットフォーム
 
@@ -366,6 +251,10 @@ Player Demo は `PlayerDemoHub.unity` と `PlayerDemoZoneA`〜`PlayerDemoZoneD` 
 - Pico 4 Ultra
 - Apple Vision Pro
 - その他 Android / iOS デバイス
+
+## 変更履歴
+
+[CHANGELOG.md](CHANGELOG.md) を参照。
 
 ## サウンド素材クレジット
 
