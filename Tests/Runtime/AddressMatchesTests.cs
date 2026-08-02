@@ -18,7 +18,12 @@ namespace Hapbeat.Tests
         [TestCase("player_1/pos_neck", "player_1/pos_r_wrist", false, "position mismatch")]
         [TestCase("*/pos_neck", "player_1/pos_neck", true, "wildcard player")]
         [TestCase("*/pos_neck", "player_2/pos_neck", true, "wildcard player, different player")]
-        [TestCase("player_1/pos_*", "player_1/pos_neck", true, "wildcard position")]
+        // Firmware only treats a segment that is *entirely* "*" as a wildcard
+        // (address_match.cpp: `t_len == 1 && *tp == '*'`), so "pos_*" is compared
+        // as a literal and does NOT match. The §4.2 table used to claim ✓ here;
+        // the spec has been corrected to match the implementation.
+        [TestCase("player_1/pos_*", "player_1/pos_neck", false, "partial wildcard is literal, not a wildcard")]
+        [TestCase("player_1/*", "player_1/pos_neck", true, "whole-segment wildcard covers any position")]
         [TestCase("red", "red/player_1/pos_neck", true, "prefix front-match")]
         [TestCase("red/*/player_1", "red/alpha/player_1/pos_neck", true, "wildcard + front-match")]
         [TestCase("player_1/pos_neck/group_1", "player_1/pos_neck/group_1", true, "group exact match")]
