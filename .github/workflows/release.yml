@@ -28,3 +28,24 @@ jobs:
           body_path: release-notes.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+      # Release 公開直後に devtools-site の release feed を再生成させる (DEC-053)。
+      # この SDK は UPM Git URL 配布なので、feed の情報源は GitHub Releases。
+      # Editor の更新チェックはこの feed を見るため、公開後すぐ反映させたい。
+      # 取り逃しても次の devtools-site ビルドで拾えるため best-effort。
+      - name: Notify devtools-site (release feed)
+        if: ${{ !contains(github.ref_name, '-') }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_SITE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::DOCS_SITE_DISPATCH_TOKEN is not set; skipping dispatch."
+            exit 0
+          fi
+          gh api repos/Hapbeat/hapbeat-devtools-site/dispatches \
+            -X POST \
+            -H 'Accept: application/vnd.github+json' \
+            -f event_type=release-published \
+            -f "client_payload[source_repo]=${{ github.repository }}" \
+            -f "client_payload[ref]=${{ github.ref_name }}"
