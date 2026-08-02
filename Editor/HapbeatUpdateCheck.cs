@@ -18,14 +18,18 @@ namespace Hapbeat.Editor
     ///
     /// <para>作法 (hapbeat-contracts <c>specs/release-feed.md</c> §5, DEC-053):</para>
     /// <list type="bullet">
-    ///   <item><b>1 版につき 1 回だけ</b>。出した版は記録し、より新しい版が出るまで
-    ///   黙る。Editor を開くたびに同じ行が出るのは、版を意図的に固定している人に
-    ///   とってノイズでしかない。</item>
+    ///   <item><b>Editor セッションごとに 1 回</b> (<see cref="SessionState"/> で管理)。
+    ///   domain reload では重複させず、Editor を開き直せばまた 1 回出る。Console の
+    ///   1 行は「閉じる」操作を要求しないので、版ごとに永続抑制して見逃させるより、
+    ///   起動のたびに 1 度流れる方が親切という判断 (§5.1 B)。目立つ UI を出す場合は
+    ///   版ごと 1 回に絞ること (§5.1 A)。</item>
     ///   <item>取得失敗は<b>完全にサイレント</b>。オフライン環境で「確認できません
     ///   でした」を出さない。</item>
     ///   <item>ダイアログを出さない・Editor の起動を止めない。Warning ではなく
     ///   <see cref="Debug.Log"/> にしているのも同じ理由 (Warning は「壊れている」の
     ///   合図として温存する)。</item>
+    ///   <item>Console 出力は英語。この SDK の Editor ログは全て英語で統一されている
+    ///   (<c>HapbeatLocalization</c> は EditorWindow UI 用の機構で、ログには使わない)。</item>
     /// </list>
     ///
     /// <para>手動確認は <c>Hapbeat/Diagnostics/Check for SDK Updates</c>。
@@ -40,7 +44,10 @@ namespace Hapbeat.Editor
 
         private const string PrefEnabled  = "Hapbeat.UpdateCheck.Enabled";
         private const string PrefLastTick = "Hapbeat.UpdateCheck.LastCheckTicks";
-        private const string PrefNotified = "Hapbeat.UpdateCheck.NotifiedVersion";
+        private const string PrefCached   = "Hapbeat.UpdateCheck.CachedLatest";
+        // SessionState は domain reload をまたいで残り、Editor を閉じると消える。
+        // 「起動ごとに 1 回」がこれ 1 つで表現できる。
+        private const string SessionNotified = "Hapbeat.UpdateCheck.NotifiedThisSession";
 
         private const string MenuCheckNow = "Hapbeat/Diagnostics/Check for SDK Updates";
         private const string MenuAuto     = "Hapbeat/Diagnostics/Check for SDK Updates on Startup";
@@ -63,25 +70,28 @@ namespace Hapbeat.Editor
             string current = CurrentVersion();
             if (string.IsNullOrEmpty(current))
             {
-                Debug.Log("[Hapbeat] SDK のバージョンを特定できませんでした (UPM パッケージとして認識されていません)。");
+                Debug.Log("[Hapbeat] Could not determine the SDK version " +
+                          "(not recognised as a UPM package).");
                 return;
             }
+            // 手動確認はキャッシュを使わず必ず取りに行く ("いま" を聞かれているため)。
             Fetch(latest =>
             {
                 if (string.IsNullOrEmpty(latest))
                 {
-                    Debug.Log("[Hapbeat] 最新版を確認できませんでした (オフラインの可能性があります)。");
+                    Debug.Log("[Hapbeat] Could not reach the release feed — you may be offline.");
                     return;
                 }
+                CacheLatest(latest);
                 if (IsNewer(latest, current))
                 {
                     Debug.Log(NoticeMessage(current, latest));
-                    // 手動確認でも「見た」ことに変わりはないので通知済みにする。
-                    EditorPrefs.SetString(PrefNotified, latest);
+                    // 手動で見た以上、このセッションで自動通知を重ねる必要はない。
+                    SessionState.SetBool(SessionNotified, true);
                 }
                 else
                 {
-                    Debug.Log($"[Hapbeat] Unity SDK は最新です (v{current})。");
+                    Debug.Log($"[Hapbeat] Unity SDK is up to date (v{current}).");
                 }
             });
         }
@@ -110,48 +120,69 @@ namespace Hapbeat.Editor
         {
             if (!AutoEnabled) return;
 
+            // このセッションで既に出した (domain reload で重複させない)。
+            if (SessionState.GetBool(SessionNotified, false)) return;
+
             // ローカル / embedded 配置 = この SDK 自体を開発しているプロジェクト。
             // 自分の作業ツリーに「更新してください」と言っても意味がないので黙る。
             if (HapbeatDevModeMenuGate.IsLocalDevInstall()) return;
 
-            if (!IntervalElapsed()) return;
-
             string current = CurrentVersion();
             if (string.IsNullOrEmpty(current)) return;
 
-            // 実際に問い合わせる時点で記録する (失敗しても間隔を空ける — オフライン
-            // 環境で Editor を開くたびにタイムアウト待ちを繰り返さないため)。
+            // 24h 以内に取得済みならその値で判定する。ネットワークアクセスは 1 日 1 回に
+            // 抑えつつ、通知自体は Editor を開くたびに 1 回出せるようにするため
+            // (fetch 間隔と通知頻度を分けている)。
+            string cached = CachedLatest();
+            if (!string.IsNullOrEmpty(cached))
+            {
+                Announce(current, cached);
+                return;
+            }
+
+            // 問い合わせる時点で記録する (失敗しても間隔を空ける — オフライン環境で
+            // Editor を開くたびにタイムアウト待ちを繰り返さないため)。
             EditorPrefs.SetString(PrefLastTick, DateTime.UtcNow.Ticks.ToString());
 
             Fetch(latest =>
             {
                 if (string.IsNullOrEmpty(latest)) return;
-                if (!IsNewer(latest, current)) return;
-
-                string notified = EditorPrefs.GetString(PrefNotified, "");
-                // 未通知なら出す。通知済みなら、それより新しい版のときだけ。
-                if (!string.IsNullOrEmpty(notified) && !IsNewer(latest, notified)) return;
-
-                Debug.Log(NoticeMessage(current, latest));
-                EditorPrefs.SetString(PrefNotified, latest);
+                CacheLatest(latest);
+                Announce(current, latest);
             });
         }
 
-        private static bool IntervalElapsed()
+        private static void Announce(string current, string latest)
+        {
+            if (!IsNewer(latest, current)) return;
+            if (SessionState.GetBool(SessionNotified, false)) return;
+            SessionState.SetBool(SessionNotified, true);
+            Debug.Log(NoticeMessage(current, latest));
+        }
+
+        /// <summary>24h 以内に取得した latest。無ければ空文字。</summary>
+        private static string CachedLatest()
         {
             string raw = EditorPrefs.GetString(PrefLastTick, "");
-            if (string.IsNullOrEmpty(raw) || !long.TryParse(raw, out long ticks)) return true;
-            return DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) >= CheckInterval;
+            if (string.IsNullOrEmpty(raw) || !long.TryParse(raw, out long ticks)) return "";
+            if (DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) >= CheckInterval) return "";
+            return EditorPrefs.GetString(PrefCached, "");
+        }
+
+        private static void CacheLatest(string latest)
+        {
+            EditorPrefs.SetString(PrefCached, latest);
+            EditorPrefs.SetString(PrefLastTick, DateTime.UtcNow.Ticks.ToString());
         }
 
         private static string NoticeMessage(string current, string latest)
         {
-            return $"[Hapbeat] Unity SDK v{latest} が公開されています (使用中: v{current})。\n" +
-                   "→ Package Manager で Hapbeat SDK を更新するか、`Packages/manifest.json` の " +
-                   $"URL 末尾を `#v{latest}` に書き換えてください。\n" +
-                   "変更履歴: https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/changelog/\n" +
-                   "（このお知らせは同じ版では再表示されません。自動確認は " +
-                   "Hapbeat > Diagnostics > Check for SDK Updates on Startup で切り替えられます）";
+            return $"[Hapbeat] Unity SDK v{latest} is available (using v{current}).\n" +
+                   "→ Update Hapbeat SDK in the Package Manager, or edit the URL suffix in " +
+                   $"`Packages/manifest.json` to `#v{latest}`.\n" +
+                   "Changelog: https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/changelog/\n" +
+                   "(Shown once per Editor session. Toggle it off via " +
+                   "Hapbeat > Diagnostics > Check for SDK Updates on Startup.)";
         }
 
         // ------------------------------------------------------------------

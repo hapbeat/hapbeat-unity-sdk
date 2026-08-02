@@ -11,7 +11,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Added（追加）
 
-- **SDK 更新の通知**: 新しい版が公開されると、Editor 起動時に Console へ 1 行だけお知らせを出すようになりました。**同じ版について 2 回目は出しません**（版を固定して開発している間、毎回同じ行を見せないため）。UPM の Git URL はタグを固定すると Package Manager が更新を検出できないため、これが実質的な唯一の気付き手段になります。
+- **SDK 更新の通知**: 新しい版が公開されると、Editor 起動時に Console へ 1 行だけお知らせを出すようになりました。表示は **Editor セッションごとに 1 回**で、スクリプト再コンパイル（domain reload）では重複しません。UPM の Git URL はタグを固定すると Package Manager が更新を検出できないため、これが実質的な唯一の気付き手段になります。
   - いつでも確認: `Hapbeat` → `Diagnostics` → `Check for SDK Updates`
   - 自動確認の ON/OFF: `Hapbeat` → `Diagnostics` → `Check for SDK Updates on Startup`
   - 取得は 3 秒でタイムアウトし、失敗しても何も出しません（オフライン環境で無害）。この SDK 自体を Local / Embedded で開発しているプロジェクトでは確認しません。
