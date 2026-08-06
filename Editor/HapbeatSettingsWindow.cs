@@ -136,6 +136,14 @@ namespace Hapbeat.Editor
             EditorGUILayout.LabelField("Behavior", EditorStyles.boldLabel);
 
             EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("autoReconnect"),
+                new GUIContent(
+                    "Auto Reconnect",
+                    "Reopen the connection automatically if a socket error drops it "
+                    + "(2 s backoff, doubling up to 30 s). Keep this on for unattended "
+                    + "installations."));
+
+            EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("pingInterval"),
                 new GUIContent("Ping Interval (s)", "Keep-alive ping interval."));
 

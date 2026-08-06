@@ -62,6 +62,12 @@ namespace Hapbeat
         public string bridgeHost = "127.0.0.1";
 
         [Header("Behavior")]
+        [Tooltip("Reopen the connection automatically if a socket error drops it " +
+                 "(exponential backoff, 2 s doubling up to 30 s). Leave this on for " +
+                 "unattended installations: without it a single transient network " +
+                 "error silences the SDK until the application is restarted.")]
+        public bool autoReconnect = true;
+
         [Tooltip("Interval in seconds between keep-alive ping messages.")]
         [Range(1f, 60f)]
         public float pingInterval = 5.0f;

@@ -101,6 +101,15 @@ namespace Hapbeat
         // instead of once per stale destination per command.
         private bool _loggedRecoverableReceiveError;
 
+        // Same idea for the send path, but it matters far more here: a link that
+        // fails keeps failing, and now that a send error no longer tears the
+        // connection down, nothing stops the retries. PING/CONNECT_STATUS repeat
+        // every pingInterval and stream chunks roughly 100x/s per destination, so
+        // an unguarded warning would bury the very log an operator needs to read.
+        // Written from the main thread and the stream mixer thread — volatile so
+        // the "already logged" state is not cached per core.
+        private volatile bool _loggedSendError;
+
         // Unicast destinations for STREAM_BEGIN/DATA/END. Three states:
         //   null            -> no unicast snapshot taken (or explicitly cleared):
         //                      fall back to broadcast, same as before target
@@ -166,8 +175,11 @@ namespace Hapbeat
         /// <param name="port">Target UDP port (default: 7700).</param>
         public void OpenBroadcast(int port)
         {
-            if (IsConnected)
-                Disconnect();
+            // Unconditional: Disconnect() guards on the resources, so this also
+            // clears a half-dead session (socket still open, IsConnected already
+            // false after a socket error) that would otherwise leak the old socket
+            // and leave its receive thread polling a field we replace below.
+            Disconnect();
 
             try
             {
@@ -197,8 +209,8 @@ namespace Hapbeat
         /// <param name="port">UDP port.</param>
         public void Connect(string host, int port)
         {
-            if (IsConnected)
-                Disconnect();
+            // Unconditional — see OpenBroadcast for why.
+            Disconnect();
 
             try
             {
@@ -224,8 +236,21 @@ namespace Hapbeat
         /// </summary>
         public void Disconnect()
         {
-            if (!IsConnected)
+            // Resource-based guard, deliberately NOT IsConnected: a socket error
+            // can flag the connection down (HandleDisconnection) without closing
+            // anything, and returning early in that half-dead state would strand
+            // the open socket and its live receive thread. The next OpenBroadcast
+            // would then replace _udpClient while that thread still polls the
+            // field. Cleaning up whatever actually exists makes this safe to call
+            // from HapbeatManager's reconnect path.
+            if (_udpClient == null && _receiveThread == null)
                 return;
+
+            // HandleDisconnection may already have flagged — and announced — the
+            // drop without closing anything. Only announce a transition that
+            // actually happens here, so cleaning up a half-dead session does not
+            // raise a second OnConnectionStateChanged(false) for the same event.
+            bool wasConnected = IsConnected;
 
             _isRunning = false;
             IsConnected = false;
@@ -261,8 +286,10 @@ namespace Hapbeat
             _deviceAddresses.Clear();
             _streamUnicastTargets = null;
             _loggedRecoverableReceiveError = false;
+            _loggedSendError = false;
 
-            EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(false));
+            if (wasConnected)
+                EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(false));
         }
 
         /// <summary>
@@ -698,22 +725,72 @@ namespace Hapbeat
             SendRaw(packet);
         }
 
+        /// <summary>
+        /// Report a failed send, at most once per outage. Silence is preferable to
+        /// a flood here (see <see cref="_loggedSendError"/>), but the flag is
+        /// cleared again by <see cref="NoteSendSucceeded"/> so a second, unrelated
+        /// incident later in the same session is still reported.
+        /// </summary>
+        private void NoteSendFailed(string what, SocketError code, string message)
+        {
+            if (_loggedSendError)
+                return;
+
+            _loggedSendError = true;
+            UnityEngine.Debug.LogWarning(
+                $"[Hapbeat] {what} failed ({code}): {message}. Keeping the socket " +
+                "open; further send errors are silenced until sending recovers.");
+        }
+
+        /// <summary>
+        /// Note that sending works again, and say so once. Without this line an
+        /// unattended installation's log shows when haptics broke but never when
+        /// (or whether) they came back.
+        /// </summary>
+        private void NoteSendSucceeded()
+        {
+            if (!_loggedSendError)
+                return;
+
+            _loggedSendError = false;
+            UnityEngine.Debug.Log("[Hapbeat] Sending recovered.");
+        }
+
         private void SendRaw(byte[] data)
         {
-            if (!IsConnected || _udpClient == null)
+            // Snapshot the socket: this also runs on the stream mixer thread, and
+            // a reconnect on the main thread can null the field between the guard
+            // and the send. Reading it twice would surface as an unhandled
+            // NullReferenceException on a background thread rather than the
+            // ObjectDisposedException the catch below is written for.
+            UdpClient client = _udpClient;
+            if (!IsConnected || client == null)
                 return;
 
             try
             {
-                _udpClient.Send(data, data.Length, _targetEndPoint);
+                client.Send(data, data.Length, _targetEndPoint);
+                NoteSendSucceeded();
             }
             catch (SocketException ex)
             {
-                UnityEngine.Debug.LogWarning($"[Hapbeat] Send failed: {ex.Message}");
-                HandleDisconnection();
+                // A failed UDP send says nothing about whether the socket is still
+                // usable: the datagram is lost, the socket is not. Tearing the
+                // connection down here is what made a single transient failure
+                // terminal — a Wi-Fi re-association, a momentary route change or an
+                // ICMP reply from a device that just powered off would flag the
+                // connection down, the Update() keep-alive (gated on IsConnected)
+                // would stop, and the device would fall back to "app not connected"
+                // with nothing left to restore it but an app restart.
+                //
+                // Keep the socket and let the two paths that CAN tell a dead socket
+                // apart handle it: ReceiveLoop reports non-recoverable errors, and
+                // HapbeatManager.TryAutoReconnect reopens from there.
+                NoteSendFailed("Send", ex.SocketErrorCode, ex.Message);
             }
             catch (ObjectDisposedException)
             {
+                // The socket really is gone (Dispose raced with this send).
                 HandleDisconnection();
             }
         }
@@ -733,7 +810,9 @@ namespace Hapbeat
 
         private void SendStreamRaw(byte[] data)
         {
-            if (!IsConnected || _udpClient == null)
+            // Snapshot — see SendRaw. This path runs on the mixer thread.
+            UdpClient client = _udpClient;
+            if (!IsConnected || client == null)
                 return;
 
             // Read the volatile field once — the array itself is only ever
@@ -761,15 +840,18 @@ namespace Hapbeat
             {
                 try
                 {
-                    _udpClient.Send(data, data.Length, targets[i]);
+                    client.Send(data, data.Length, targets[i]);
+                    NoteSendSucceeded();
                 }
                 catch (SocketException ex)
                 {
                     // A single unreachable/offline target shouldn't tear down the
                     // whole session (other targets may still be fine) — log and
-                    // keep sending to the rest.
-                    UnityEngine.Debug.LogWarning(
-                        $"[Hapbeat] Stream unicast send to {targets[i]} failed: {ex.Message}");
+                    // keep sending to the rest. Rate-limited: this is the hottest
+                    // send path (one chunk per ~10 ms per destination), so an
+                    // unguarded warning here floods the log for the whole outage.
+                    NoteSendFailed($"Stream unicast send to {targets[i]}",
+                                   ex.SocketErrorCode, ex.Message);
                 }
                 catch (ObjectDisposedException)
                 {
@@ -825,7 +907,9 @@ namespace Hapbeat
         /// </summary>
         private CommandSendResult SendCommandRaw(byte[] data, string resolvedTarget)
         {
-            if (!IsConnected || _udpClient == null)
+            // Snapshot — see SendRaw.
+            UdpClient client = _udpClient;
+            if (!IsConnected || client == null)
                 return CommandSendResult.Broadcast;
 
             if (!IsBroadcast || !_commandUnicastEnabled)
@@ -863,14 +947,16 @@ namespace Hapbeat
                 sentAny = true;
                 try
                 {
-                    _udpClient.Send(data, data.Length, new IPEndPoint(kv.Key, port));
+                    client.Send(data, data.Length, new IPEndPoint(kv.Key, port));
+                    NoteSendSucceeded();
                 }
                 catch (SocketException ex)
                 {
                     // A single unreachable/offline target shouldn't block the rest —
                     // log and keep sending to the remaining known devices.
-                    UnityEngine.Debug.LogWarning(
-                        $"[Hapbeat] Command unicast send to {kv.Key} failed: {ex.Message}");
+                    // Rate-limited for the same reason as the stream path.
+                    NoteSendFailed($"Command unicast send to {kv.Key}",
+                                   ex.SocketErrorCode, ex.Message);
                 }
                 catch (ObjectDisposedException)
                 {
@@ -907,10 +993,24 @@ namespace Hapbeat
             {
                 client.Client.IOControl(SIO_UDP_CONNRESET, new byte[] { 0, 0, 0, 0 }, null);
             }
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            catch (Exception ex)
+            {
+                // On Windows this ioctl is the guard that keeps an offline device's
+                // ICMP reply from surfacing as an error on this socket. It failing
+                // silently is precisely how a field incident ends up with no
+                // evidence of which layer broke, so make it visible. Still
+                // non-fatal: ReceiveLoop treats the error as recoverable anyway.
+                UnityEngine.Debug.LogWarning(
+                    $"[Hapbeat] SIO_UDP_CONNRESET could not be applied: {ex.Message}. " +
+                    "ICMP replies from offline devices may surface as socket errors.");
+            }
+#else
             catch
             {
-                // Unsupported platform / runtime — ReceiveLoop is the safety net.
+                // The ioctl does not exist off Windows — throwing here is expected.
             }
+#endif
         }
 
         /// <summary>

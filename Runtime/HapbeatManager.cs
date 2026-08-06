@@ -273,6 +273,21 @@ namespace Hapbeat
         private HapbeatClient _client;
         private HapbeatDiscovery _discovery;
         private float _lastPingTime;
+
+        // Auto-reconnect state. _shouldStayConnected records *intent*: set by
+        // Connect()/ConnectToBridge(), cleared by Disconnect()/Cleanup(), so a
+        // deliberate disconnect is never undone by the retry loop.
+        private bool _shouldStayConnected;
+        private int _reconnectAttempts;
+        private float _reconnectNextAttemptTime;
+        private float _connectedSinceTime;
+        private const float ReconnectBaseDelaySeconds = 2f;
+        private const float ReconnectMaxDelaySeconds = 30f;
+        // A session must last at least this long before it counts as "good" and
+        // clears the backoff. Resetting on socket-open alone would let an adapter
+        // that accepts a bind but drops immediately churn at the base delay
+        // forever, rebuilding a socket and a thread every couple of seconds.
+        private const float ReconnectStableSeconds = 10f;
         private bool _isInitialized;
 
         // Effective (already-normalized) forced player/group. -1 = disabled.
@@ -333,6 +348,13 @@ namespace Hapbeat
                     _lastPingTime = Time.realtimeSinceStartup;
                 }
             }
+
+            // Reopen the socket if anything dropped it (see TryAutoReconnect).
+            // Deliberately after the keep-alive block: reconnecting sets
+            // IsConnected synchronously but defers its own PING/CONNECT_STATUS to
+            // the queued state-changed handler, so running the block first on the
+            // reconnect frame would send a duplicate pair.
+            TryAutoReconnect();
 
             // Detect alive-count changes → fire OnConnected / OnDisconnected
             int cur = AliveDeviceCount;
@@ -546,6 +568,10 @@ namespace Hapbeat
         /// </summary>
         public void Connect()
         {
+            // Record the intent before the early return: calling Connect() while
+            // already connected still means "stay connected" to the retry loop.
+            _shouldStayConnected = true;
+
             if (IsConnected)
             {
                 Log("Already connected.");
@@ -583,6 +609,8 @@ namespace Hapbeat
         /// </summary>
         public void ConnectToBridge()
         {
+            _shouldStayConnected = true;
+
             if (_client == null)
             {
                 _client = CreateClient();
@@ -614,6 +642,10 @@ namespace Hapbeat
         /// </summary>
         public void Disconnect()
         {
+            // Deliberate disconnect — stand the retry loop down so it doesn't
+            // immediately undo this.
+            _shouldStayConnected = false;
+
             // Join the background mixer thread (if any) before tearing down the
             // socket it sends through. No-op if nothing is streaming.
             StopStream();
@@ -1391,6 +1423,9 @@ namespace Hapbeat
                     string mode = client.IsBroadcast ? "broadcast" : "unicast";
                     Log($"Ready ({mode}).");
                     _lastPingTime = Time.realtimeSinceStartup;
+                    // Note when this session started; the backoff is only cleared
+                    // once it has proven itself (see ReconnectStableSeconds).
+                    _connectedSinceTime = Time.realtimeSinceStartup;
                     // Notify devices that app is connected
                     client.SendConnectStatus(true, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);
                     // Discover devices immediately instead of waiting a full
@@ -1409,6 +1444,27 @@ namespace Hapbeat
                 else
                 {
                     Log("Disconnected.");
+
+                    // A session that held up long enough earns a fresh backoff;
+                    // one that dropped straight away keeps escalating.
+                    if (_connectedSinceTime > 0f
+                        && Time.realtimeSinceStartup - _connectedSinceTime >= ReconnectStableSeconds)
+                    {
+                        _reconnectAttempts = 0;
+                    }
+                    _connectedSinceTime = 0f;
+
+                    // Liveness is per-connection: these IPs were learned on the
+                    // network we just lost. Keeping them would leave
+                    // AliveDeviceCount reporting phantom devices and would seed
+                    // the next stream's unicast targets with unreachable hosts —
+                    // non-empty, so it would not fall back to broadcast either.
+                    _devicePongTimes.Clear();
+
+                    // Arm the retry loop; TryAutoReconnect applies the backoff and
+                    // checks whether staying connected was the intent.
+                    _reconnectNextAttemptTime =
+                        Time.realtimeSinceStartup + ReconnectBaseDelaySeconds;
                     OnDisconnected?.Invoke();
                 }
             };
@@ -1440,6 +1496,52 @@ namespace Hapbeat
             return client;
         }
 
+        /// <summary>
+        /// Reopen the connection after something dropped it. Driven from Update()
+        /// on an exponential backoff (2 s, doubling, capped at 30 s).
+        ///
+        /// Without this a single transient failure was terminal for the whole
+        /// process: HapbeatClient flagged the connection down, the periodic
+        /// PING / CONNECT_STATUS in Update() stopped (both are gated on
+        /// IsConnected), and each device fell back to "app not connected" once its
+        /// 15 s CONNECT_STATUS timeout expired — with nothing able to restore it
+        /// short of restarting the application. Unattended installations (kiosks,
+        /// exhibitions) have no operator to notice and do that.
+        /// </summary>
+        private void TryAutoReconnect()
+        {
+            if (!_shouldStayConnected || IsConnected)
+                return;
+            if (_config != null && !_config.autoReconnect)
+                return;
+            if (Time.realtimeSinceStartup < _reconnectNextAttemptTime)
+                return;
+
+            _reconnectAttempts++;
+            float nextDelay = Mathf.Min(
+                ReconnectBaseDelaySeconds * Mathf.Pow(2f, _reconnectAttempts),
+                ReconnectMaxDelaySeconds);
+            _reconnectNextAttemptTime = Time.realtimeSinceStartup + nextDelay;
+
+            Debug.LogWarning(
+                $"[Hapbeat] Connection is down — reconnect attempt {_reconnectAttempts}. " +
+                $"Next retry in {nextDelay:0.#}s if this one fails.");
+
+            // Join the stream mixer thread before the socket underneath it is
+            // replaced. Its unicast targets were resolved against the connection
+            // we just lost, so the stream is over either way — and letting it keep
+            // sending while Connect() closes and reopens the socket is exactly the
+            // race the send paths' snapshots guard against. Stop it properly
+            // instead of relying on that guard. No-op if nothing is streaming.
+            StopStream();
+
+            // Connect() reopens through HapbeatClient.OpenBroadcast/Connect, which
+            // now tear down unconditionally — so a half-dead session (socket still
+            // open after a socket error flagged the connection down) is cleaned up
+            // there rather than being leaked or duplicated here.
+            Connect();
+        }
+
         private bool EnsureConnected()
         {
             if (IsConnected)
@@ -1451,6 +1553,10 @@ namespace Hapbeat
 
         private void Cleanup()
         {
+            // Shutting down for good — never let the retry loop resurrect the
+            // client while the app is tearing down.
+            _shouldStayConnected = false;
+
             // Join the background mixer thread (if any) before disposing the client
             // it sends through — must happen first so StopStream's own final
             // STREAM_END still has a live socket to go out on. Domain-reload /
