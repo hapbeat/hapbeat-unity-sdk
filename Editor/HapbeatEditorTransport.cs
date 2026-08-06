@@ -57,6 +57,11 @@ namespace Hapbeat.Editor
 
         // ── Status ───────────────────────────────────────────────────────────
 
+        // Discovery upkeep. Well inside the client's known-device TTL (15 s) so a
+        // device never ages out of the unicast set between test plays.
+        private const double PingIntervalSeconds = 3.0;
+        private static double _lastPingTime;
+
         public static bool IsOpen => _client != null && _client.IsConnected;
         public static bool IsStreaming => _stream != null;
 
@@ -89,8 +94,19 @@ namespace Hapbeat.Editor
                 _client.SetAddressOverride(
                     HapbeatClient.NormalizeOverride(savedPlayer),
                     HapbeatClient.NormalizeOverride(savedGroup));
-                EditorApplication.update -= TickStream;
-                EditorApplication.update += TickStream;
+                EditorApplication.update -= Tick;
+                EditorApplication.update += Tick;
+
+                // Discover devices right away. Without a PING nothing ever PONGs,
+                // so the client learns no device IPs and every test play falls back
+                // to broadcast — which the AP buffers until its DTIM beacon, the
+                // exact stutter Test Play was showing. The runtime avoids this
+                // because HapbeatManager pings on connect; this transport drives a
+                // bare client, so it has to do the same. It is also what lets the
+                // client pin the right subnet on a multi-homed host.
+                _client.SendPing();
+                _lastPingTime = EditorApplication.timeSinceStartup;
+
                 LastOpenError = null;
                 Debug.Log($"[Hapbeat] Editor transport opened (UDP broadcast, port={port}).");
                 return true;
@@ -110,7 +126,7 @@ namespace Hapbeat.Editor
             if (_stream != null)
                 SendStreamEnd();
             _stream = null;
-            EditorApplication.update -= TickStream;
+            EditorApplication.update -= Tick;
 
             if (_client != null)
             {
@@ -190,6 +206,14 @@ namespace Hapbeat.Editor
                 bytesPerSecond = (ushort)clip.frequency * (byte)clip.channels * 2f,
             };
 
+            // Pin this session to the devices that have PONGed, exactly as
+            // HapbeatManager does for the runtime. Streaming over broadcast is what
+            // made Test Play stutter: the AP holds broadcast frames until its DTIM
+            // beacon, while unicast goes out immediately. Falls back to broadcast on
+            // its own when nothing has answered yet (returns -1).
+            int streamTargets = _client.SetStreamUnicastTargets(
+                _client.GetKnownDeviceIps(), target);
+
             // Seamless loop: single STREAM_BEGIN with totalSamples=0 (unknown length)
             // when looping, then keep feeding STREAM_DATA with monotonically advancing
             // offsets across iterations. See the matching comment in HapbeatManager.
@@ -197,16 +221,22 @@ namespace Hapbeat.Editor
             _client.SendStreamBegin(_stream.sampleRate, _stream.channels,
                 HapbeatProtocol.AUDIO_FORMAT_PCM16, reportedTotalSamples, _stream.gain, _stream.target);
 
+            string routing = streamTargets < 0
+                ? "broadcast (no device has answered a PING yet)"
+                : $"unicast to {streamTargets} device(s)";
             Debug.Log($"[Hapbeat:Editor] \u266a StreamClip \"{clip.name}\" " +
                       $"{_stream.sampleRate}Hz/{_stream.channels}ch gain={gain:F2} " +
-                      $"loop={loop} " +
-                      (string.IsNullOrEmpty(target) ? "broadcast" : $"target={target}"));
+                      $"loop={loop} {routing}" +
+                      (string.IsNullOrEmpty(target) ? "" : $" target={target}"));
         }
 
         public static void StopStream()
         {
             if (_stream == null) return;
             SendStreamEnd();
+            // Drop the snapshot with the session that resolved it, so it can't
+            // outlive the devices it was taken for (matches HapbeatManager).
+            _client?.SetStreamUnicastTargets(null);
             Debug.Log($"[Hapbeat:Editor] \u25a0 Stream stopped after {_stream.iteration} iteration(s).");
             _stream = null;
         }
@@ -220,6 +250,31 @@ namespace Hapbeat.Editor
         /// EditorApplication.update tick — sends as many STREAM_DATA chunks as allowed
         /// by the real-time pacing budget, then handles loop/end transitions.
         /// </summary>
+        /// <summary>
+        /// Editor-loop driver: keeps discovery fresh, then pumps the stream.
+        /// </summary>
+        private static void Tick()
+        {
+            TickDiscovery();
+            TickStream();
+        }
+
+        /// <summary>
+        /// Re-PING periodically so known devices stay inside the client's liveness
+        /// window. Letting them expire would silently drop test play back to
+        /// broadcast mid-session — the same stutter as never pinging at all.
+        /// </summary>
+        private static void TickDiscovery()
+        {
+            if (!IsOpen) return;
+
+            double now = EditorApplication.timeSinceStartup;
+            if (now - _lastPingTime < PingIntervalSeconds) return;
+
+            _lastPingTime = now;
+            _client.SendPing();
+        }
+
         private static void TickStream()
         {
             if (_stream == null) return;
@@ -251,6 +306,7 @@ namespace Hapbeat.Editor
 
             if (!_stream.loop)
             {
+                _client.SetStreamUnicastTargets(null);
                 _stream = null;
                 return;
             }

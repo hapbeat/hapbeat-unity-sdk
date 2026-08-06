@@ -373,6 +373,29 @@ namespace Hapbeat
         /// falls back to broadcast. Callers (see <see cref="HapbeatManager"/>) use
         /// this to log the actual outcome instead of guessing from the input count.
         /// </returns>
+        /// <summary>
+        /// Devices that answered a PING recently enough to still count as live —
+        /// the same window command unicast uses (see <c>_knownDeviceTtlSeconds</c>).
+        ///
+        /// Exposed for callers that have no liveness bookkeeping of their own: the
+        /// Editor test-play transport drives a bare client without a
+        /// <see cref="HapbeatManager"/>, and would otherwise have to duplicate the
+        /// PONG tracking just to seed <see cref="SetStreamUnicastTargets"/>.
+        /// </summary>
+        public List<IPAddress> GetKnownDeviceIps()
+        {
+            long nowUs = GetLocalTimestampUs();
+            long ttlUs = (long)(_knownDeviceTtlSeconds * 1_000_000f);
+
+            var live = new List<IPAddress>();
+            foreach (var kv in _knownDeviceIps)
+            {
+                if (nowUs - kv.Value <= ttlUs)
+                    live.Add(kv.Key);
+            }
+            return live;
+        }
+
         public int SetStreamUnicastTargets(IReadOnlyCollection<IPAddress> deviceIps, string target = null)
         {
             if (deviceIps == null || deviceIps.Count == 0)
