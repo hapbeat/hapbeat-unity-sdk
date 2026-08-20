@@ -79,13 +79,9 @@ namespace Hapbeat.Editor
             var toRestore = new List<HapbeatEventMap>();
             foreach (var kv in _snapshots)
             {
-                // Unity 6 migrated from InstanceIDToObject (int) to
-                // EntityIdToObject (EntityId). EntityId has an implicit
-                // conversion from int (since InstanceID == EntityId numerically
-                // in current Unity 6 builds), so the int-keyed Dictionary
-                // mirror keeps working as-is — only the lookup call name
-                // changed.
-                var map = EditorUtility.EntityIdToObject(kv.Key) as HapbeatEventMap;
+                // Via the compat helper: the lookup API was renamed mid-Unity-6 and the new
+                // name does not exist on 6000.0 LTS. See HapbeatEditorCompat.
+                var map = HapbeatEditorCompat.IdToObject(kv.Key) as HapbeatEventMap;
                 if (map == null) continue;
                 if (!map.revertPlayModeChanges) continue;
                 toRestore.Add(map);

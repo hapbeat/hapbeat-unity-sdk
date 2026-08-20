@@ -7,6 +7,15 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ---
 
+## [Unreleased]
+
+### Fixed（修正）
+
+- **Unity 6000.0 LTS でエディタ拡張がコンパイルエラーになる問題を修正**しました。オブジェクト解決 API は Unity 6 の途中で `EditorUtility.InstanceIDToObject` から `EditorUtility.EntityIdToObject` に改名されており、**新しい名前は 6000.0 LTS に存在しません**（6000.0.59f2 の `UnityEditor.dll` には無く、6000.3.12f1 には有ることを確認）。そのため `package.json` が `"unity": "6000.0"` と宣言しているにもかかわらず、6000.0 のプロジェクトでは `Hapbeat.Editor` アセンブリが `error CS0117` で落ち、**プロジェクト全体のコンパイルが通らなくなっていました**（SDK のランタイムだけを使うこともできません）。
+
+  - 呼び出しをバージョンガード付きヘルパー `HapbeatEditorCompat.IdToObject(int)` に集約しました（6000.3 以降は新 API、それ未満は旧 API。旧 API は 6000.3 にも残っているため、どちらの分岐も安全です）。
+  - Showcase サンプルの `HierarchySeparator` も同じヘルパー経由に揃えました。こちらはインポート先のプロジェクトで同じエラーを起こしていました。
+
 ## [0.4.0] - 2026-08-06
 
 **接続の安定性**に絞った更新です。展示・常設のような無人運用で「いつの間にか触覚が出なくなり、PC を再起動するまで戻らない」という状態を作っていた原因を取り除きました。あわせて、Hyper-V / WSL2 / Docker を入れた PC でデバイスを一切検出できない問題と、Test Play の再生が途切れる問題を修正しています。
