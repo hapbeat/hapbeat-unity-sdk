@@ -25,12 +25,9 @@ namespace Hapbeat.Samples.Showcase.EditorTools
 
         private static void OnHierarchyGUI(int instanceID, Rect rect)
         {
-            // Unity 6 で EditorUtility.InstanceIDToObject(int) は obsolete となり、
-            // 後継 API は EditorUtility.EntityIdToObject(EntityId)。EntityId は int
-            // からの暗黙変換を持つ（現行 Unity 6 では InstanceID == EntityId が数値的に
-            // 一致）ため、hierarchyWindowItemOnGUI が渡す int をそのまま渡せる。
-            // SDK 本体 (HapbeatEventMapPlaySnapshot) と同じ正攻法に揃える。
-            var go = EditorUtility.EntityIdToObject(instanceID) as GameObject;
+            // 解決 API は Unity 6 の途中で InstanceIDToObject → EntityIdToObject に改名され、
+            // 新名は 6000.0 LTS に存在しない。SDK 本体と同じ互換ヘルパー経由で呼ぶ。
+            var go = Hapbeat.Editor.HapbeatEditorCompat.IdToObject(instanceID) as GameObject;
             if (go == null) return;
 
             string n = go.name;
