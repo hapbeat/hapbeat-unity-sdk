@@ -42,12 +42,17 @@ using Hapbeat;
 // 即時再生（event ID は <kit-name>.<clip-name>）
 HapbeatManager.Instance.Play("sample-kit.sine_100hz", gain: 0.3f);
 
+// 左右バランスを指定して再生（pan: -1 = 左のみ / 0 = 中央 / +1 = 右のみ）
+HapbeatManager.Instance.Play("sample-kit.sine_100hz", gain: 0.3f, pan: -1f);
+
 // 停止
 HapbeatManager.Instance.Stop("sample-kit.sine_100hz");
 
 // 全停止
 HapbeatManager.Instance.StopAll();
 ```
+
+> `pan` は FIRE（Command モード）でデバイス側ミキサーが左右ゲインに展開する。**DEC-055 対応版のデバイスファームウェアが必要**で、未対応版は中央（`gain` のみ）で再生する。
 
 **利点**: 即座に動く、学習コストゼロ
 **欠点**: 触覚コードが散在する、ID やゲインがハードコード

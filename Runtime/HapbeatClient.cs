@@ -627,11 +627,14 @@ namespace Hapbeat
         /// <summary>Send a PLAY command. <paramref name="target"/> is the device-addressing
         /// target string ("" = broadcast). Unicasts to known matching devices instead of
         /// broadcasting when <c>commandUnicast</c> is enabled — see <see cref="SendCommandRaw"/>
-        /// and <see cref="CommandSendResult"/> for the exact routing/fallback rules.</summary>
-        public CommandSendResult SendPlay(string eventId, long targetTimeUs, float gain, string target = null)
+        /// and <see cref="CommandSendResult"/> for the exact routing/fallback rules.
+        /// <paramref name="pan"/> is the stereo balance (-1 left / 0 center / +1 right)
+        /// applied device-side per contracts message-format.md §0x01 (DEC-055).</summary>
+        public CommandSendResult SendPlay(string eventId, long targetTimeUs, float gain, string target = null,
+            float pan = 0f)
         {
             target = ResolveTarget(target);
-            byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, gain, target);
+            byte[] payload = HapbeatProtocol.BuildPlayPayload(eventId, targetTimeUs, gain, target, pan);
             return SendCommandPacket(HapbeatProtocol.CMD_PLAY, payload, target);
         }
 

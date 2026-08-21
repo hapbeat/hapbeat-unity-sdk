@@ -9,6 +9,10 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
+### Added（追加）
+
+- **FIRE（Command モード）で左右バランス（`pan`）を指定できる**ようにしました。`HapbeatManager.Play(...)` / `PlayScheduled(...)` に `pan` 引数（-1 = 左のみ / 0 = 中央 / +1 = 右のみ、既定 0）が増え、Trigger 系コンポーネントは既存の `Pan` プロパティを FIRE でも送るようになります。デバイス側ミキサーが CLIP と同じ linear balance で展開します（contracts message-format.md §0x01 / DEC-055）。**DEC-055 対応版のデバイスファームウェアが必要**で、未対応版は `pan` を無視して中央で再生します。
+
 ### Fixed（修正）
 
 - **Unity 6000.0 LTS でエディタ拡張がコンパイルエラーになる問題を修正**しました。オブジェクト解決 API は Unity 6 の途中で `EditorUtility.InstanceIDToObject` から `EditorUtility.EntityIdToObject` に改名されており、**新しい名前は 6000.0 LTS に存在しません**（6000.0.59f2 の `UnityEditor.dll` には無く、6000.3.12f1 には有ることを確認）。そのため `package.json` が `"unity": "6000.0"` と宣言しているにもかかわらず、6000.0 のプロジェクトでは `Hapbeat.Editor` アセンブリが `error CS0117` で落ち、**プロジェクト全体のコンパイルが通らなくなっていました**（SDK のランタイムだけを使うこともできません）。

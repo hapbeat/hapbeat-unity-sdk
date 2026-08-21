@@ -39,17 +39,19 @@ namespace Hapbeat
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
-                StartHapticDelayCoroutine(FireWithGainAfterDelay(entry.eventId, gain, label, target, delay));
+                // gain と同じく pan も発火時点の値を捕捉して遅延送信する
+                // (送信時に読み直すと Fire→送信の間の変更が混ざる)。
+                StartHapticDelayCoroutine(FireWithGainAfterDelay(entry.eventId, gain, Pan, label, target, delay));
                 return;
             }
-            HapbeatManager.Instance.Play(entry.eventId, gain, label, target);
+            HapbeatManager.Instance.Play(entry.eventId, gain, label, target, Pan);
         }
 
-        private IEnumerator FireWithGainAfterDelay(string eventId, float gain, string label, string target, float delay)
+        private IEnumerator FireWithGainAfterDelay(string eventId, float gain, float pan, string label, string target, float delay)
         {
             yield return new WaitForSecondsRealtime(delay);
             if (!_triggerEnabled || HapbeatManager.Instance == null) yield break;
-            HapbeatManager.Instance.Play(eventId, gain, label, target);
+            HapbeatManager.Instance.Play(eventId, gain, label, target, pan);
         }
 
         /// <summary>

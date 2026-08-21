@@ -413,8 +413,11 @@ namespace Hapbeat
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire Command: eventId='{entry.eventId}' target='{target ?? "(broadcast)"}' " +
                                       $"gain={entry.gain:F2} × intensity={(entry.CachedManifestIntensity >= 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
-                                      $"× triggerMult={_gainMultiplier:F2} = {commandGain:F2}", this);
-                        HapbeatManager.Instance.Play(entry.eventId, commandGain, label, target);
+                                      $"× triggerMult={_gainMultiplier:F2} = {commandGain:F2} pan={_pan:F2}", this);
+                        // Pan は StreamClip 経路と同じく per-trigger の値をそのまま乗せる
+                        // (_gainMultiplier と対。Command は device 側ミキサーが linear
+                        // balance で展開する — contracts message-format.md §0x01 DEC-055)。
+                        HapbeatManager.Instance.Play(entry.eventId, commandGain, label, target, _pan);
                     }
                     break;
 

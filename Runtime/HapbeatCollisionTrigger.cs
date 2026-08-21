@@ -198,7 +198,7 @@ namespace Hapbeat
                             Debug.LogWarning($"[Hapbeat] VelocityScaled Command but eventId empty on '{label}'", this);
                         return;
                     }
-                    mgr.Play(entry.eventId, scaledGain, label, target);
+                    mgr.Play(entry.eventId, scaledGain, label, target, Pan);
                     break;
 
                 case HapticMode.StreamClip:

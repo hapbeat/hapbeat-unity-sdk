@@ -95,19 +95,29 @@ namespace Hapbeat
         /// </summary>
         /// <param name="eventId">Event identifier (null-terminated UTF-8 string).</param>
         /// <param name="targetTimeUs">Target time in microseconds.</param>
-        /// <param name="group">Target group ID.</param>
         /// <param name="gain">Gain multiplier.</param>
+        /// <param name="target">Target address string; "" for broadcast.</param>
+        /// <param name="pan">Stereo balance (-1 = left only / 0 = center / +1 = right only).
+        /// Clamped to [-1, +1] before it goes on the wire.</param>
         /// <returns>Payload bytes.</returns>
         public static byte[] BuildPlayPayload(string eventId, long targetTimeUs, float gain,
-            string target = null)
+            string target = null, float pan = 0f)
         {
-            // Per contracts/specs/device-addressing.md §5.1, the wire format is:
-            //   event_id (null-term) + target (null-term) + target_time (int64) + gain (float32)
-            // target = "" means broadcast.
+            // Per contracts/specs/message-format.md §0x01 PLAY, the wire format is:
+            //   event_id (null-term) + target (null-term) + target_time (int64)
+            //   + gain (float32) + pan (float32)
+            // target = "" means broadcast. pan is a trailing optional field on the
+            // receiving side (absent = 0.0 / center) but the sender always writes it.
             byte[] eventIdBytes = Encoding.UTF8.GetBytes(eventId ?? "");
             byte[] targetBytes  = Encoding.UTF8.GetBytes(target ?? "");
 
-            int size = eventIdBytes.Length + 1 + targetBytes.Length + 1 + 8 + 4;
+            // Clamp here rather than at each call site so every PLAY on the wire is
+            // spec-conformant regardless of who built it. NaN falls through to 0.
+            if (float.IsNaN(pan))   pan = 0f;
+            else if (pan < -1f)     pan = -1f;
+            else if (pan >  1f)     pan =  1f;
+
+            int size = eventIdBytes.Length + 1 + targetBytes.Length + 1 + 8 + 4 + 4;
             byte[] payload = new byte[size];
 
             int offset = 0;
@@ -124,6 +134,9 @@ namespace Hapbeat
             offset += 8;
             // gain
             WriteFloat32(payload, offset, gain);
+            offset += 4;
+            // pan
+            WriteFloat32(payload, offset, pan);
 
             return payload;
         }

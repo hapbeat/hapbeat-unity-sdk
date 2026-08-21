@@ -39,9 +39,13 @@ a `[Hapbeat Event Router]` GameObject with a `HapbeatManager`). It auto-connects
 using Hapbeat;
 
 HapbeatManager.Instance.Play("sample-kit.sine_100hz", gain: 0.3f);  // gain 0..2, default 1.0
+HapbeatManager.Instance.Play("sample-kit.sine_100hz", gain: 0.3f, pan: -1f);  // pan -1 left / 0 center / +1 right
 HapbeatManager.Instance.Stop("sample-kit.sine_100hz");
 HapbeatManager.Instance.StopAll();
 ```
+
+`pan` on FIRE is expanded to per-channel gains by the device mixer and needs
+**firmware with DEC-055 PLAY pan support**; older firmware ignores it and plays centered.
 
 ## Core model: trigger vs tuning, linked by event id
 

@@ -391,28 +391,33 @@ namespace Hapbeat
         /// <param name="gain">Gain multiplier (0.0 to 1.0+). Default is 1.0.</param>
         /// <param name="displayName">Optional display name for logging (e.g. "Grab"). Not sent to devices.</param>
         /// <param name="target">Device-addressing target string. Empty = broadcast. See contracts/specs/device-addressing.md (e.g. "player_1/pos_neck", "*/pos_chest").</param>
-        public void Play(string eventId, float gain = 1.0f, string displayName = null, string target = null)
+        /// <param name="pan">Stereo balance applied on the device: -1 = left only, 0 = center, +1 = right only.
+        /// Requires firmware with DEC-055 PLAY pan support; older firmware ignores the field and plays centered.</param>
+        public void Play(string eventId, float gain = 1.0f, string displayName = null, string target = null,
+            float pan = 0f)
         {
             if (!EnsureConnected())
                 return;
 
             long targetTimeUs = 0;
-            _client.SendPlay(eventId, targetTimeUs, gain, target);
+            _client.SendPlay(eventId, targetTimeUs, gain, target, pan);
 
             string label = string.IsNullOrEmpty(displayName) ? eventId : $"{displayName} ({eventId})";
             string targetInfo = string.IsNullOrEmpty(target) ? "(broadcast)" : $"target={target}";
-            Log($"\u25b6 Play \"{label}\" gain={gain:F1} {targetInfo}");
+            Log($"\u25b6 Play \"{label}\" gain={gain:F1} pan={pan:F2} {targetInfo}");
         }
 
         /// <summary>
         /// Schedule a haptic event to play at a specific target time.
         /// </summary>
-        public void PlayScheduled(string eventId, long targetTimeUs, float gain = 1.0f, string target = null)
+        /// <param name="pan">Stereo balance; see <see cref="Play"/>.</param>
+        public void PlayScheduled(string eventId, long targetTimeUs, float gain = 1.0f, string target = null,
+            float pan = 0f)
         {
             if (!EnsureConnected())
                 return;
-            _client.SendPlay(eventId, targetTimeUs, gain, target);
-            Log($"\u25b6 PlayScheduled \"{eventId}\" (target_time={targetTimeUs}us, gain={gain:F1}, target={target ?? "(broadcast)"})");
+            _client.SendPlay(eventId, targetTimeUs, gain, target, pan);
+            Log($"\u25b6 PlayScheduled \"{eventId}\" (target_time={targetTimeUs}us, gain={gain:F1}, pan={pan:F2}, target={target ?? "(broadcast)"})");
         }
 
         /// <summary>
