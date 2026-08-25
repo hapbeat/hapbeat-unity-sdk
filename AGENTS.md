@@ -200,8 +200,8 @@ protected void StopAll()
 empty = `Application.productName`; supports `<p>` / `<g>`) · `buildOverridePlayer` /
 `buildOverrideGroup` (default `-1`, clamped to `-1..99`; `1-99` pins that axis for the
 whole build) · `useBridge` (ESP-NOW, off) · `bridgeHost` (`127.0.0.1`) ·
-`pingInterval` (5 s) · `streamSendAheadSeconds` (0.05) · `streamUnicast` (default
-`true`) · `commandUnicast` (default `true`) · `hapticDelaySeconds` (0..0.5,
+`pingInterval` (5 s) · `streamSendAheadSeconds` (0.05) · `commandUnicast` (default
+`true`) · `hapticDelaySeconds` (0..0.5,
 audio-latency compensation) · `enableLogging` / `verboseLogging`. Settings window:
 `Hapbeat > Open Settings`.
 

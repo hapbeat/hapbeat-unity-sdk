@@ -79,17 +79,8 @@ namespace Hapbeat
         [Range(0.01f, 0.2f)]
         public float streamSendAheadSeconds = 0.05f;
 
-        [Tooltip("Send StreamClip's STREAM_BEGIN/DATA/END directly (unicast) to each device " +
-                 "already known from a PONG response, instead of UDP broadcast. Wi-Fi AP power-save " +
-                 "(DTIM) batching can hold broadcast frames for one beacon interval, showing up as " +
-                 "periodic ~100-200 ms stutter in streamed haptics; unicast avoids that batching. " +
-                 "Falls back to broadcast automatically when no device has responded yet or in " +
-                 "Bridge mode. See commandUnicast for the equivalent setting on Play/Stop/StopAll. " +
-                 "Default: enabled.")]
-        public bool streamUnicast = true;
-
         [Tooltip("Send Play/Stop/StopAll directly (unicast) to each device already known from a " +
-                 "PONG response, instead of UDP broadcast. Same rationale as streamUnicast: Wi-Fi AP " +
+                 "PONG response, instead of UDP broadcast. As with addressed StreamClip delivery, Wi-Fi AP " +
                  "power-save (DTIM) batching can hold a broadcast frame for one beacon interval, " +
                  "showing up as ~100-300 ms of extra latency before a haptic fires; unicast avoids " +
                  "that batching (the device itself has modem-sleep disabled, so this is purely an " +

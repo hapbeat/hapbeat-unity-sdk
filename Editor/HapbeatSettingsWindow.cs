@@ -157,15 +157,6 @@ namespace Hapbeat.Editor
                     "Range 10–200 ms, default 50 ms."));
 
             EditorGUILayout.PropertyField(
-                _serializedConfig.FindProperty("streamUnicast"),
-                new GUIContent(
-                    "Stream Unicast",
-                    "Send StreamClip audio directly to each known device instead of broadcast.\n" +
-                    "Avoids Wi-Fi AP power-save (DTIM) batching, which can cause periodic\n" +
-                    "stutter on broadcast. Falls back to broadcast if no device is known yet\n" +
-                    "or in Bridge mode. See Command Unicast for Play/Stop/StopAll. Default: on."));
-
-            EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("commandUnicast"),
                 new GUIContent(
                     "Command Unicast",

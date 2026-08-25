@@ -1,8 +1,25 @@
+using System;
 using System.Threading;
 using UnityEngine;
 
 namespace Hapbeat
 {
+    /// <summary>Observable outcome for a logical StreamClip source.</summary>
+    public enum HapbeatStreamPlaybackStatus
+    {
+        Deferred,
+        Active,
+        Stopped,
+    }
+
+    /// <summary>Why a logical StreamClip has not started a wire stream yet.</summary>
+    public enum HapbeatStreamPlaybackDeferReason
+    {
+        None,
+        NoResolvedEndpoint,
+        TransportTargetConflict,
+    }
+
     /// <summary>
     /// Handle to an active StreamClip playback. Exposes thread-safe runtime
     /// controls (<see cref="Gain"/>, <see cref="Pan"/>) that
@@ -10,7 +27,7 @@ namespace Hapbeat
     /// continuous haptic modulation.
     ///
     /// <para>
-    /// The streaming coroutine (in <see cref="HapbeatManager"/>) reads these
+    /// The streaming scheduler (owned by <see cref="HapbeatManager"/>) reads these
     /// values per-chunk, applies them to the PCM samples before they hit the
     /// wire, and sends STREAM_DATA with the modulated audio. No protocol
     /// extension is required — dynamic volume / panning are implemented
@@ -18,8 +35,8 @@ namespace Hapbeat
     /// </para>
     ///
     /// <para>
-    /// Pan semantics: −1 = full left, 0 = centered, +1 = full right. For mono
-    /// clips the pan value is ignored (there is only one channel to scale).
+    /// Pan semantics: −1 = full left, 0 = centered, +1 = full right. Mono clips
+    /// are upmixed to the stream's stereo output before this balance is applied.
     /// <b>Stereo balance (linear)</b> is used — center (pan = 0) is
     /// passthrough (gainL = gainR = 1.0), full pan attenuates the opposite
     /// channel to zero. This matches haptic intent: left / right actuators
@@ -34,6 +51,9 @@ namespace Hapbeat
         private float _gain;
         private float _pan;
         private int _stopped; // 0 = running, 1 = stopped
+        private int _status = (int)HapbeatStreamPlaybackStatus.Deferred;
+        private int _deferReason = (int)HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint;
+        private Action _onStopRequested;
 
         /// <summary>
         /// The gain the entry authored (entry.gain × manifest.intensity),
@@ -45,12 +65,14 @@ namespace Hapbeat
         /// </summary>
         public float BaselineGain { get; }
 
-        internal HapbeatStreamPlayback(float baselineGain)
-            : this(baselineGain, baselineGain) { }
+        internal HapbeatStreamPlayback(float baselineGain, Action onStopRequested = null)
+            : this(baselineGain, baselineGain, onStopRequested) { }
 
-        internal HapbeatStreamPlayback(float baselineGain, float initialGain)
+        internal HapbeatStreamPlayback(float baselineGain, float initialGain,
+            Action onStopRequested = null)
         {
             BaselineGain = baselineGain;
+            _onStopRequested = onStopRequested;
             Volatile.Write(ref _gain, initialGain);
             Volatile.Write(ref _pan, 0f);
             Volatile.Write(ref _stopped, 0);
@@ -58,7 +80,7 @@ namespace Hapbeat
 
         /// <summary>
         /// Overall gain multiplier applied to every sample before sending.
-        /// Thread-safe; the streaming coroutine reads this per chunk.
+        /// Thread-safe; the streaming scheduler reads this per chunk.
         /// Clamped to <c>[0, 2]</c> on write.
         /// </summary>
         public float Gain
@@ -81,7 +103,7 @@ namespace Hapbeat
 
         /// <summary>
         /// Stereo pan, <c>−1</c> (full left) .. <c>+1</c> (full right).
-        /// Ignored for mono clips. Thread-safe.
+        /// Mono sources are upmixed before this balance is applied. Thread-safe.
         /// </summary>
         public float Pan
         {
@@ -93,23 +115,50 @@ namespace Hapbeat
         /// has finished playing on its own for non-loop entries).</summary>
         public bool IsStopped => Volatile.Read(ref _stopped) != 0;
 
-        /// <summary>True while the stream is still active.</summary>
-        public bool IsActive => !IsStopped;
+        /// <summary>Whether this source is deferred, active on a transport endpoint, or stopped.</summary>
+        public HapbeatStreamPlaybackStatus Status => (HapbeatStreamPlaybackStatus)Volatile.Read(ref _status);
+
+        /// <summary>Machine-readable reason when <see cref="Status"/> is Deferred.</summary>
+        public HapbeatStreamPlaybackDeferReason DeferReason =>
+            (HapbeatStreamPlaybackDeferReason)Volatile.Read(ref _deferReason);
+
+        /// <summary>True only after a matching transport endpoint has begun.</summary>
+        public bool IsActive => Status == HapbeatStreamPlaybackStatus.Active;
 
         /// <summary>
-        /// Request the stream to stop. The streaming coroutine checks this
+        /// Request the stream to stop. The streaming scheduler checks this
         /// between chunks and sends <c>STREAM_END</c> shortly after. Safe to
         /// call from any thread.
         /// </summary>
         public void Stop()
         {
-            Volatile.Write(ref _stopped, 1);
+            if (Interlocked.Exchange(ref _stopped, 1) != 0) return;
+            Volatile.Write(ref _status, (int)HapbeatStreamPlaybackStatus.Stopped);
+            Volatile.Write(ref _deferReason, (int)HapbeatStreamPlaybackDeferReason.None);
+            Interlocked.Exchange(ref _onStopRequested, null)?.Invoke();
         }
 
-        /// <summary>Internal: mark the stream as finished after the coroutine exits.</summary>
+        /// <summary>Internal: mark the stream as finished after the scheduler removes it.</summary>
         internal void MarkStopped()
         {
             Volatile.Write(ref _stopped, 1);
+            Volatile.Write(ref _status, (int)HapbeatStreamPlaybackStatus.Stopped);
+            Volatile.Write(ref _deferReason, (int)HapbeatStreamPlaybackDeferReason.None);
+            Interlocked.Exchange(ref _onStopRequested, null);
+        }
+
+        internal void MarkActive()
+        {
+            if (IsStopped) return;
+            Volatile.Write(ref _deferReason, (int)HapbeatStreamPlaybackDeferReason.None);
+            Volatile.Write(ref _status, (int)HapbeatStreamPlaybackStatus.Active);
+        }
+
+        internal void MarkDeferred(HapbeatStreamPlaybackDeferReason reason)
+        {
+            if (IsStopped) return;
+            Volatile.Write(ref _deferReason, (int)reason);
+            Volatile.Write(ref _status, (int)HapbeatStreamPlaybackStatus.Deferred);
         }
 
         /// <summary>

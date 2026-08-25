@@ -11,7 +11,13 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Added（追加）
 
+- **1 アプリから複数 target へ StreamClip を同時出力**できるようにしました。PONG で解決した device endpoint ごとに 1 本の wire stream を持ち、同じ device に一致する複数 source は SDK 内で mix します。source ごとに `HapbeatStreamPlayback` を返すため、gain / pan / loop / Stop は独立して制御できます。sample rate と mono / stereo の違いは 16 kHz stereo PCM16 へ正規化します。
+- `HapbeatStreamPlayback.Status` / `DeferReason` を追加しました。address 未解決または単一 stream の Bridge で別 target が使用中の場合は、誤った device へ broadcast せず `Deferred` として理由を取得できます。
 - **FIRE（Command モード）で左右バランス（`pan`）を指定できる**ようにしました。`HapbeatManager.Play(...)` / `PlayScheduled(...)` に `pan` 引数（-1 = 左のみ / 0 = 中央 / +1 = 右のみ、既定 0）が増え、Trigger 系コンポーネントは既存の `Pan` プロパティを FIRE でも送るようになります。デバイス側ミキサーが CLIP と同じ linear balance で展開します（contracts message-format.md §0x01 / DEC-055）。**DEC-055 対応版のデバイスファームウェアが必要**で、未対応版は `pan` を無視して中央で再生します。
+
+### Changed（変更）
+
+- StreamClip は target を持たない `STREAM_DATA` の誤配送を防ぐため、常に PONG-backed endpoint へ明示ユニキャストします。旧 `streamUnicast` 設定と broadcast fallback を削除しました。
 
 ### Fixed（修正）
 
@@ -94,11 +100,11 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
   - `WorldSpace` 時の **lazy follow（遅延追従）**（`World Attach Mode` = `LazyFollow` / `WorldFixed`、既定 `LazyFollow`）— 視界中央から `Follow Deadzone Degrees`（既定 `10°`）以内にある間はパネルを**ワールド固定のまま**にし、それを超えて見回したときだけ `Follow Smooth Seconds`（既定 `0.25` s）の時定数で正面へ滑らかに移動します。Canvas をカメラ Transform の子にする**ハードなヘッドロックは採用していません**（頭に追従して動く面に XR コンポジタの再投影が重ねて掛かるため、頭を振るたびに UI が泳いで見えます）。カメラは `Follow Camera`（未設定なら `Camera.main`）、位置は `Follow Distance`（既定 `1.5` m）/ `Follow Vertical Offset`（既定 `0` m）で調整します。カメラが見つからない場合は警告を 1 回出して `WorldFixed` 相当で動作します。
   - `PanelCanvasTransform` / `IsFollowingView` / `FollowVerticalOffset` / `SnapToView()`（public）— 外部コントローラーが自前の world-space UI をパネル Canvas の下にぶら下げたり、「視界中央へ戻す」操作を実装するために公開しています。
 - **`Hapbeat > Open Runtime Status` ウィンドウ** — 端末ごとに変わる値を 1 画面に集約。Address Override（保存値 / 実行時値 / 直接編集 + 保存 / Clear）、appName のプレースホルダー解決後プレビュー、接続状態（broadcast・unicast / ポート / 生存デバイス数 / 発見済み一覧）を確認できます。Manager インスペクタからも開けます。
-- **ユニキャスト送信（`streamUnicast` / `commandUnicast`、いずれも既定 `true`）**
+- **addressed ユニキャスト送信（STREAM は常時 / コマンドは `commandUnicast`、既定 `true`）**
   Wi-Fi のブロードキャストは、同じアクセスポイントに省電力状態の端末が 1 台でもいると AP 側で DTIM まで保留されるため、100〜300ms 級の遅延が周期的に発生します（CLIP では可聴な途切れとして現れていました）。PONG で判明している既知デバイスへ直接送ることでこれを回避します。
   - `STREAM_BEGIN` / `STREAM_DATA` / `STREAM_END` と `PLAY` / `STOP` / `STOP_ALL` が対象。`PING` / `CONNECT_STATUS` は discovery のため従来どおりブロードキャストです。
   - 宛先は解決後の target で絞り込みます（`HapbeatClient.AddressMatches` — firmware の照合と同一セマンティクス）。1 人が複数台装着する構成や、複数ペアが同一 LAN にいる構成でも、自分のペアにだけ送信します。
-  - 既知デバイスが 0 台のときはブロードキャストへフォールバックします。二重配送はしません。
+  - STREAM は address 解決まで defer して誤 broadcast を防ぎます。コマンドは既知デバイスが 0 台のときだけ broadcast へフォールバックします。
   - `HapbeatProtocol.ParsePongExtended` — PONG からデバイスの address / device_name / firmware_version 等を取得します（プロトコル変更はありません。従来 SDK 側が読んでいなかっただけです）。
 - **新サンプル `VRConfigExample`** — Quest 等の VR 実機で override を設定・確認するための最小シーン。XR Interaction Toolkit に依存せず、Input System のみで動作します。操作はスティックでフォーカス移動、トリガー / A(X) / B(Y) のいずれかで決定の 2 アクションのみ。パネルとガイドは一体で lazy follow（遅延追従）するので、起動時の recenter は行いません（スティック押し込みの recenter は「今すぐ正面へスナップ」の意味になります）。テスト再生は EventMap の CLIP エントリ（100Hz sine 同梱）なので、デバイスに Kit を配備しなくても振動を確認できます。戻り先シーンを設定すれば Exit で自分のシーンへ復帰できるため、**自プロジェクトの設定画面としてそのまま使えます**。
 - ユニットテスト（EditMode）— `ResolveTargetTests` / `AddressMatchesTests` / `AddressPlaceholderTests` と `Tests/Runtime` アセンブリ定義を新設しました。

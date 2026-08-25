@@ -75,7 +75,7 @@ namespace Hapbeat
 
         // Whether SendPlay/SendStop/SendStopAll should attempt unicast to already-
         // known devices instead of broadcasting (see SendCommandRaw) — same
-        // Wi-Fi AP DTIM power-save rationale as streamUnicast, applied to one-shot
+        // Wi-Fi AP DTIM power-save rationale as addressed streaming, applied to one-shot
         // commands instead of a stream session. Defaults to true so a HapbeatClient
         // used standalone (no HapbeatManager) still gets the low-latency behavior.
         // Pushed from HapbeatConfig.commandUnicast by HapbeatManager (see
@@ -164,6 +164,12 @@ namespace Hapbeat
         // main thread (SendCommandRaw).
         private readonly ConcurrentDictionary<IPAddress, long> _knownDeviceIps =
             new ConcurrentDictionary<IPAddress, long>();
+
+        // STREAM_DATA has no target on the wire. Multi-stream callers must therefore
+        // resolve an addressed device to one concrete endpoint before beginning a
+        // session; reusing the mutable per-session broadcast target list is unsafe.
+        private readonly ConcurrentDictionary<IPAddress, IPEndPoint> _knownDeviceEndpoints =
+            new ConcurrentDictionary<IPAddress, IPEndPoint>();
 
         // Queue for dispatching callbacks to the main thread
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
@@ -297,6 +303,7 @@ namespace Hapbeat
             // they were resolved for.
             _knownDeviceIps.Clear();
             _deviceAddresses.Clear();
+            _knownDeviceEndpoints.Clear();
             _streamUnicastTargets = null;
             // Routes belong to the network we were on: after a reconnect the host
             // may well have different interfaces (docking, VPN up, Wi-Fi switch).
@@ -442,6 +449,53 @@ namespace Hapbeat
         public string GetKnownDeviceAddress(IPAddress ip)
         {
             return _deviceAddresses.TryGetValue(ip, out var address) ? address : null;
+        }
+
+        internal readonly struct StreamEndpoint
+        {
+            public readonly IPEndPoint EndPoint;
+            public readonly string Address;
+            public readonly bool IsDirect;
+
+            public StreamEndpoint(IPEndPoint endPoint, string address, bool isDirect = true)
+            {
+                EndPoint = endPoint;
+                Address = address;
+                IsDirect = isDirect;
+            }
+        }
+
+        /// <summary>
+        /// Returns only live PONG-backed endpoints whose reported address matches
+        /// <paramref name="target"/>. Address-unknown devices are intentionally
+        /// excluded: a STREAM_DATA packet cannot be target-filtered by firmware, so
+        /// failing open here would leak another logical source to that device.
+        /// </summary>
+        internal List<StreamEndpoint> GetResolvedStreamEndpoints(string target)
+        {
+            var result = new List<StreamEndpoint>();
+            if (!IsBroadcast)
+            {
+                // Bridge transports one device-side stream. Retain that established
+                // behavior, but do not let a second target replace or multiplex it.
+                if (_targetEndPoint != null)
+                    result.Add(new StreamEndpoint(_targetEndPoint, target ?? string.Empty, false));
+                return result;
+            }
+
+            long nowUs = GetLocalTimestampUs();
+            long ttlUs = (long)(Math.Max(1f, _knownDeviceTtlSeconds) * 1_000_000d);
+            foreach (var pair in _knownDeviceIps)
+            {
+                if (nowUs - pair.Value > ttlUs) continue;
+                if (!_deviceAddresses.TryGetValue(pair.Key, out string address) ||
+                    string.IsNullOrEmpty(address) ||
+                    !AddressMatches(target, address))
+                    continue;
+                if (_knownDeviceEndpoints.TryGetValue(pair.Key, out IPEndPoint endpoint))
+                    result.Add(new StreamEndpoint(endpoint, address));
+            }
+            return result;
         }
 
         /// <summary>
@@ -698,6 +752,29 @@ namespace Hapbeat
         public void SendStreamEnd()
         {
             SendStreamPacket(HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
+        }
+
+        internal void SendStreamBeginTo(IPEndPoint endpoint, ushort sampleRate, byte channels,
+            byte format, uint totalSamples, float gain, string target = null)
+        {
+            byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(
+                sampleRate, channels, format, totalSamples, gain, ResolveTarget(target));
+            SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_BEGIN, payload);
+        }
+
+        internal void SendStreamDataTo(IPEndPoint endpoint, uint byteOffset, byte[] audioData,
+            int dataOffset, int dataLength)
+        {
+            if (!IsConnected || _udpClient == null) return;
+            ushort seq = GetNextSequenceNumber();
+            byte[] packet = HapbeatProtocol.BuildStreamDataPacket(
+                seq, byteOffset, audioData, dataOffset, dataLength);
+            SendStreamRawTo(endpoint, packet);
+        }
+
+        internal void SendStreamEndTo(IPEndPoint endpoint)
+        {
+            SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
         }
 
         /// <summary>
@@ -1084,6 +1161,32 @@ namespace Hapbeat
             SendStreamRaw(packet);
         }
 
+        private void SendStreamPacketTo(IPEndPoint endpoint, byte commandType, byte[] payload)
+        {
+            ushort seq = GetNextSequenceNumber();
+            byte[] packet = HapbeatProtocol.BuildPacket(commandType, seq, payload);
+            SendStreamRawTo(endpoint, packet);
+        }
+
+        private void SendStreamRawTo(IPEndPoint endpoint, byte[] data)
+        {
+            UdpClient client = _udpClient;
+            if (!IsConnected || client == null || endpoint == null) return;
+            try
+            {
+                client.Send(data, data.Length, endpoint);
+                NoteSendSucceeded();
+            }
+            catch (SocketException ex)
+            {
+                NoteSendFailed($"Stream unicast send to {endpoint}", ex.SocketErrorCode, ex.Message);
+            }
+            catch (ObjectDisposedException)
+            {
+                HandleDisconnection();
+            }
+        }
+
         private void SendStreamRaw(byte[] data)
         {
             // Snapshot — see SendRaw. This path runs on the mixer thread.
@@ -1424,8 +1527,11 @@ namespace Hapbeat
             // The timestamp is what lets SendCommandRaw expire a device that stopped
             // answering PINGs instead of unicasting at it forever.
             _knownDeviceIps[sender.Address] = nowUs;
+            _knownDeviceEndpoints[sender.Address] = new IPEndPoint(sender.Address, sender.Port);
             if (!string.IsNullOrEmpty(address))
                 _deviceAddresses[sender.Address] = address;
+            else
+                _deviceAddresses.TryRemove(sender.Address, out _);
 
             // A reply proves which subnet a device is really on, so pin broadcasts
             // there. Until this happens PLAY still goes out as a limited broadcast,

@@ -26,7 +26,7 @@ https://github.com/Hapbeat/hapbeat-unity-sdk.git
 
 ## 送信の仕組み（0.3.0 以降）
 
-`PLAY` / `STOP` / `STOP_ALL` / `STREAM_*` は、PONG で判明済みのデバイスへ**ユニキャスト**で送ります（`commandUnicast` / `streamUnicast`、いずれも既定 ON）。Wi-Fi AP の省電力バッファ（DTIM）でブロードキャストフレームが 100〜300 ms 保留され、遅延や CLIP の途切れとして現れる問題を避けるためです。既知デバイスが 0 台のときは自動でブロードキャストにフォールバックします。`PING` / `CONNECT_STATUS` は検出のため従来どおりブロードキャストです。
+`STREAM_*` は、PONG で address まで判明した対象デバイスへ常に**明示ユニキャスト**します。未解決時は別 target への漏送信を避けるため playback が `Deferred` になり、ブロードキャストしません。`PLAY` / `STOP` / `STOP_ALL` は `commandUnicast`（既定 ON）により既知デバイスへユニキャストし、既知デバイスが 0 台ならブロードキャストへフォールバックします。`PING` / `CONNECT_STATUS` は検出のため従来どおりブロードキャストです。
 
 詳細は [通信モデル](https://devtools.hapbeat.com/docs/concepts/communication-model/) を参照。
 
@@ -224,7 +224,7 @@ XRI のサンプルシーンは Unity Companion License のため改変版を再
 | Override Addressing (this build) | -1 / -1 | ビルド全体で player / group を固定（`1-99`）。`-1` = 端末ごと |
 | Ping Interval (s) | 5 | キープアライブ間隔 |
 | Stream Buffer (s) | 0.05 | ストリームの先行送信バッファ（10–200 ms） |
-| Stream Unicast / Command Unicast | ON | 既知デバイスへユニキャスト送信（OFF でブロードキャスト） |
+| Command Unicast | ON | PLAY / STOP / STOP_ALL を既知デバイスへユニキャスト送信（OFF でブロードキャスト） |
 | Haptic Delay (ms) | 0 | 音声出力遅延に合わせた触覚の遅延補正（0–500 ms） |
 | Enable Logging / Verbose Log | ON / OFF | Console へのログ出力 |
 | Advanced: Bridge (ESP-NOW) | OFF | ESP-NOW 経由の場合のみ ON |
