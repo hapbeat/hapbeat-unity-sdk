@@ -66,8 +66,7 @@ namespace Hapbeat
         StreamGain,
         /// <summary>
         /// Stereo pan (-1..+1). -1 = full left, 0 = centered, +1 = full right.
-        /// Ignored for mono clips. Uses an equal-power pan law so centered pan
-        /// preserves perceived loudness.
+        /// Mono clips are upmixed to stereo before linear balance is applied.
         /// </summary>
         StreamPan,
     }
@@ -139,7 +138,7 @@ namespace Hapbeat
         [Tooltip("Which stream parameter to control.\n" +
                  "StreamGain: overall volume multiplier (0..2) on the active " +
                  "StreamClip playback.\n" +
-                 "StreamPan: stereo pan (-1..+1). Ignored for mono clips.")]
+                 "StreamPan: stereo pan (-1..+1). Mono clips are upmixed to stereo, then linear balance is applied.")]
         [SerializeField]
         private BindingOutputParameter _outputParameter = BindingOutputParameter.StreamGain;
 

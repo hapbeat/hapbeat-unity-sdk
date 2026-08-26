@@ -2549,6 +2549,9 @@ namespace Hapbeat.Editor
             bool isStreaming = playPath
                 ? HapbeatManager.Instance.IsStreaming
                 : HapbeatEditorTransport.IsStreaming;
+            bool hasStreamSources = playPath
+                ? HapbeatManager.Instance.HasStreamSources
+                : HapbeatEditorTransport.HasStreamSources;
 
             // Single-row bar: [▶ Test Play / ■ Stop toggle]  inline-hint
             // The bar is sized from the CURRENT layout context (the detail scroll
@@ -2568,10 +2571,10 @@ namespace Hapbeat.Editor
             float btnY = boxRect.y + (boxRect.height - btnH) * 0.5f;
             var btnRect = new Rect(boxRect.x + padding, btnY, btnW, btnH);
 
-            // Toggle Play <-> Stop based on live streaming state. Keeps the UI
-            // single-purpose — "press to fire, press again to stop" — and avoids
-            // the ambiguity of two side-by-side buttons that both look active.
-            bool showStop = canFire && isStreaming;
+            // Toggle Play <-> Stop while any source is registered, including a
+            // Deferred source that may join on a later PONG. This prevents a second
+            // Test Play press from adding the same pending source again.
+            bool showStop = canFire && hasStreamSources;
             string label = showStop ? stopLabel : playLabel;
             string tooltip = showStop
                 ? "Stop — end the in-flight stream for this entry."
@@ -2696,6 +2699,12 @@ namespace Hapbeat.Editor
                 inlineHint = "\u266a Streaming\u2026  (Stop to end)";
                 fullHintTooltip = inlineHint;
                 hintColor = new Color(0.4f, 0.85f, 0.5f);
+            }
+            else if (hasStreamSources)
+            {
+                inlineHint = "Waiting for a matching device\u2026  (Stop to cancel)";
+                fullHintTooltip = inlineHint;
+                hintColor = new Color(0.95f, 0.85f, 0.55f);
             }
 
             if (inlineHint != null && hintAreaW > 8f)

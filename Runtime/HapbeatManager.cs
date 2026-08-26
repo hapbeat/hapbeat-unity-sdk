@@ -327,7 +327,7 @@ namespace Hapbeat
             // for the opposite transition: an endpoint that stopped answering has
             // no callback, so its TTL must be observed by polling. Keep this out of
             // the per-frame hot path because resolving allocates per source.
-            if (_endpointStreamMixer != null && _endpointStreamMixer.IsStreaming &&
+            if (_endpointStreamMixer != null && _endpointStreamMixer.HasSources &&
                 Time.realtimeSinceStartup >= _nextStreamEndpointReconcileTime)
             {
                 _endpointStreamMixer.ReconcileEndpoints();
@@ -781,8 +781,11 @@ namespace Hapbeat
                 HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup), flush: true);
         }
 
-        /// <summary>True while any logical stream source is registered.</summary>
+        /// <summary>True while at least one endpoint wire stream is active.</summary>
         public bool IsStreaming => _endpointStreamMixer != null && _endpointStreamMixer.IsStreaming;
+
+        /// <summary>True while any logical stream source is registered, including Deferred sources.</summary>
+        internal bool HasStreamSources => _endpointStreamMixer != null && _endpointStreamMixer.HasSources;
 
         /// <summary>First active logical stream source, or null.</summary>
         public HapbeatStreamPlayback ActivePlayback => _endpointStreamMixer?.ActivePlayback;

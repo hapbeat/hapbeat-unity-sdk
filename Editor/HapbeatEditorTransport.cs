@@ -1,7 +1,5 @@
 #if UNITY_EDITOR
 using System;
-using System.Diagnostics;
-using System.Threading;
 using UnityEditor;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
@@ -17,60 +15,16 @@ namespace Hapbeat.Editor
     /// use and disposed on domain reload or on Play-mode enter (to hand control
     /// back to the runtime manager so both don't fight over the UDP socket).
     ///
-    /// Streaming runs on a dedicated thread, the same arrangement
-    /// <see cref="HapbeatManager"/> uses for the runtime.
-    ///
-    /// <para>
-    /// It was originally paced from <see cref="EditorApplication.update"/> (Editor
-    /// code has no MonoBehaviour to host a coroutine), which stuttered
-    /// irregularly: that callback is not a steady clock. The Editor throttles it
-    /// when its window is not focused, and it stops outright behind modal
-    /// dialogs, native menus, asset imports and script compiles. With only a
-    /// fraction of a second of audio buffered ahead, every such gap drains the
-    /// device's ring buffer. Play mode never showed the problem because the
-    /// runtime had already moved this work to a thread.
-    /// </para>
-    ///
-    /// <para>
-    /// <b>Threading rules</b> (why this is safe in the Editor): the thread only
-    /// ever touches <see cref="HapbeatClient"/> socket sends -- no Unity API, no
-    /// serialized object, no <c>AssetDatabase</c>. Shared state it may write is
-    /// limited to its own <see cref="StreamState"/> plus one volatile flag; the
-    /// main thread performs teardown. The thread is always joined before a domain
-    /// reload or Play-mode enter (see the static constructor), so it can never
-    /// outlive the AppDomain that owns it.
-    /// </para>
+    /// StreamClip test play uses the same endpoint mixer as runtime. It sends only
+    /// to PONG-resolved endpoints; it never broadcasts target-less STREAM_DATA.
     /// </summary>
     internal static class HapbeatEditorTransport
     {
         private static HapbeatClient _client;
-        private static StreamState _stream;
+        private static HapbeatEndpointStreamMixer _streamMixer;
         private static HapbeatConfig _cachedConfig;
-
-        // Stream pump. _stream is handed to the thread on start and only read by
-        // the main thread afterwards; teardown happens on the main thread once
-        // _streamFinished is observed.
-        private static Thread _streamThread;
-        private static volatile bool _streamStopRequested;
-        private static volatile bool _streamFinished;
-
-        /// <summary>A stream run in progress (single state, no overlap).</summary>
-        private class StreamState
-        {
-            public byte[] pcmBytes;
-            public ushort sampleRate;
-            public byte channels;
-            public uint totalSamples;
-            public float gain;
-            public string target;
-            public bool loop;
-
-            public uint byteOffset;
-            public int remaining;
-            public DateTime startTime;
-            public int iteration;
-            public float bytesPerSecond;
-        }
+        private static int _overridePlayer = -1;
+        private static int _overrideGroup = -1;
 
         static HapbeatEditorTransport()
         {
@@ -88,12 +42,13 @@ namespace Hapbeat.Editor
         // ── Status ───────────────────────────────────────────────────────────
 
         // Discovery upkeep. Well inside the client's known-device TTL (15 s) so a
-        // device never ages out of the unicast set between test plays.
+        // deferred Test Play promptly joins when its target answers a PING.
         private const double PingIntervalSeconds = 3.0;
         private static double _lastPingTime;
 
         public static bool IsOpen => _client != null && _client.IsConnected;
-        public static bool IsStreaming => _stream != null;
+        public static bool IsStreaming => _streamMixer != null && _streamMixer.IsStreaming;
+        internal static bool HasStreamSources => _streamMixer != null && _streamMixer.HasSources;
 
         public static string LastOpenError { get; private set; }
 
@@ -121,19 +76,14 @@ namespace Hapbeat.Editor
                 // deployed build (via HapbeatManager) honors. There's no config-level
                 // default anymore; only a previously-persisted override applies here.
                 HapbeatManager.TryGetPersistedAddressOverride(out int savedPlayer, out int savedGroup);
-                _client.SetAddressOverride(
-                    HapbeatClient.NormalizeOverride(savedPlayer),
-                    HapbeatClient.NormalizeOverride(savedGroup));
+                _overridePlayer = HapbeatClient.NormalizeOverride(savedPlayer);
+                _overrideGroup = HapbeatClient.NormalizeOverride(savedGroup);
+                _client.SetAddressOverride(_overridePlayer, _overrideGroup);
                 EditorApplication.update -= Tick;
                 EditorApplication.update += Tick;
 
-                // Discover devices right away. Without a PING nothing ever PONGs,
-                // so the client learns no device IPs and every test play falls back
-                // to broadcast — which the AP buffers until its DTIM beacon, the
-                // exact stutter Test Play was showing. The runtime avoids this
-                // because HapbeatManager pings on connect; this transport drives a
-                // bare client, so it has to do the same. It is also what lets the
-                // client pin the right subnet on a multi-homed host.
+                // Discover devices right away. StreamClip requires a PONG-resolved
+                // endpoint, so it remains deferred until this exchange succeeds.
                 _client.SendPing();
                 _lastPingTime = EditorApplication.timeSinceStartup;
 
@@ -153,12 +103,8 @@ namespace Hapbeat.Editor
 
         public static void Dispose()
         {
-            // Join first: the thread sends through _client, so tearing the client
-            // down underneath it would be a use-after-dispose. This also runs on
-            // domain reload / Play-mode enter, which is what keeps a stray thread
-            // from surviving into the next AppDomain.
-            StopStreamThread();
-            _stream = null;
+            _streamMixer?.Dispose();
+            _streamMixer = null;
             EditorApplication.update -= Tick;
 
             if (_client != null)
@@ -209,119 +155,29 @@ namespace Hapbeat.Editor
                 return;
             }
 
-            if (_stream != null)
+            if (_streamMixer != null)
                 StopStream();
 
-            // Decode AudioClip into PCM16 once.
-            float[] samples = new float[clip.samples * clip.channels];
-            clip.GetData(samples, 0);
-            byte[] pcm = new byte[samples.Length * 2];
-            for (int i = 0; i < samples.Length; i++)
+            string resolvedTarget = HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup);
+            HapbeatStreamPlayback playback = GetStreamMixer().Add(clip, gain, gain, resolvedTarget, loop);
+            if (playback.IsActive)
             {
-                short v = (short)Mathf.Clamp(samples[i] * 32767f, -32768f, 32767f);
-                pcm[i * 2] = (byte)(v & 0xFF);
-                pcm[i * 2 + 1] = (byte)((v >> 8) & 0xFF);
+                Debug.Log($"[Hapbeat:Editor] \u266a StreamClip \"{clip.name}\" " +
+                          $"{clip.frequency}Hz/{clip.channels}ch gain={gain:F2} loop={loop} unicast" +
+                          (string.IsNullOrEmpty(resolvedTarget) ? "" : $" target={resolvedTarget}"));
             }
-
-            _stream = new StreamState
+            else
             {
-                pcmBytes = pcm,
-                sampleRate = (ushort)clip.frequency,
-                channels = (byte)clip.channels,
-                totalSamples = (uint)clip.samples,
-                gain = gain,
-                target = target,
-                loop = loop,
-                byteOffset = 0,
-                remaining = pcm.Length,
-                startTime = DateTime.UtcNow,
-                iteration = 1,
-                bytesPerSecond = (ushort)clip.frequency * (byte)clip.channels * 2f,
-            };
-
-            // Pin this session to the devices that have PONGed, exactly as
-            // HapbeatManager does for the runtime. Streaming over broadcast is what
-            // made Test Play stutter: the AP holds broadcast frames until its DTIM
-            // beacon, while unicast goes out immediately. Falls back to broadcast on
-            // its own when nothing has answered yet (returns -1).
-            int streamTargets = _client.SetStreamUnicastTargets(
-                _client.GetKnownDeviceIps(), target);
-
-            // Seamless loop: single STREAM_BEGIN with totalSamples=0 (unknown length)
-            // when looping, then keep feeding STREAM_DATA with monotonically advancing
-            // offsets across iterations. See the matching comment in HapbeatManager.
-            uint reportedTotalSamples = loop ? 0u : _stream.totalSamples;
-            _client.SendStreamBegin(_stream.sampleRate, _stream.channels,
-                HapbeatProtocol.AUDIO_FORMAT_PCM16, reportedTotalSamples, _stream.gain, _stream.target);
-
-            _streamStopRequested = false;
-            _streamFinished = false;
-            _streamThread = new Thread(StreamThreadLoop)
-            {
-                Name = "HapbeatEditorStream",
-                IsBackground = true,   // never block Editor shutdown
-                Priority = System.Threading.ThreadPriority.AboveNormal,
-            };
-            _streamThread.Start();
-
-            string routing = streamTargets < 0
-                ? "broadcast (no device has answered a PING yet)"
-                : $"unicast to {streamTargets} device(s)";
-            Debug.Log($"[Hapbeat:Editor] \u266a StreamClip \"{clip.name}\" " +
-                      $"{_stream.sampleRate}Hz/{_stream.channels}ch gain={gain:F2} " +
-                      $"loop={loop} {routing}" +
-                      (string.IsNullOrEmpty(target) ? "" : $" target={target}"));
+                Debug.LogWarning($"[Hapbeat:Editor] StreamClip deferred: no PONG-resolved endpoint matches " +
+                                 $"target '{resolvedTarget}'. STREAM_DATA was not broadcast.");
+            }
         }
 
         public static void StopStream()
         {
-            if (_stream == null) return;
-            int iterations = _stream.iteration;
-            StopStreamThread();
-            // Drop the snapshot with the session that resolved it, so it can't
-            // outlive the devices it was taken for (matches HapbeatManager).
-            _client?.SetStreamUnicastTargets(null);
-            Debug.Log($"[Hapbeat:Editor] \u25a0 Stream stopped after {iterations} iteration(s).");
-            _stream = null;
-        }
-
-        /// <summary>
-        /// Signal the pump and wait for it, then emit STREAM_END.
-        ///
-        /// STREAM_END is sent here rather than from the thread so there is exactly
-        /// one place it can come from, whichever way the stream ends.
-        /// </summary>
-        private static void StopStreamThread()
-        {
-            if (_streamThread != null)
-            {
-                _streamStopRequested = true;
-                // Bounded: the pump checks the flag every chunk, so this returns in
-                // milliseconds. The timeout only guards against a wedged send, and
-                // the thread is background so it cannot hold the Editor open.
-                if (!_streamThread.Join(1000))
-                    Debug.LogWarning("[Hapbeat:Editor] Stream thread did not stop in time.");
-                _streamThread = null;
-            }
-            if (_stream != null)
-                SendStreamEnd();
-            _streamFinished = false;
-        }
-
-        /// <summary>
-        /// Main-thread half of stream teardown: reacts to the pump finishing on its
-        /// own (a non-looping clip running out). Everything that touches shared
-        /// state or logs stays here rather than on the worker.
-        /// </summary>
-        private static void TickStreamTeardown()
-        {
-            if (!_streamFinished || _stream == null) return;
-            StopStream();
-        }
-
-        private static void SendStreamEnd()
-        {
-            try { if (IsOpen) _client.SendStreamEnd(); } catch { }
+            if (_streamMixer == null) return;
+            _streamMixer.StopAll();
+            Debug.Log("[Hapbeat:Editor] \u25a0 Stream stopped.");
         }
 
         /// <summary>
@@ -331,14 +187,13 @@ namespace Hapbeat.Editor
         /// </summary>
         private static void Tick()
         {
+            _client?.DispatchMainThreadCallbacks();
             TickDiscovery();
-            TickStreamTeardown();
+            _streamMixer?.ReconcileEndpoints();
         }
 
         /// <summary>
-        /// Re-PING periodically so known devices stay inside the client's liveness
-        /// window. Letting them expire would silently drop test play back to
-        /// broadcast mid-session — the same stutter as never pinging at all.
+        /// Re-PING periodically so PONG-resolved stream endpoints stay live.
         /// </summary>
         private static void TickDiscovery()
         {
@@ -351,74 +206,6 @@ namespace Hapbeat.Editor
             _client.SendPing();
         }
 
-        /// <summary>
-        /// Dedicated pump: pushes STREAM_DATA slightly ahead of real time until the
-        /// clip runs out (or forever, when looping).
-        ///
-        /// Mirrors <see cref="HapbeatManager"/>'s stream thread, including the
-        /// deliberate avoidance of <c>Thread.Sleep(1)</c> for short waits -- on
-        /// Windows its floor is ~15.6 ms, which is longer than the lead being
-        /// maintained and would itself cause the dropouts this exists to prevent.
-        /// </summary>
-        private static void StreamThreadLoop()
-        {
-            var state = _stream;
-            if (state == null) { _streamFinished = true; return; }
-
-            float sendAheadSeconds = ResolveSendAheadSeconds();
-            int maxChunkSize = HapbeatProtocol.STREAM_DATA_MAX_PAYLOAD;
-            var clock = Stopwatch.StartNew();
-
-            try
-            {
-                while (!_streamStopRequested)
-                {
-                    if (state.remaining <= 0)
-                    {
-                        if (!state.loop) break;
-
-                        // Re-arm for the next iteration. Offsets restart, so the
-                        // device is told a new BEGIN, matching the runtime.
-                        state.iteration++;
-                        state.byteOffset = 0;
-                        state.remaining = state.pcmBytes.Length;
-                        clock.Restart();
-                        _client.SendStreamBegin(state.sampleRate, state.channels,
-                            HapbeatProtocol.AUDIO_FORMAT_PCM16, state.totalSamples, state.gain, state.target);
-                        continue;
-                    }
-
-                    double elapsed = clock.Elapsed.TotalSeconds;
-                    double sentDuration = state.byteOffset / state.bytesPerSecond;
-                    double lead = sentDuration - elapsed;
-                    if (lead > sendAheadSeconds)
-                    {
-                        // Wait only for the surplus, so the lead is topped up rather
-                        // than drained to zero and refilled in bursts.
-                        PreciseSleep(lead - sendAheadSeconds);
-                        continue;
-                    }
-
-                    int chunk = Math.Min(state.remaining, maxChunkSize);
-                    _client.SendStreamData(state.byteOffset, state.pcmBytes,
-                        (int)state.byteOffset, chunk);
-                    state.byteOffset += (uint)chunk;
-                    state.remaining -= chunk;
-                }
-            }
-            catch (Exception ex)
-            {
-                // A socket error must not take the Editor down with it.
-                Debug.LogWarning($"[Hapbeat:Editor] Stream thread stopped: {ex.Message}");
-            }
-            finally
-            {
-                // The main thread sends STREAM_END and clears state; this only
-                // reports that the pump is done.
-                _streamFinished = true;
-            }
-        }
-
         /// <summary>Lead to keep buffered on the device, from config.</summary>
         private static float ResolveSendAheadSeconds()
         {
@@ -427,27 +214,17 @@ namespace Hapbeat.Editor
             return Mathf.Max(configured, 0.05f);
         }
 
-        /// <summary>
-        /// Wait accurately for short durations.
-        ///
-        /// <c>Thread.Sleep(1)</c> has a ~15.6 ms floor on Windows, longer than the
-        /// waits this pump asks for, so short waits spin instead. Copy of
-        /// <see cref="HapbeatManager"/>'s helper -- that one is private, and the
-        /// two loops are the same problem.
-        /// </summary>
-        private static void PreciseSleep(double seconds)
+        private static HapbeatEndpointStreamMixer GetStreamMixer()
         {
-            const double spinThresholdSeconds = 0.016;
-            var sw = Stopwatch.StartNew();
-            while (!_streamStopRequested)
-            {
-                double remaining = seconds - sw.Elapsed.TotalSeconds;
-                if (remaining <= 0.0) return;
-                if (remaining > spinThresholdSeconds)
-                    Thread.Sleep(1);
-                else
-                    Thread.SpinWait(200);
-            }
+            if (_streamMixer != null) return _streamMixer;
+            _streamMixer = new HapbeatEndpointStreamMixer(
+                () => _client,
+                target => _client != null
+                    ? _client.GetResolvedStreamEndpoints(target)
+                    : new System.Collections.Generic.List<HapbeatClient.StreamEndpoint>(),
+                ResolveSendAheadSeconds,
+                message => Debug.LogWarning($"[Hapbeat:Editor] {message}"));
+            return _streamMixer;
         }
 
         // ── Config ───────────────────────────────────────────────────────────

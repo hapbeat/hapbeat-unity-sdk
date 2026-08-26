@@ -691,12 +691,14 @@ namespace Hapbeat.Editor
 
         private void EditorSendStopAll()
         {
+            // Stop deferred sources too: they have no active endpoint session, so
+            // HapbeatEditorTransport.IsStreaming is false even though they can join
+            // on a later PONG.
+            HapbeatEditorTransport.StopStream();
+
             if (_editorClient == null || !_editorClient.IsConnected) return;
             string target = NullIfEmpty(_testTarget);
             HapbeatEditorTransport.StopAll(target);
-            // Stream session も同時に閉じる (mixer は StopAll を見ないので個別に)
-            if (HapbeatEditorTransport.IsStreaming)
-                HapbeatEditorTransport.StopStream();
             Debug.Log($"[Hapbeat Edit] StopAll: target={target ?? "(broadcast)"}");
         }
 

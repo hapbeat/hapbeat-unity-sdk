@@ -162,6 +162,12 @@ namespace Hapbeat
 
         public bool IsStreaming
         {
+            get { lock (_lock) return _sessions.Count > 0; }
+        }
+
+        /// <summary>True while logical sources are registered, including Deferred sources.</summary>
+        internal bool HasSources
+        {
             get { lock (_lock) return _sources.Count > 0; }
         }
 
@@ -385,8 +391,11 @@ namespace Hapbeat
                     EndSessionLocked(existing);
                     _sessions.Remove(pair.Key);
                 }
+                // STREAM_DATA has no target. Even though this is an explicit direct
+                // endpoint, BEGIN must carry the PONG-resolved address so firmware
+                // rejects it if that IP was reassigned before the next PONG refresh.
                 var session = new Session(pair.Value.EndPoint, pair.Key, pair.Value.Address,
-                    pair.Value.IsDirect ? null : pair.Value.Address, pair.Value.IsDirect);
+                    pair.Value.Address, pair.Value.IsDirect);
                 _sessions.Add(pair.Key, session);
                 _sink.Begin(session.Endpoint, OutputSampleRate, OutputChannels,
                     HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);

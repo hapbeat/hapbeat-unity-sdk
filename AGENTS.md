@@ -16,12 +16,13 @@ from one file. Unity package id: `com.hapbeat.sdk`. C# namespace: `Hapbeat`.
 ## What it is
 
 A Unity SDK to drive Hapbeat haptic devices over Wi-Fi UDP on the LAN. 2D / 3D /
-XR (Quest, Pico, Vision Pro). No cloud. `PLAY` / `STOP` / `STOP_ALL` / `STREAM_*`
-go out as **unicast** to devices already known from a PONG (automatic fallback to
-broadcast when none are known); `PING` / `CONNECT_STATUS` stay broadcast for
-discovery. The device also self-filters by target address; UDP has no ACK ("late
-is worse than dropped"). It does NOT author or flash Kits (that's Hapbeat Studio)
-and is not a Bluetooth transport.
+XR (Quest, Pico, Vision Pro). No cloud. `PLAY` / `STOP` / `STOP_ALL` unicast to
+PONG-known devices and fall back to broadcast when none are known. `StreamClip`
+instead waits for matching PONG-resolved endpoints and sends each `STREAM_*` packet
+only to those explicit endpoints; it never broadcasts target-less `STREAM_DATA`.
+`PING` / `CONNECT_STATUS` stay broadcast for discovery. The device also self-filters
+by target address; UDP has no ACK ("late is worse than dropped"). It does NOT author
+or flash Kits (that's Hapbeat Studio) and is not a Bluetooth transport.
 
 ## Install & connect
 
@@ -231,12 +232,15 @@ target the EventMap supplies.
   (#1 cause), the `target` does not match (try `""`), or an Address Override is
   routing to a player/group no device is on. `Command` events need the Kit flashed
   in Studio; `StreamClip` works with no deploy.
-- StreamClip WAVs should be 16 kHz; one stream session at a time — a new source must
-  match the active session's rate/channels/`target` or it's rejected (warning + null).
+- StreamClip accepts differing sample rates and mono/stereo clips; the SDK normalizes
+  each source to 16 kHz stereo PCM16 and mixes matching sources per device endpoint.
+  A source without a matching PONG-resolved endpoint returns a non-null playback in
+  `Deferred` state and sends no stream packet until that endpoint is discovered.
 - `IsConnected` only means the socket is open; use `AliveDeviceCount` / `OnPong` to
-  know a device actually answered. Unicast sends only reach devices that have PONGed.
-- Multi-homed PC: the broadcast fallback may exit the wrong NIC — ensure the Hapbeat
-  LAN's NIC has the route.
+  know a device actually answered. StreamClip requires a matching PONG; one-shot
+  commands can still use their broadcast fallback.
+- Multi-homed PC: the one-shot command broadcast fallback may exit the wrong NIC —
+  ensure the Hapbeat LAN's NIC has the route.
 - Edit-mode test: the `HapbeatManager` Inspector has Connect / Discover / Play / Stop
   buttons (no Play mode needed). `Hapbeat > Open Event Map` lists all entries + where
   each trigger is attached; `Hapbeat > Open Runtime Status` shows the addressing state.

@@ -121,31 +121,11 @@ namespace Hapbeat
         // Written from the receive thread, read from the main and mixer threads.
         private volatile BroadcastRoute _lockedRoute;
 
-        // Unicast destinations for STREAM_BEGIN/DATA/END. Three states:
-        //   null            -> no unicast snapshot taken (or explicitly cleared):
-        //                      fall back to broadcast, same as before target
-        //                      filtering existed.
-        //   empty array     -> a snapshot WAS taken and every known device's
-        //                      address failed to match the session target
-        //                      (SetStreamUnicastTargets filtered all of them
-        //                      out): send nowhere this session, do NOT fall
-        //                      back to broadcast (that would defeat the point
-        //                      of filtering — see SendStreamRaw).
-        //   non-empty array -> unicast to exactly these endpoints.
-        // Snapshotted once per stream session by HapbeatManager (see
-        // SetStreamUnicastTargets) from known device PONG endpoints. Read from
-        // the background stream mixer thread (SendStreamData) without locking —
-        // array reference assignment is atomic, and the array itself is never
-        // mutated in place after being published, only replaced.
-        private volatile IPEndPoint[] _streamUnicastTargets;
-
         // Last known device-addressing address string per sender IP, learned from
         // the PONG extension fields (device-addressing.md §5.4). Written from the
-        // background receive thread (HandlePong); read from the main thread
-        // (GetKnownDeviceAddress, called by SetStreamUnicastTargets). A device with
-        // no entry here is "unknown" — callers must fail open (treat as matching)
-        // rather than as a hard mismatch, since firmware predating this extension,
-        // or a PONG that hasn't arrived yet, shouldn't silently lose its stream.
+        // background receive thread (HandlePong); read when explicit stream
+        // endpoints are resolved. Address-unknown devices are excluded from stream
+        // routing because STREAM_DATA cannot be target-filtered.
         private readonly ConcurrentDictionary<IPAddress, string> _deviceAddresses =
             new ConcurrentDictionary<IPAddress, string>();
 
@@ -156,8 +136,7 @@ namespace Hapbeat
         // extension was present). Used by SendCommandRaw (PLAY/STOP/STOP_ALL
         // unicast routing) so an address-unknown device (e.g. older firmware
         // without the extension) still receives commands via unicast instead of
-        // being silently dropped — the same fail-open philosophy
-        // SetStreamUnicastTargets applies for streaming. Entries older than
+        // being silently dropped. Entries older than
         // _knownDeviceTtlSeconds are dropped on the next send (see SendCommandRaw)
         // so the set tracks *live* devices rather than growing forever. Written
         // from the background receive thread (HandlePong); read/pruned from the
@@ -304,7 +283,6 @@ namespace Hapbeat
             _knownDeviceIps.Clear();
             _deviceAddresses.Clear();
             _knownDeviceEndpoints.Clear();
-            _streamUnicastTargets = null;
             // Routes belong to the network we were on: after a reconnect the host
             // may well have different interfaces (docking, VPN up, Wi-Fi switch).
             _broadcastRoutes = new List<BroadcastRoute>();
@@ -344,111 +322,6 @@ namespace Hapbeat
             _commandUnicastEnabled = enabled;
             if (knownDeviceTtlSeconds > 0f)
                 _knownDeviceTtlSeconds = knownDeviceTtlSeconds;
-        }
-
-        /// <summary>
-        /// Sets (or clears) the unicast destination list used by STREAM_BEGIN/DATA/END
-        /// while broadcast mode is active. Pass null or an empty collection to revert
-        /// streaming to broadcast. Intended to be called once per stream session, from
-        /// the main thread, before the session's first STREAM_BEGIN — see
-        /// HapbeatManager.StreamAudioClip / StopStream.
-        /// <para>
-        /// <paramref name="deviceIps"/> is further filtered down to the devices whose
-        /// last-known address (from PONG, see <see cref="GetKnownDeviceAddress"/>)
-        /// matches <paramref name="target"/> per <see cref="AddressMatches"/> — this is
-        /// what keeps a 1-person-multiple-device / many-simultaneous-pairs LAN from
-        /// fanning every stream chunk out to everyone else's devices too. A device
-        /// with no known address yet (no PONG parsed for it, or an older firmware
-        /// that doesn't send the address extension) is kept in rather than dropped —
-        /// fail-open, since firmware still applies its own target filter on receipt,
-        /// so worst case is an extra unicast packet, never a silently lost stream.
-        /// Pass <c>null</c>/<c>""</c> for <paramref name="target"/> (the default) to
-        /// disable filtering entirely (matches everyone, same as before this existed).
-        /// </para>
-        /// <para>
-        /// Devices that join after the snapshot is taken (e.g. their first PONG arrives
-        /// mid-session) are not added retroactively; they'll be picked up starting with
-        /// the next session. This keeps the hot path (SendStreamData, called every
-        /// ~10 ms from the background mixer thread) lock-free.
-        /// </para>
-        /// </summary>
-        /// <returns>
-        /// The number of endpoints actually targeted this session — a non-negative
-        /// count when a snapshot was taken (0 if every candidate's known address
-        /// failed <paramref name="target"/>'s match), or -1 when no snapshot was
-        /// taken at all (<paramref name="deviceIps"/> was null/empty) and streaming
-        /// falls back to broadcast. Callers (see <see cref="HapbeatManager"/>) use
-        /// this to log the actual outcome instead of guessing from the input count.
-        /// </returns>
-        /// <summary>
-        /// Devices that answered a PING recently enough to still count as live —
-        /// the same window command unicast uses (see <c>_knownDeviceTtlSeconds</c>).
-        ///
-        /// Exposed for callers that have no liveness bookkeeping of their own: the
-        /// Editor test-play transport drives a bare client without a
-        /// <see cref="HapbeatManager"/>, and would otherwise have to duplicate the
-        /// PONG tracking just to seed <see cref="SetStreamUnicastTargets"/>.
-        /// </summary>
-        public List<IPAddress> GetKnownDeviceIps()
-        {
-            long nowUs = GetLocalTimestampUs();
-            long ttlUs = (long)(_knownDeviceTtlSeconds * 1_000_000f);
-
-            var live = new List<IPAddress>();
-            foreach (var kv in _knownDeviceIps)
-            {
-                if (nowUs - kv.Value <= ttlUs)
-                    live.Add(kv.Key);
-            }
-            return live;
-        }
-
-        public int SetStreamUnicastTargets(IReadOnlyCollection<IPAddress> deviceIps, string target = null)
-        {
-            if (deviceIps == null || deviceIps.Count == 0)
-            {
-                _streamUnicastTargets = null;
-                return -1;
-            }
-
-            int port = _targetEndPoint != null ? _targetEndPoint.Port : 0;
-
-            var filtered = new List<IPAddress>(deviceIps.Count);
-            foreach (var ip in deviceIps)
-            {
-                string knownAddress = GetKnownDeviceAddress(ip);
-                // Fail open: unknown address => keep. Known address => must match.
-                if (knownAddress == null || AddressMatches(target, knownAddress))
-                    filtered.Add(ip);
-            }
-
-            if (filtered.Count == 0)
-            {
-                // Every candidate had a *known* address and none matched target —
-                // an explicit "nobody" result, not "we don't have info yet". Use the
-                // empty-array sentinel so SendStreamRaw skips the session entirely
-                // instead of falling back to broadcasting to unrelated devices.
-                _streamUnicastTargets = Array.Empty<IPEndPoint>();
-                return 0;
-            }
-
-            var targets = new IPEndPoint[filtered.Count];
-            for (int i = 0; i < filtered.Count; i++)
-                targets[i] = new IPEndPoint(filtered[i], port);
-            _streamUnicastTargets = targets;
-            return targets.Length;
-        }
-
-        /// <summary>
-        /// Last known device-addressing address string for <paramref name="ip"/>, as
-        /// reported in its most recent parsed PONG (device-addressing.md §5.4). Null
-        /// if unknown — no PONG received/parsed from this IP yet, or its firmware
-        /// predates the address extension field. See <see cref="SetStreamUnicastTargets"/>
-        /// for how callers should treat "unknown" (fail open, not a mismatch).
-        /// </summary>
-        public string GetKnownDeviceAddress(IPAddress ip)
-        {
-            return _deviceAddresses.TryGetValue(ip, out var address) ? address : null;
         }
 
         internal readonly struct StreamEndpoint
@@ -721,37 +594,6 @@ namespace Hapbeat
             // Idempotent display state, so the discovery fan-out is safe here and
             // gets the device out of "app not connected" without waiting for a PONG.
             SendDiscoveryPacket(HapbeatProtocol.CMD_CONNECT_STATUS, payload);
-        }
-
-        /// <summary>
-        /// Send a STREAM_BEGIN command to start audio streaming.
-        /// </summary>
-        public void SendStreamBegin(ushort sampleRate, byte channels, byte format,
-            uint totalSamples, float gain, string target = null)
-        {
-            target = ResolveTarget(target);
-            byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(
-                sampleRate, channels, format, totalSamples, gain, target);
-            SendStreamPacket(HapbeatProtocol.CMD_STREAM_BEGIN, payload);
-        }
-
-        /// <summary>
-        /// Send a STREAM_DATA chunk. Uses larger MTU-safe packet size.
-        /// </summary>
-        public void SendStreamData(uint byteOffset, byte[] audioData, int dataOffset, int dataLength)
-        {
-            if (!IsConnected || _udpClient == null) return;
-            ushort seq = GetNextSequenceNumber();
-            byte[] packet = HapbeatProtocol.BuildStreamDataPacket(seq, byteOffset, audioData, dataOffset, dataLength);
-            SendStreamRaw(packet);
-        }
-
-        /// <summary>
-        /// Send a STREAM_END command to signal streaming completion.
-        /// </summary>
-        public void SendStreamEnd()
-        {
-            SendStreamPacket(HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
         }
 
         internal void SendStreamBeginTo(IPEndPoint endpoint, ushort sampleRate, byte channels,
@@ -1148,19 +990,6 @@ namespace Hapbeat
             }
         }
 
-        // Stream-only send path (STREAM_BEGIN/DATA/END). Identical to
-        // SendPacket/SendRaw except it fans out to the per-session unicast
-        // target list (see SetStreamUnicastTargets) instead of the broadcast
-        // _targetEndPoint, when one is set. Falls back to SendRaw's normal
-        // broadcast/bridge-unicast behavior when no targets are set (nobody has
-        // PONGed yet, or we're not in broadcast mode to begin with).
-        private void SendStreamPacket(byte commandType, byte[] payload)
-        {
-            ushort seq = GetNextSequenceNumber();
-            byte[] packet = HapbeatProtocol.BuildPacket(commandType, seq, payload);
-            SendStreamRaw(packet);
-        }
-
         private void SendStreamPacketTo(IPEndPoint endpoint, byte commandType, byte[] payload)
         {
             ushort seq = GetNextSequenceNumber();
@@ -1187,62 +1016,9 @@ namespace Hapbeat
             }
         }
 
-        private void SendStreamRaw(byte[] data)
-        {
-            // Snapshot — see SendRaw. This path runs on the mixer thread.
-            UdpClient client = _udpClient;
-            if (!IsConnected || client == null)
-                return;
-
-            // Read the volatile field once — the array itself is only ever
-            // replaced wholesale (never mutated in place), so a single local
-            // snapshot is safe even if another thread swaps it mid-loop below.
-            IPEndPoint[] targets = _streamUnicastTargets;
-            if (!IsBroadcast || targets == null)
-            {
-                // null = no snapshot taken this session (or explicitly cleared):
-                // same broadcast fallback as before target filtering existed.
-                SendRaw(data);
-                return;
-            }
-
-            if (targets.Length == 0)
-            {
-                // Empty (not null) = SetStreamUnicastTargets took a snapshot and every
-                // known device's address failed to match the session target. Falling
-                // back to broadcast here would defeat the point of filtering (leak
-                // this stream to unrelated devices on the LAN), so send nowhere.
-                return;
-            }
-
-            for (int i = 0; i < targets.Length; i++)
-            {
-                try
-                {
-                    client.Send(data, data.Length, targets[i]);
-                    NoteSendSucceeded();
-                }
-                catch (SocketException ex)
-                {
-                    // A single unreachable/offline target shouldn't tear down the
-                    // whole session (other targets may still be fine) — log and
-                    // keep sending to the rest. Rate-limited: this is the hottest
-                    // send path (one chunk per ~10 ms per destination), so an
-                    // unguarded warning here floods the log for the whole outage.
-                    NoteSendFailed($"Stream unicast send to {targets[i]}",
-                                   ex.SocketErrorCode, ex.Message);
-                }
-                catch (ObjectDisposedException)
-                {
-                    HandleDisconnection();
-                    return;
-                }
-            }
-        }
-
         // Command send path shared by SendPlay/SendStop/SendStopAll. Mirrors the
-        // STREAM_* unicast design above (SendStreamRaw/SetStreamUnicastTargets) but
-        // resolves destinations fresh on every call from _knownDeviceIps/_deviceAddresses
+        // explicit STREAM_* endpoint design, but resolves destinations fresh on every
+        // call from _knownDeviceIps/_deviceAddresses
         // instead of a session-snapshotted list: PLAY/STOP/STOP_ALL are one-shot
         // fire-and-forget packets, not a per-chunk hot path, so there's no equivalent
         // "session start" to snapshot against and no lock-free-hot-path constraint
@@ -1258,23 +1034,23 @@ namespace Hapbeat
 
         /// <summary>
         /// Routes a single PLAY/STOP/STOP_ALL packet to unicast or broadcast. Fallback
-        /// semantics deliberately match SetStreamUnicastTargets/SendStreamRaw exactly:
+        /// semantics keep stream routing distinct:
         /// <list type="bullet">
         /// <item>Not in broadcast mode (Bridge/ESP-NOW), or commandUnicast disabled ->
         /// plain broadcast/bridge-unicast via SendRaw (unchanged pre-feature behavior).</item>
         /// <item>No device has ever PONGed this session (_knownDeviceIps empty) ->
         /// broadcast (fail open — nobody to unicast to yet).</item>
         /// <item>A known device with no reported address (older firmware, or its PONG
-        /// hasn't been parsed yet) -> unicast to it anyway (fail open — same treatment
-        /// as the unknown-address case in SetStreamUnicastTargets).</item>
+        /// hasn't been parsed yet) -> unicast to it anyway (fail open for one-shot
+        /// commands only).</item>
         /// <item>A known device whose reported address matches <paramref name="resolvedTarget"/>
         /// -> unicast to it.</item>
         /// <item>At least one send above went out -> done, no broadcast (avoids the
         /// double-delivery a known-and-matching device would get if we also broadcast).</item>
         /// <item>Nothing was unicast (no live device known, or every known device's
         /// reported address failed to match) -> broadcast, exactly as before this
-        /// feature existed. This deliberately does NOT mirror SendStreamRaw's
-        /// "send nowhere" sentinel: firmware re-applies <c>addressMatch()</c> to every
+        /// feature existed. This deliberately differs from StreamClip's defer:
+        /// firmware re-applies <c>addressMatch()</c> to every
         /// PLAY/STOP/STOP_ALL it receives (udp_receiver.cpp handlePlay/handleStop/
         /// handleStopAll), so a broadcast can never actuate a device the target didn't
         /// address — the only thing skipping would buy is airtime, at the price of
@@ -1318,7 +1094,7 @@ namespace Hapbeat
                     continue;
                 }
 
-                string knownAddress = GetKnownDeviceAddress(kv.Key);
+                _deviceAddresses.TryGetValue(kv.Key, out string knownAddress);
                 // Fail open: unknown address => keep (send). Known address => must match.
                 if (knownAddress != null && !AddressMatches(resolvedTarget, knownAddress))
                     continue;
@@ -1517,8 +1293,8 @@ namespace Hapbeat
 
             // sender.Address (IPAddress) is immutable, so caching it directly here
             // (unlike the mutable IPEndPoint captured below for the main-thread
-            // closure) is safe even though it's read later from the main thread via
-            // GetKnownDeviceAddress / SendCommandRaw.
+            // closure) is safe even though it's read later from the main thread by
+            // stream endpoint resolution and SendCommandRaw.
             //
             // Recorded regardless of whether this PONG reported an address —
             // SendCommandRaw needs the full set of live devices (see _knownDeviceIps),

@@ -80,6 +80,19 @@ namespace Hapbeat.Tests
         }
 
         [Test]
+        public void DirectEndpoint_BeginCarriesResolvedAddressAsWireTarget()
+        {
+            using var mixer = Create(out var sink);
+            mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
+            mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_r_arm", true);
+
+            WaitFor(() => sink.Begins.Count == 2);
+            CollectionAssert.AreEquivalent(
+                new[] { Endpoints[0].Address, Endpoints[1].Address }, sink.BeginTargets,
+                "a direct session must carry its PONG-resolved address in STREAM_BEGIN");
+        }
+
+        [Test]
         public void EndpointPackets_ContainOnlyTheirMatchingSource()
         {
             using var mixer = Create(out var sink);
@@ -137,6 +150,129 @@ namespace Hapbeat.Tests
             Assert.AreEqual(HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint, playback.DeferReason);
             Assert.IsEmpty(sink.Begins);
             Assert.IsEmpty(sink.DataEndpoints);
+        }
+
+        [Test]
+        public void DeferredOnlySource_IsNotPubliclyStreaming_AndHasNoActivePlayback()
+        {
+            var sink = new RecordingSink();
+            using var mixer = new HapbeatEndpointStreamMixer(sink,
+                _ => new List<HapbeatClient.StreamEndpoint>(), () => 0.01f, _ => { });
+            var playback = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
+                "player_9/pos_l_arm", true);
+
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Deferred, playback.Status);
+            Assert.IsFalse(mixer.IsStreaming);
+            Assert.IsTrue(mixer.HasSources);
+            Assert.IsNull(mixer.ActivePlayback);
+        }
+
+        [Test]
+        public void StopAll_CancelsDeferredSourceBeforeItsEndpointJoins()
+        {
+            var sink = new RecordingSink();
+            bool endpointKnown = false;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
+            {
+                return endpointKnown && HapbeatClient.AddressMatches(target, Endpoints[0].Address)
+                    ? new List<HapbeatClient.StreamEndpoint> { Endpoints[0] }
+                    : new List<HapbeatClient.StreamEndpoint>();
+            }, () => 0.01f, _ => { });
+            var deferred = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
+                "player_1/pos_l_arm", true);
+
+            Assert.IsTrue(mixer.HasSources, "the UI must treat a deferred source as stoppable");
+            mixer.StopAll();
+            endpointKnown = true;
+            mixer.ReconcileEndpoints();
+
+            Assert.IsTrue(deferred.IsStopped);
+            Assert.IsFalse(mixer.HasSources);
+            Assert.IsFalse(mixer.IsStreaming);
+            Assert.IsEmpty(sink.Begins);
+            Assert.IsEmpty(sink.DataEndpoints);
+        }
+
+        [Test]
+        public void DeferredSource_ReconciliationAfterJoinStartsOneWireSession()
+        {
+            var sink = new RecordingSink();
+            bool endpointKnown = false;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
+            {
+                return endpointKnown && HapbeatClient.AddressMatches(target, Endpoints[0].Address)
+                    ? new List<HapbeatClient.StreamEndpoint> { Endpoints[0] }
+                    : new List<HapbeatClient.StreamEndpoint>();
+            }, () => 0.01f, _ => { });
+            mixer.AddSamples(ConstantSamples(0.25f), 16000, 1, 1f, 1f,
+                "player_1/pos_l_arm", true);
+
+            Assert.IsTrue(mixer.HasSources, "the test-play toggle must stop this pending source");
+            endpointKnown = true;
+            mixer.ReconcileEndpoints();
+            mixer.ReconcileEndpoints();
+
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
+            Assert.AreEqual(1, sink.CountBegins("192.0.2.10:7700"));
+            byte[] pcm = sink.Packets.Find(x => x.endpoint == "192.0.2.10:7700").pcm;
+            Assert.AreEqual(8191, ReadPcm16(pcm, 0, 0), 1,
+                "one pending source must not be duplicated when it joins");
+        }
+
+        [Test]
+        public void ResampledMonoSource_UpmixesToStereoOutput()
+        {
+            using var mixer = Create(out var sink);
+            mixer.AddSamples(new[] { 0f, 1f }, 8000, 1, 1f, 1f, "*/pos_l_arm", false);
+
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
+            byte[] pcm = sink.Packets.Find(x => x.endpoint == "192.0.2.10:7700").pcm;
+            Assert.AreEqual(0, ReadPcm16(pcm, 0, 0));
+            Assert.AreEqual(0, ReadPcm16(pcm, 0, 1));
+            Assert.AreEqual(16383, ReadPcm16(pcm, 1, 0), 1);
+            Assert.AreEqual(16383, ReadPcm16(pcm, 1, 1), 1);
+            Assert.AreEqual(short.MaxValue, ReadPcm16(pcm, 2, 0));
+            Assert.AreEqual(short.MaxValue, ReadPcm16(pcm, 2, 1));
+        }
+
+        [Test]
+        public void ResampledStereoSource_PreservesDistinctChannels()
+        {
+            using var mixer = Create(out var sink);
+            mixer.AddSamples(new[] { 0f, 0.25f, 1f, -0.25f }, 8000, 2, 1f, 1f,
+                "*/pos_l_arm", false);
+
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
+            byte[] pcm = sink.Packets.Find(x => x.endpoint == "192.0.2.10:7700").pcm;
+            Assert.AreEqual(0, ReadPcm16(pcm, 0, 0));
+            Assert.AreEqual(8191, ReadPcm16(pcm, 0, 1), 1);
+            Assert.AreEqual(16383, ReadPcm16(pcm, 1, 0), 1);
+            Assert.AreEqual(0, ReadPcm16(pcm, 1, 1), 1);
+        }
+
+        [Test]
+        public void GainPanAndClamp_AreAppliedAfterMonoUpmix()
+        {
+            var sink = new RecordingSink();
+            bool endpointKnown = false;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
+            {
+                return endpointKnown && HapbeatClient.AddressMatches(target, Endpoints[0].Address)
+                    ? new List<HapbeatClient.StreamEndpoint> { Endpoints[0] }
+                    : new List<HapbeatClient.StreamEndpoint>();
+            }, () => 0.01f, _ => { });
+            var playback = mixer.AddSamples(ConstantSamples(1f), 16000, 1, 1f, 2f,
+                "*/pos_l_arm", true);
+            playback.Pan = -1f;
+            endpointKnown = true;
+            mixer.ReconcileEndpoints();
+
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
+            byte[] pcm = sink.Packets.Find(x => x.endpoint == "192.0.2.10:7700").pcm;
+            Assert.AreEqual(short.MaxValue, ReadPcm16(pcm, 0, 0));
+            Assert.AreEqual(0, ReadPcm16(pcm, 0, 1));
+            Assert.AreEqual(1, sink.CountBegins("192.0.2.10:7700"),
+                "a looping logical source keeps one endpoint wire session");
         }
 
         [Test]
@@ -307,6 +443,8 @@ namespace Hapbeat.Tests
             using var mixer = Create(out var sink);
             mixer.AddSamples(new[] { 0.25f }, 16000, 1, 1f, 1f, "*/pos_l_arm", false);
             WaitFor(() => sink.CountEnds("192.0.2.10:7700") == 1);
+            Assert.IsFalse(mixer.IsStreaming);
+            Assert.IsNull(mixer.ActivePlayback);
 
             mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
             WaitFor(() => sink.CountData("192.0.2.10:7700") > 1);
@@ -361,6 +499,7 @@ namespace Hapbeat.Tests
             address = "player_1/pos_r_arm/group_1";
             mixer.ReconcileEndpoints();
             WaitFor(() => sink.Begins.Count == 2 && sink.CountEnds("192.0.2.10:7700") == 1);
+            Assert.AreEqual(address, sink.BeginTargets[1]);
         }
 
         [Test]
@@ -482,6 +621,12 @@ namespace Hapbeat.Tests
             var samples = new float[160];
             for (int i = 0; i < samples.Length; i++) samples[i] = value;
             return samples;
+        }
+
+        private static short ReadPcm16(byte[] pcm, int frame, int channel)
+        {
+            int offset = (frame * 2 + channel) * 2;
+            return (short)(pcm[offset] | (pcm[offset + 1] << 8));
         }
 
         private static void WaitFor(Func<bool> predicate)
