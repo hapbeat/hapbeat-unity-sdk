@@ -120,8 +120,7 @@ namespace Hapbeat.Editor
             string statusText;
             if (isPlaying && isConnected)
             {
-                string mode = manager.IsBroadcast ? "broadcast" : "unicast";
-                statusText = $"Ready ({mode})";
+                statusText = "Ready (WifiUdp)";
             }
             else if (!isPlaying && isConnected)
             {
@@ -138,7 +137,7 @@ namespace Hapbeat.Editor
 
             if (isPlaying && isConnected)
             {
-                EditorGUILayout.LabelField("Mode", manager.IsBroadcast ? "Broadcast" : "Unicast (Bridge)");
+                EditorGUILayout.LabelField("Transport", "WifiUdp");
                 EditorGUILayout.LabelField("Time offset", $"{manager.TimeOffsetUs} μs");
             }
 

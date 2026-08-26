@@ -107,7 +107,7 @@ namespace Hapbeat.Editor
         /// </summary>
         public static bool IsLocalDevInstall()
         {
-            var pkg = UpmPackageInfo.FindForAssembly(typeof(HapbeatBridge).Assembly);
+            var pkg = UpmPackageInfo.FindForAssembly(typeof(HapbeatManager).Assembly);
             if (pkg == null) return true;
             return pkg.source == UpmPackageSource.Local
                 || pkg.source == UpmPackageSource.Embedded;

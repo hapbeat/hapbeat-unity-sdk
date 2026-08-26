@@ -55,7 +55,6 @@ namespace Hapbeat
             public readonly string Target;
             public readonly HapbeatStreamPlayback Playback;
             public readonly HashSet<string> ExcludedEndpointKeys = new HashSet<string>();
-            public bool TransportTargetConflict;
 
             public Source(AudioClip clip, HapbeatStreamPlayback playback, bool loop, string target)
             {
@@ -86,19 +85,17 @@ namespace Hapbeat
             public readonly string Key;
             public readonly string Address;
             public readonly string WireTarget;
-            public readonly bool IsDirect;
             public readonly Dictionary<Source, double> Positions = new Dictionary<Source, double>();
             public readonly HashSet<Source> MatchingSources = new HashSet<Source>();
             public uint ByteOffset;
             public bool EndSent;
 
-            public Session(IPEndPoint endpoint, string key, string address, string wireTarget, bool isDirect)
+            public Session(IPEndPoint endpoint, string key, string address, string wireTarget)
             {
                 Endpoint = endpoint;
                 Key = key;
                 Address = address;
                 WireTarget = wireTarget;
-                IsDirect = isDirect;
             }
         }
 
@@ -352,7 +349,6 @@ namespace Hapbeat
             for (int i = 0; i < _sources.Count; i++)
             {
                 Source source = _sources[i];
-                source.TransportTargetConflict = false;
                 if (source.Playback.IsStopped) continue;
                 List<HapbeatClient.StreamEndpoint> endpoints = _resolveEndpoints(source.Target);
                 if (endpoints == null) continue;
@@ -361,14 +357,6 @@ namespace Hapbeat
                     var endpoint = endpoints[e];
                     string key = endpoint.EndPoint.ToString();
                     if (source.ExcludedEndpointKeys.Contains(key)) continue;
-                    if (wanted.TryGetValue(key, out HapbeatClient.StreamEndpoint prior) &&
-                        !prior.IsDirect && prior.Address != endpoint.Address)
-                    {
-                        // One Bridge wire stream: reject/defer the incompatible
-                        // logical target without replacing the active target.
-                        source.TransportTargetConflict = true;
-                        continue;
-                    }
                     wanted[key] = endpoint;
                 }
             }
@@ -395,7 +383,7 @@ namespace Hapbeat
                 // endpoint, BEGIN must carry the PONG-resolved address so firmware
                 // rejects it if that IP was reassigned before the next PONG refresh.
                 var session = new Session(pair.Value.EndPoint, pair.Key, pair.Value.Address,
-                    pair.Value.Address, pair.Value.IsDirect);
+                    pair.Value.Address);
                 _sessions.Add(pair.Key, session);
                 _sink.Begin(session.Endpoint, OutputSampleRate, OutputChannels,
                     HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
@@ -419,9 +407,7 @@ namespace Hapbeat
                     }
                 }
                 if (matched) source.Playback.MarkActive();
-                else source.Playback.MarkDeferred(source.TransportTargetConflict
-                    ? HapbeatStreamPlaybackDeferReason.TransportTargetConflict
-                    : HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint);
+                else source.Playback.MarkDeferred(HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint);
             }
         }
 
@@ -694,14 +680,7 @@ namespace Hapbeat
         private static bool SessionMatchesSource(Session session, Source source)
         {
             if (source.ExcludedEndpointKeys.Contains(session.Key)) return false;
-            if (session.IsDirect)
-                return HapbeatClient.AddressMatches(source.Target, session.Address);
-
-            // Bridge has one target-bearing BEGIN but target-less DATA. Prefix or
-            // wildcard matching here would silently mix a second logical target
-            // into the first Bridge wire stream, so only identical targets share it.
-            return string.Equals(source.Target ?? string.Empty,
-                session.Address ?? string.Empty, StringComparison.Ordinal);
+            return HapbeatClient.AddressMatches(source.Target, session.Address);
         }
 
         private bool SourceHasSessionLocked(Source source)

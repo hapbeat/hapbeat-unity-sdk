@@ -17,7 +17,6 @@ namespace Hapbeat
     {
         None,
         NoResolvedEndpoint,
-        TransportTargetConflict,
     }
 
     /// <summary>

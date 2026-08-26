@@ -22,7 +22,7 @@ namespace Hapbeat.Editor
     /// Coverage:
     /// <list type="bullet">
     ///   <item>All scene <see cref="MonoBehaviour"/> components in Hapbeat namespaces
-    ///         (Trigger / Bridge / ParameterBinding / Manager / sample scripts).</item>
+    ///         (Trigger / ParameterBinding / Manager / sample scripts).</item>
     ///   <item>All <see cref="HapbeatStateBehaviour"/> instances on every
     ///         AnimatorController asset in the project (walks layers + nested
     ///         state machines so Z2-style door wires get flipped too).</item>

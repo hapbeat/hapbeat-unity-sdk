@@ -80,7 +80,7 @@ namespace Hapbeat.Tests
         }
 
         [Test]
-        public void DirectEndpoint_BeginCarriesResolvedAddressAsWireTarget()
+        public void WifiUdpEndpoint_BeginCarriesResolvedAddressAsWireTarget()
         {
             using var mixer = Create(out var sink);
             mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
@@ -89,7 +89,7 @@ namespace Hapbeat.Tests
             WaitFor(() => sink.Begins.Count == 2);
             CollectionAssert.AreEquivalent(
                 new[] { Endpoints[0].Address, Endpoints[1].Address }, sink.BeginTargets,
-                "a direct session must carry its PONG-resolved address in STREAM_BEGIN");
+                "a WifiUdp session must carry its PONG-resolved address in STREAM_BEGIN");
         }
 
         [Test]
@@ -500,73 +500,6 @@ namespace Hapbeat.Tests
             mixer.ReconcileEndpoints();
             WaitFor(() => sink.Begins.Count == 2 && sink.CountEnds("192.0.2.10:7700") == 1);
             Assert.AreEqual(address, sink.BeginTargets[1]);
-        }
-
-        [Test]
-        public void BridgeEndpoint_KeepsFirstTargetAndDefersSecond()
-        {
-            var sink = new RecordingSink();
-            var bridge = new IPEndPoint(IPAddress.Loopback, 7700);
-            using var mixer = new HapbeatEndpointStreamMixer(sink,
-                target => new List<HapbeatClient.StreamEndpoint>
-                {
-                    new HapbeatClient.StreamEndpoint(bridge, target, false)
-                }, () => 0.01f, _ => { });
-            var first = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "player_1/pos_l_arm", true);
-            var second = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "player_1/pos_r_arm", true);
-
-            WaitFor(() => sink.CountData("127.0.0.1:7700") > 0);
-            Assert.IsTrue(first.IsActive);
-            Assert.AreEqual(HapbeatStreamPlaybackStatus.Deferred, second.Status);
-            Assert.AreEqual(HapbeatStreamPlaybackDeferReason.TransportTargetConflict, second.DeferReason);
-            Assert.AreEqual(1, sink.Begins.Count);
-            Assert.AreEqual("player_1/pos_l_arm", sink.BeginTargets[0]);
-        }
-
-        [TestCase("player_1")]
-        [TestCase("*")]
-        public void BridgeEndpoint_DoesNotMixPrefixOrWildcardTargetIntoActiveWireStream(string secondTarget)
-        {
-            var sink = new RecordingSink();
-            var bridge = new IPEndPoint(IPAddress.Loopback, 7700);
-            using var mixer = new HapbeatEndpointStreamMixer(sink,
-                target => new List<HapbeatClient.StreamEndpoint>
-                {
-                    new HapbeatClient.StreamEndpoint(bridge, target, false)
-                }, () => 0.01f, _ => { });
-            var first = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
-                "player_1/pos_l_arm", true);
-            var second = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
-                secondTarget, true);
-
-            WaitFor(() => sink.CountData("127.0.0.1:7700") > 0);
-            Assert.IsTrue(first.IsActive);
-            Assert.AreEqual(HapbeatStreamPlaybackStatus.Deferred, second.Status);
-            Assert.AreEqual(HapbeatStreamPlaybackDeferReason.TransportTargetConflict, second.DeferReason);
-            Assert.AreEqual(1, sink.CountBegins("127.0.0.1:7700"));
-        }
-
-        [Test]
-        public void BridgeEndpoint_StartsDeferredTargetImmediatelyAfterFirstTargetCompletes()
-        {
-            var sink = new RecordingSink();
-            var bridge = new IPEndPoint(IPAddress.Loopback, 7700);
-            using var mixer = new HapbeatEndpointStreamMixer(sink,
-                target => new List<HapbeatClient.StreamEndpoint>
-                {
-                    new HapbeatClient.StreamEndpoint(bridge, target, false)
-                }, () => 0.01f, _ => { });
-            var first = mixer.AddSamples(new float[1600], 16000, 1, 1f, 1f,
-                "player_1/pos_l_arm", false);
-            var second = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
-                "player_1/pos_r_arm", true);
-            Assert.AreEqual(HapbeatStreamPlaybackStatus.Deferred, second.Status);
-
-            WaitFor(() => sink.CountBegins("127.0.0.1:7700") == 2);
-            WaitFor(() => second.IsActive && sink.CountData("127.0.0.1:7700") > 10);
-            Assert.IsTrue(first.IsStopped);
-            Assert.AreEqual(1, sink.CountEnds("127.0.0.1:7700"));
-            Assert.AreEqual("player_1/pos_r_arm", sink.BeginTargets[1]);
         }
 
         [Test]

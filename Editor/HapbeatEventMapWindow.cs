@@ -4697,7 +4697,7 @@ namespace Hapbeat.Editor
                 if (mb == null) continue;
                 // Skip Hapbeat's own components — they're covered by the
                 // trigger / state / binding scans above. Filtering by
-                // namespace catches HapbeatTriggerBase, HapbeatBridge,
+                // namespace catches HapbeatTriggerBase,
                 // HapbeatParameterBinding, HapbeatManager, HapbeatStatusOverlay,
                 // HapbeatKeyDispatcher, HapbeatEventLogger, HapbeatActionHelper,
                 // etc. in one shot.

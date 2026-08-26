@@ -21,10 +21,10 @@ https://github.com/Hapbeat/hapbeat-unity-sdk.git
 
 1. `Hapbeat > Initial Scene Setup` を実行（シーンに Event Router を配置し、EventMap アセットを生成）
    - 個別に作る場合は `GameObject > Hapbeat > Event Router` / `Assets > Create > Hapbeat > Event Map`
-2. 起動時に自動で UDP ソケットが開き、デバイスの検出（PING / PONG）が始まる
+2. 起動時に標準 command transport の `WifiUdp` ソケットが自動で開き、デバイスの検出（PING / PONG）が始まる
 3. 以下のいずれかの方法で触覚イベントを発火
 
-## 送信の仕組み（0.3.0 以降）
+## WifiUdp の送信経路（0.3.0 以降）
 
 `STREAM_*` は、PONG で address まで判明した対象デバイスへ常に**明示ユニキャスト**します。未解決時は別 target への漏送信を避けるため playback が `Deferred` になり、ブロードキャストしません。`PLAY` / `STOP` / `STOP_ALL` は `commandUnicast`（既定 ON）により既知デバイスへユニキャストし、既知デバイスが 0 台ならブロードキャストへフォールバックします。`PING` / `CONNECT_STATUS` は検出のため従来どおりブロードキャストです。
 
@@ -106,44 +106,7 @@ Animator Controller の対象 state を選択 → `Add Behaviour` → `HapbeatSt
 
 ---
 
-### 方法3: HapbeatBridge サブクラス（コードベース・任意）
-
-速度連動や条件分岐など、Inspector だけでは表現しきれないロジックを 1 ファイルに集約したい場合の選択肢です（標準は方法2）。
-
-```csharp
-using Hapbeat;
-using UnityEngine;
-
-public class MyHapbeatBridge : HapbeatBridge
-{
-    public void OnPlayerLanded(Collision col)
-    {
-        float speed = col.relativeVelocity.magnitude;
-        if (speed < 1f) return;
-        PlayScaled("着地", speed, minVelocity: 1f, maxVelocity: 15f);
-    }
-
-    [SerializeField] private AnimationCurve _impactCurve;
-    public void OnEnemyHit(Collision col)
-    {
-        PlayWithCurve("敵衝突", col.relativeVelocity.magnitude, _impactCurve);
-    }
-}
-```
-
-`HapbeatBridge` の提供メソッド（いずれも EventMap の `displayName` で発火）:
-
-| メソッド | 用途 |
-|---|---|
-| `Play(displayName, gainOverride = -1f)` | 発火（`gainOverride` 省略時は EventMap の gain） |
-| `PlayByIndex(entryIndex, gainOverride = -1f)` | インデックス指定で発火 |
-| `PlayScaled(displayName, velocity, minVelocity, maxVelocity)` | 値を 0-1 に正規化してゲインに |
-| `PlayWithCurve(displayName, inputValue, curve)` | AnimationCurve でゲイン変換 |
-| `Stop(displayName)` / `StopAll()` | 停止 |
-
----
-
-### 方法4: Animation Event（足音など特定フレーム発火）
+### 方法3: Animation Event（足音など特定フレーム発火）
 
 Animation ウィンドウでクリップの特定フレームにイベントを追加し、`HapbeatUnityEventTrigger.Fire()` を呼びます。コード変更不要。
 
@@ -153,10 +116,10 @@ Animation ウィンドウでクリップの特定フレームにイベントを�
 |---|---|
 | 通信テスト・プロトタイプ | 方法1（コード直接） |
 | 既存ゲームへの後付け | 方法2（EventMap + Trigger） |
-| 複雑なゲインロジック | 方法3（HapbeatBridge） |
-| アニメーション同期 | 方法4（Animation Event） |
+| 複雑なゲインロジック | 方法1（コード直接）または方法2（Trigger） |
+| アニメーション同期 | 方法3（Animation Event） |
 
-方法2〜4は組み合わせ可能です。大部分を Trigger コンポーネントで設定し、特殊なケースだけ Bridge サブクラスで処理する構成が実用的です。
+各方法は組み合わせ可能です。通常は EventMap と Trigger に調整値を集約し、特殊な条件分岐だけゲーム側コードから `HapbeatManager` を呼びます。
 
 ## Address Override — 同一ビルドを複数台に配布する
 
@@ -227,7 +190,6 @@ XRI のサンプルシーンは Unity Companion License のため改変版を再
 | Command Unicast | ON | PLAY / STOP / STOP_ALL を既知デバイスへユニキャスト送信（OFF でブロードキャスト） |
 | Haptic Delay (ms) | 0 | 音声出力遅延に合わせた触覚の遅延補正（0–500 ms） |
 | Enable Logging / Verbose Log | ON / OFF | Console へのログ出力 |
-| Advanced: Bridge (ESP-NOW) | OFF | ESP-NOW 経由の場合のみ ON |
 
 ## Edit モード操作
 

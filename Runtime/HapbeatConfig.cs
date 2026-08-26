@@ -54,13 +54,6 @@ namespace Hapbeat
                  "cross-talking: every build ships with its own group number baked in.")]
         public int buildOverrideGroup = -1;
 
-        [Header("Bridge (ESP-NOW)")]
-        [Tooltip("Use Bridge for ESP-NOW multi-device transmission. When disabled (default), connects directly to devices via Wi-Fi UDP.")]
-        public bool useBridge = false;
-
-        [Tooltip("Hostname or IP address of the Hapbeat Bridge server. Only used when useBridge is enabled.")]
-        public string bridgeHost = "127.0.0.1";
-
         [Header("Behavior")]
         [Tooltip("Reopen the connection automatically if a socket error drops it " +
                  "(exponential backoff, 2 s doubling up to 30 s). Leave this on for " +
@@ -85,7 +78,7 @@ namespace Hapbeat
                  "showing up as ~100-300 ms of extra latency before a haptic fires; unicast avoids " +
                  "that batching (the device itself has modem-sleep disabled, so this is purely an " +
                  "AP-side effect). Falls back to broadcast automatically when no device has responded " +
-                 "yet, in Bridge mode, or when every known device's address mismatches the command's " +
+                 "yet or when every known device's address mismatches the command's " +
                  "target -- the device applies the same target filter on receipt, so a broadcast " +
                  "can never actuate a device the target didn't address. Default: enabled.")]
         public bool commandUnicast = true;

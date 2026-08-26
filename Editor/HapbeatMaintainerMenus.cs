@@ -156,7 +156,7 @@ namespace Hapbeat.Editor
             samplesRoot = null;
 
             // The Hapbeat runtime assembly belongs to com.hapbeat.sdk.
-            var asm = typeof(HapbeatBridge).Assembly;
+            var asm = typeof(HapbeatManager).Assembly;
             var pkg = UpmPackageInfo.FindForAssembly(asm);
             if (pkg == null)
             {

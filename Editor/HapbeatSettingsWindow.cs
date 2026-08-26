@@ -15,7 +15,6 @@ namespace Hapbeat.Editor
         private string _pingResult = "";
         private bool _isPinging;
         private Vector2 _scrollPosition;
-        private bool _bridgeFoldout;
 
         [MenuItem("Hapbeat/Open Settings", false, 12)]
         public static void ShowWindow()
@@ -163,7 +162,7 @@ namespace Hapbeat.Editor
                     "Send Play/Stop/StopAll directly to each known device instead of broadcast.\n" +
                     "Avoids Wi-Fi AP power-save (DTIM) batching, which can delay a broadcast\n" +
                     "frame by ~100-300 ms before a haptic fires. Falls back to broadcast if no\n" +
-                    "device is known yet, in Bridge mode, or if no known device's address\n" +
+                    "device is known yet or if no known device's address\n" +
                     "matches the target. Default: on."));
 
             EditorGUILayout.PropertyField(
@@ -209,32 +208,6 @@ namespace Hapbeat.Editor
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.ObjectField("Config Asset", _config, typeof(HapbeatConfig), false);
             EditorGUILayout.EndHorizontal();
-
-            // ── Advanced: Bridge (ESP-NOW) ───────────────────────────
-            // Most users won't touch ESP-NOW — keep it folded by default at the
-            // bottom of the window so the common settings stay above the fold.
-            EditorGUILayout.Space(10);
-            _bridgeFoldout = EditorGUILayout.Foldout(_bridgeFoldout,
-                "Advanced: Bridge (ESP-NOW)", toggleOnLabelClick: true);
-            if (_bridgeFoldout)
-            {
-                using (new EditorGUI.IndentLevelScope())
-                {
-                    EditorGUILayout.HelpBox(
-                        "For ESP-NOW multicast to many devices. Skip this when plain\n" +
-                        "Wi-Fi UDP is enough.",
-                        MessageType.None);
-                    EditorGUILayout.PropertyField(
-                        _serializedConfig.FindProperty("useBridge"),
-                        new GUIContent("Use Bridge", "Enable for ESP-NOW multi-device send."));
-
-                    EditorGUI.BeginDisabledGroup(!_config.useBridge);
-                    EditorGUILayout.PropertyField(
-                        _serializedConfig.FindProperty("bridgeHost"),
-                        new GUIContent("Bridge Host", "Bridge hostname or IP address."));
-                    EditorGUI.EndDisabledGroup();
-                }
-            }
 
             _serializedConfig.ApplyModifiedProperties();
         }

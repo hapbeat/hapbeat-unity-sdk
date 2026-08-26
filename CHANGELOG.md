@@ -9,15 +9,19 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
+### Breaking changes（破壊的変更）
+
+- legacy relay API の `HapbeatBridge`、`HapbeatManager.ConnectToBridge()`、`HapbeatConfig.useBridge` / `bridgeHost` を削除しました。command transport は `WifiUdp` のみです（旧 API の alias・serialized migration は提供しません）。
+
 ### Added（追加）
 
 - **1 アプリから複数 target へ StreamClip を同時出力**できるようにしました。PONG で解決した device endpoint ごとに 1 本の wire stream を持ち、同じ device に一致する複数 source は SDK 内で mix します。source ごとに `HapbeatStreamPlayback` を返すため、gain / pan / loop / Stop は独立して制御できます。sample rate と mono / stereo の違いは 16 kHz stereo PCM16 へ正規化します。
-- `HapbeatStreamPlayback.Status` / `DeferReason` を追加しました。address 未解決または単一 stream の Bridge で別 target が使用中の場合は、誤った device へ broadcast せず `Deferred` として理由を取得できます。
+- `HapbeatStreamPlayback.Status` / `DeferReason` を追加しました。address 未解決の場合は、誤った device へ broadcast せず `Deferred` として理由を取得できます。
 - **FIRE（Command モード）で左右バランス（`pan`）を指定できる**ようにしました。`HapbeatManager.Play(...)` / `PlayScheduled(...)` に `pan` 引数（-1 = 左のみ / 0 = 中央 / +1 = 右のみ、既定 0）が増え、Trigger 系コンポーネントは既存の `Pan` プロパティを FIRE でも送るようになります。デバイス側ミキサーが CLIP と同じ linear balance で展開します（contracts message-format.md §0x01 / DEC-055）。**DEC-055 対応版のデバイスファームウェアが必要**で、未対応版は `pan` を無視して中央で再生します。
 
 ### Changed（変更）
 
-- StreamClip は target を持たない `STREAM_DATA` の誤配送を防ぐため、常に PONG-backed endpoint へ明示ユニキャストします。旧 `streamUnicast` 設定と broadcast fallback を削除しました。
+- 標準 command transport 名を `WifiUdp` に統一しました。StreamClip は target を持たない `STREAM_DATA` の誤配送を防ぐため、常に PONG-backed endpoint へ明示ユニキャストします。旧 `streamUnicast` 設定と broadcast fallback を削除しました。
 
 ### Fixed（修正）
 

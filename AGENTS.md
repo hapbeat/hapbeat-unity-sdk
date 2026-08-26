@@ -6,8 +6,8 @@ from one file. Unity package id: `com.hapbeat.sdk`. C# namespace: `Hapbeat`.
 - last-verified-against: package 0.3.0 (requires Unity `6000.0`+)
 - Source of truth is the code: public runtime API in `Runtime/HapbeatManager.cs`,
   the EventMap model in `Runtime/HapbeatEventMap.cs` + `Runtime/HapbeatEventEntry.cs`,
-  transport / addressing in `Runtime/HapbeatClient.cs`, the code-first bridge in
-  `Runtime/HapbeatBridge.cs`, settings in `Runtime/HapbeatConfig.cs`. If this file
+  WifiUdp routing / addressing in `Runtime/HapbeatClient.cs`, settings in
+  `Runtime/HapbeatConfig.cs`. If this file
   disagrees with the code, the code wins.
 - Canonical docs: https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/
 - Event id and wire format are defined by **hapbeat-contracts** (e.g.
@@ -77,7 +77,6 @@ public void Stop(string eventId, string displayName = null, string target = null
 public void StopAll(string target = null)
 public void Ping()
 public void Connect()
-public void ConnectToBridge()
 public void Disconnect()
 public void Discover(int timeoutMs = 3000)
 
@@ -91,7 +90,6 @@ Useful state / events:
 public bool IsConnected { get; }   // socket open (stays true even if device is off)
 public int  AliveDeviceCount { get; }   // devices that PONGed recently; HUD: "N connected"
 public bool IsAlive { get; }
-public bool IsBroadcast { get; }   // false when the socket is in Bridge (unicast host) mode
 public bool IsStreaming { get; }
 public HapbeatStreamPlayback ActivePlayback { get; }
 public IReadOnlyList<HapbeatDevice> DiscoveredDevices { get; }
@@ -181,27 +179,12 @@ Add via `Add Component > Hapbeat/...`. All reference an `HapbeatEventMap` + an e
   `Required Previous State`, looping StreamClip auto-stops on state exit. (The
   pre-0.2.0 `HapbeatAnimatorTrigger` no longer exists.)
 
-## Code-first option: subclass `HapbeatBridge`
-
-Optional — Trigger-first / EventMap-first is the standard path. Use for per-call gain
-logic centralized in one file. Place on the Router GO; assign an EventMap. Protected
-helpers fire **by `displayName`**:
-```csharp
-protected void Play(string displayName, float gainOverride = -1f)
-protected void PlayByIndex(int entryIndex, float gainOverride = -1f)
-protected void PlayScaled(string displayName, float velocity, float minVelocity = 0f, float maxVelocity = 10f)
-protected void PlayWithCurve(string displayName, float inputValue, AnimationCurve curve)
-protected void Stop(string displayName)
-protected void StopAll()
-```
-
 ## Configuration (`HapbeatConfig`, `Assets > Create > Hapbeat > Config`)
 
 `port` (UDP, default `7700`) · `appName` (max 16 chars, shown on the device OLED;
 empty = `Application.productName`; supports `<p>` / `<g>`) · `buildOverridePlayer` /
 `buildOverrideGroup` (default `-1`, clamped to `-1..99`; `1-99` pins that axis for the
-whole build) · `useBridge` (ESP-NOW, off) · `bridgeHost` (`127.0.0.1`) ·
-`pingInterval` (5 s) · `streamSendAheadSeconds` (0.05) · `commandUnicast` (default
+whole build) · `pingInterval` (5 s) · `streamSendAheadSeconds` (0.05) · `commandUnicast` (default
 `true`) · `hapticDelaySeconds` (0..0.5,
 audio-latency compensation) · `enableLogging` / `verboseLogging`. Settings window:
 `Hapbeat > Open Settings`.

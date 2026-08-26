@@ -10,7 +10,7 @@ namespace Hapbeat
 {
     /// <summary>
     /// Main singleton manager for the Hapbeat SDK.
-    /// Provides the public API for triggering haptic events via Wi-Fi UDP broadcast (standard) or Bridge (ESP-NOW).
+    /// Provides the public API for triggering haptic events via WifiUdp.
     /// Attach this component to a GameObject in your scene, or it will create itself automatically.
     /// </summary>
     public class HapbeatManager : MonoBehaviour
@@ -75,9 +75,6 @@ namespace Hapbeat
             _devicePongTimes = new System.Collections.Generic.Dictionary<System.Net.IPAddress, float>();
         // alive count の前回値 (state 変化検出用)
         private int _prevAliveCount = -1;
-
-        /// <summary>Whether the client is in broadcast mode.</summary>
-        public bool IsBroadcast => _client != null && _client.IsBroadcast;
 
         /// <summary>
         /// Estimated time offset between local clock and remote clock in microseconds.
@@ -182,7 +179,7 @@ namespace Hapbeat
 
         /// <summary>
         /// Raised when <see cref="HapbeatConfig.hapticDelaySeconds"/> changes
-        /// during Play mode. Subscribers (Trigger / Bridge / Event instances)
+        /// during Play mode. Subscribers (Trigger / Event instances)
         /// should flush their pending delay coroutines so the new latency value
         /// takes effect immediately on subsequent Fire / Stop calls.
         /// <para>
@@ -204,14 +201,14 @@ namespace Hapbeat
         {
             // Flush our own tracked coroutines first (e.g. StateMachineBehaviour
             // delay routines that can't host their own coroutines), then notify
-            // all event subscribers (Trigger / Bridge instances).
+            // all event subscribers (Trigger instances).
             if (Instance != null) Instance.FlushTrackedHapticDelays();
             OnHapticDelayChanged?.Invoke();
         }
 
         // Coroutines owned by the HapbeatManager singleton on behalf of callers
         // that can't host their own (e.g. StateMachineBehaviour subclasses).
-        // Tracked so they can be flushed alongside Trigger / Bridge coroutines
+        // Tracked so they can be flushed alongside Trigger coroutines
         // when latency settings change during Play.
         private readonly List<Coroutine> _trackedHapticDelays = new List<Coroutine>(4);
 
@@ -260,7 +257,7 @@ namespace Hapbeat
         private float _lastPingTime;
 
         // Auto-reconnect state. _shouldStayConnected records *intent*: set by
-        // Connect()/ConnectToBridge(), cleared by Disconnect()/Cleanup(), so a
+        // Connect(), cleared by Disconnect()/Cleanup(), so a
         // deliberate disconnect is never undone by the retry loop.
         private bool _shouldStayConnected;
         private int _reconnectAttempts;
@@ -563,9 +560,7 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Connect using the current configuration.
-        /// Standard mode (Wi-Fi UDP): opens broadcast sending immediately.
-        /// Bridge mode (ESP-NOW): connects to the configured Bridge host.
+        /// Connect using WifiUdp. Opens broadcast discovery and command fallback.
         /// </summary>
         public void Connect()
         {
@@ -586,54 +581,14 @@ namespace Hapbeat
 
             int port = _config != null ? _config.port : 7700;
 
-            if (_config != null && _config.useBridge)
-            {
-                ConnectToBridge();
-            }
-            else
-            {
-                try
-                {
-                    _client.OpenBroadcast(port);
-                    Log($"Broadcast mode opened on port {port}");
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"[Hapbeat] Failed to open broadcast: {ex.Message}");
-                    OnError?.Invoke(ex.Message);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Connect to the Hapbeat Bridge (ESP-NOW mode).
-        /// </summary>
-        public void ConnectToBridge()
-        {
-            _shouldStayConnected = true;
-
-            if (_client == null)
-            {
-                _client = CreateClient();
-            }
-
-            if (IsConnected)
-            {
-                Log("Already connected.");
-                return;
-            }
-
-            string host = _config != null ? _config.bridgeHost : "127.0.0.1";
-            int port = _config != null ? _config.port : 7700;
-
             try
             {
-                _client.Connect(host, port);
-                Log($"Connecting to Bridge at {host}:{port}...");
+                _client.OpenBroadcast(port);
+                Log($"WifiUdp opened on port {port}");
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[Hapbeat] Bridge connection failed: {ex.Message}");
+                Debug.LogError($"[Hapbeat] Failed to open WifiUdp: {ex.Message}");
                 OnError?.Invoke(ex.Message);
             }
         }
@@ -742,7 +697,7 @@ namespace Hapbeat
                 return null;
             }
 
-            // Direct streaming intentionally waits for a PONG-backed addressed
+            // Streaming intentionally waits for a PONG-backed addressed
             // endpoint instead of broadcasting target-less STREAM_DATA. The returned
             // handle exposes Deferred/Active/Stopped through Status.
             string resolvedTarget = HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup);
@@ -750,14 +705,7 @@ namespace Hapbeat
                 clip, baselineGain, initialGain, resolvedTarget, loop);
             if (playback.Status == HapbeatStreamPlaybackStatus.Deferred)
             {
-                if (playback.DeferReason == HapbeatStreamPlaybackDeferReason.TransportTargetConflict)
-                {
-                    Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: the active transport stream is already bound to a different target than '{resolvedTarget}'.");
-                }
-                else
-                {
-                    Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: no addressed transport endpoint matches target '{resolvedTarget}'. STREAM_DATA was not broadcast.");
-                }
+                Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: no addressed WifiUdp endpoint matches target '{resolvedTarget}'. STREAM_DATA was not broadcast.");
             }
             return playback;
         }
@@ -770,7 +718,7 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Stream flushing is endpoint-scoped: Direct multi-stream sessions never
+        /// Stream flushing is endpoint-scoped: WifiUdp multi-stream sessions never
         /// emit a broadcast BEGIN/END pair because it could stop an unrelated
         /// endpoint's stream.
         /// </summary>
@@ -851,7 +799,7 @@ namespace Hapbeat
             var client = new HapbeatClient();
 
             // Push the routing config here rather than at the Initialize() call site:
-            // Connect() / ConnectToBridge() also construct a client when none exists
+            // Connect() also constructs a client when none exists
             // yet, and those paths used to leave it on library defaults — silently
             // dropping the address override for anyone who calls Connect() directly.
             client.SetAddressOverride(_overridePlayer, _overrideGroup);
@@ -862,8 +810,7 @@ namespace Hapbeat
             {
                 if (connected)
                 {
-                    string mode = client.IsBroadcast ? "broadcast" : "unicast";
-                    Log($"Ready ({mode}).");
+                    Log("Ready (WifiUdp).");
                     _lastPingTime = Time.realtimeSinceStartup;
                     // Note when this session started; the backoff is only cleared
                     // once it has proven itself (see ReconnectStableSeconds).
@@ -875,7 +822,7 @@ namespace Hapbeat
                     // Until a device PONGs, it is invisible to AliveDeviceCount,
                     // to addressed stream endpoint resolution, and to command unicast
                     // routing -- so anything fired in that window broadcasts while
-                    // later commands unicast. Mixing the two transports is what
+                    // later commands unicast. Mixing the two routes is what
                     // lets a PLAY and its matching STOP take different paths (and
                     // arrive out of order, since broadcast is the one the AP delays
                     // for DTIM). Pinging on connect shrinks that window from
@@ -983,7 +930,7 @@ namespace Hapbeat
             _endpointStreamMixer?.Dispose();
             _endpointStreamMixer = null;
 
-            // Connect() reopens through HapbeatClient.OpenBroadcast/Connect, which
+            // Connect() reopens through HapbeatClient.OpenBroadcast, which
             // now tear down unconditionally — so a half-dead session (socket still
             // open after a socket error flagged the connection down) is cleaned up
             // there rather than being leaked or duplicated here.

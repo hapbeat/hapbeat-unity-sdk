@@ -4,7 +4,7 @@ using System.Text;
 namespace Hapbeat
 {
     /// <summary>
-    /// Static utility class for building and parsing Hapbeat Bridge protocol packets.
+    /// Static utility class for building and parsing Hapbeat WifiUdp protocol packets.
     /// All multi-byte values are little-endian. Max packet size is 512 bytes.
     /// </summary>
     public static class HapbeatProtocol

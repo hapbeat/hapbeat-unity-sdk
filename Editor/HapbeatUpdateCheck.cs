@@ -238,7 +238,7 @@ namespace Hapbeat.Editor
 
         private static string CurrentVersion()
         {
-            var pkg = UpmPackageInfo.FindForAssembly(typeof(HapbeatBridge).Assembly);
+            var pkg = UpmPackageInfo.FindForAssembly(typeof(HapbeatManager).Assembly);
             return pkg?.version;
         }
 

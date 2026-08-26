@@ -18,9 +18,8 @@ namespace Hapbeat
     /// </summary>
     public enum CommandSendResult
     {
-        /// <summary>Sent via plain broadcast (or Bridge/ESP-NOW unicast to the bridge
-        /// host) — commandUnicast is disabled, the client isn't in broadcast mode, or
-        /// there was no live device to unicast to (none PONGed recently, or none whose
+        /// <summary>Sent via WifiUdp broadcast — commandUnicast is disabled or there
+        /// was no live device to unicast to (none PONGed recently, or none whose
         /// reported address matched the target).</summary>
         Broadcast,
 
@@ -31,8 +30,8 @@ namespace Hapbeat
     }
 
     /// <summary>
-    /// Internal UDP client for communicating with Hapbeat devices or Bridge.
-    /// Supports broadcast sending (standard) and unicast sending (Bridge mode).
+    /// Internal WifiUdp client for communicating with Hapbeat devices.
+    /// Discovery is broadcast; addressed commands and streams can use device unicast.
     /// Receive runs on a background thread; callbacks are queued for main-thread dispatch.
     /// </summary>
     public class HapbeatClient : IDisposable
@@ -55,9 +54,6 @@ namespace Hapbeat
 
         /// <summary>Whether the client is currently ready to send/receive.</summary>
         public bool IsConnected { get; private set; }
-
-        /// <summary>Whether the client is in broadcast mode.</summary>
-        public bool IsBroadcast { get; private set; }
 
         private UdpClient _udpClient;
         private IPEndPoint _targetEndPoint;
@@ -185,8 +181,6 @@ namespace Hapbeat
                 _targetEndPoint = new IPEndPoint(IPAddress.Broadcast, port);
                 _broadcastRoutes = EnumerateBroadcastRoutes(port);
                 _lockedRoute = null;
-                IsBroadcast = true;
-
                 StartReceiveLoop();
                 IsConnected = true;
                 EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(true));
@@ -194,38 +188,8 @@ namespace Hapbeat
             catch (Exception ex)
             {
                 IsConnected = false;
-                IsBroadcast = false;
                 throw new InvalidOperationException(
                     $"Failed to open broadcast on port {port}: {ex.Message}", ex);
-            }
-        }
-
-        /// <summary>
-        /// Connect to a specific host via UDP unicast (Bridge / ESP-NOW mode).
-        /// </summary>
-        /// <param name="host">Bridge hostname or IP address.</param>
-        /// <param name="port">UDP port.</param>
-        public void Connect(string host, int port)
-        {
-            // Unconditional — see OpenBroadcast for why.
-            Disconnect();
-
-            try
-            {
-                _udpClient = new UdpClient(0); // bind to OS-assigned local port
-                SuppressUdpConnReset(_udpClient);
-                _targetEndPoint = new IPEndPoint(IPAddress.Parse(host), port);
-                IsBroadcast = false;
-
-                StartReceiveLoop();
-                IsConnected = true;
-                EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(true));
-            }
-            catch (Exception ex)
-            {
-                IsConnected = false;
-                throw new InvalidOperationException(
-                    $"Failed to connect to {host}:{port}: {ex.Message}", ex);
             }
         }
 
@@ -252,8 +216,6 @@ namespace Hapbeat
 
             _isRunning = false;
             IsConnected = false;
-            IsBroadcast = false;
-
             try
             {
                 _udpClient?.Close();
@@ -328,13 +290,11 @@ namespace Hapbeat
         {
             public readonly IPEndPoint EndPoint;
             public readonly string Address;
-            public readonly bool IsDirect;
 
-            public StreamEndpoint(IPEndPoint endPoint, string address, bool isDirect = true)
+            public StreamEndpoint(IPEndPoint endPoint, string address)
             {
                 EndPoint = endPoint;
                 Address = address;
-                IsDirect = isDirect;
             }
         }
 
@@ -347,15 +307,6 @@ namespace Hapbeat
         internal List<StreamEndpoint> GetResolvedStreamEndpoints(string target)
         {
             var result = new List<StreamEndpoint>();
-            if (!IsBroadcast)
-            {
-                // Bridge transports one device-side stream. Retain that established
-                // behavior, but do not let a second target replace or multiplex it.
-                if (_targetEndPoint != null)
-                    result.Add(new StreamEndpoint(_targetEndPoint, target ?? string.Empty, false));
-                return result;
-            }
-
             long nowUs = GetLocalTimestampUs();
             long ttlUs = (long)(Math.Max(1f, _knownDeviceTtlSeconds) * 1_000_000d);
             foreach (var pair in _knownDeviceIps)
@@ -716,9 +667,9 @@ namespace Hapbeat
                 return;
 
             List<BroadcastRoute> routes = _broadcastRoutes;
-            if (!IsBroadcast || routes == null || routes.Count == 0)
+            if (routes == null || routes.Count == 0)
             {
-                // Bridge mode, or nothing enumerated: one fixed destination.
+                // Interface enumeration may be unavailable; use limited broadcast.
                 SendRaw(data);
                 return;
             }
@@ -889,7 +840,7 @@ namespace Hapbeat
         /// </summary>
         private void LockRouteFor(IPAddress deviceAddress)
         {
-            if (!IsBroadcast || _lockedRoute != null || deviceAddress == null)
+            if (_lockedRoute != null || deviceAddress == null)
                 return;
 
             List<BroadcastRoute> routes = _broadcastRoutes;
@@ -953,14 +904,11 @@ namespace Hapbeat
 
             // Once a device has answered we know which subnet it is on, so send
             // there instead of relying on the limited broadcast reaching it. Before
-            // that (and in Bridge mode) this is the unchanged single destination.
+            // that this is the limited-broadcast destination.
             IPEndPoint destination = _targetEndPoint;
-            if (IsBroadcast)
-            {
-                BroadcastRoute locked = _lockedRoute;
-                if (locked != null)
-                    destination = locked.EndPoint;
-            }
+            BroadcastRoute locked = _lockedRoute;
+            if (locked != null)
+                destination = locked.EndPoint;
 
             try
             {
@@ -1036,8 +984,7 @@ namespace Hapbeat
         /// Routes a single PLAY/STOP/STOP_ALL packet to unicast or broadcast. Fallback
         /// semantics keep stream routing distinct:
         /// <list type="bullet">
-        /// <item>Not in broadcast mode (Bridge/ESP-NOW), or commandUnicast disabled ->
-        /// plain broadcast/bridge-unicast via SendRaw (unchanged pre-feature behavior).</item>
+        /// <item>commandUnicast disabled -> WifiUdp broadcast via SendRaw.</item>
         /// <item>No device has ever PONGed this session (_knownDeviceIps empty) ->
         /// broadcast (fail open — nobody to unicast to yet).</item>
         /// <item>A known device with no reported address (older firmware, or its PONG
@@ -1067,7 +1014,7 @@ namespace Hapbeat
             if (!IsConnected || client == null)
                 return CommandSendResult.Broadcast;
 
-            if (!IsBroadcast || !_commandUnicastEnabled)
+            if (!_commandUnicastEnabled)
             {
                 SendRaw(data);
                 return CommandSendResult.Broadcast;
@@ -1351,7 +1298,6 @@ namespace Hapbeat
                 return;
 
             IsConnected = false;
-            IsBroadcast = false;
             EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(false));
         }
 

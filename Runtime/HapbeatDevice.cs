@@ -5,7 +5,7 @@ namespace Hapbeat
     /// <summary>
     /// Data class representing a Hapbeat device.
     /// This is a plain C# object (not a MonoBehaviour) used to store device information
-    /// received from the Bridge.
+    /// received from a Hapbeat device.
     /// </summary>
     [Serializable]
     public class HapbeatDevice
@@ -16,7 +16,7 @@ namespace Hapbeat
         /// <summary>Human-readable name of the device.</summary>
         public string name;
 
-        /// <summary>IP address of the device (for Wi-Fi UDP direct connection).</summary>
+        /// <summary>IP address of the device on the WifiUdp network.</summary>
         public string ipAddress;
 
         /// <summary>Group ID this device belongs to (0 = broadcast, 1-254 = group, 255 = reserved).</summary>

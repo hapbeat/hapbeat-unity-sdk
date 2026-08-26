@@ -225,8 +225,8 @@ namespace Hapbeat.Editor
             if (!isConnected)
                 return;
 
-            EditorGUILayout.LabelField("Mode",
-                HapbeatAddressOverrideStatusGUI.Colorize(manager.IsBroadcast ? "broadcast" : "unicast"), RichTextMiniLabel);
+            EditorGUILayout.LabelField("Transport",
+                HapbeatAddressOverrideStatusGUI.Colorize("WifiUdp"), RichTextMiniLabel);
             // Port is read from the config asset (public field), not from the
             // internal HapbeatClient — this window only uses HapbeatManager's
             // public surface.
