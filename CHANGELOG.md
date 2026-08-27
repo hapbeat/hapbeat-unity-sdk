@@ -9,6 +9,8 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
+## [0.5.0-d1] - 2026-08-27
+
 ### Breaking changes（破壊的変更）
 
 - legacy relay API の `HapbeatBridge`、`HapbeatManager.ConnectToBridge()`、`HapbeatConfig.useBridge` / `bridgeHost` を削除しました。command transport は `WifiUdp` のみです（旧 API の alias・serialized migration は提供しません）。
