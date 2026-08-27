@@ -16,6 +16,12 @@ namespace Hapbeat.Tests
             public readonly List<string> Ends = new List<string>();
             public readonly List<string> BeginTargets = new List<string>();
             public readonly List<(string endpoint, byte[] pcm)> Packets = new List<(string endpoint, byte[] pcm)>();
+            public readonly List<(string endpoint, uint byteOffset)> DataOffsets =
+                new List<(string endpoint, uint byteOffset)>();
+            public readonly List<(string endpoint, long timestamp)> BeginTimes =
+                new List<(string endpoint, long timestamp)>();
+            public readonly List<(string endpoint, long timestamp)> EndTimes =
+                new List<(string endpoint, long timestamp)>();
             public readonly List<(string endpoint, ushort rate, byte channels)> BeginFormats =
                 new List<(string endpoint, ushort rate, byte channels)>();
             private readonly object _lock = new object();
@@ -25,6 +31,7 @@ namespace Hapbeat.Tests
                 lock (_lock)
                 {
                     Begins.Add(endpoint.ToString());
+                    BeginTimes.Add((endpoint.ToString(), Stopwatch.GetTimestamp()));
                     BeginTargets.Add(____);
                     BeginFormats.Add((endpoint.ToString(), rate, channels));
                 }
@@ -36,11 +43,18 @@ namespace Hapbeat.Tests
                 lock (_lock)
                 {
                     DataEndpoints.Add(endpoint.ToString());
+                    DataOffsets.Add((endpoint.ToString(), _));
                     Packets.Add((endpoint.ToString(), copy));
                 }
             }
             public void End(IPEndPoint endpoint)
-            { lock (_lock) Ends.Add(endpoint.ToString()); }
+            {
+                lock (_lock)
+                {
+                    Ends.Add(endpoint.ToString());
+                    EndTimes.Add((endpoint.ToString(), Stopwatch.GetTimestamp()));
+                }
+            }
             public int CountData(string endpoint) { lock (_lock) return DataEndpoints.FindAll(x => x == endpoint).Count; }
             public int CountEnds(string endpoint) { lock (_lock) return Ends.FindAll(x => x == endpoint).Count; }
             public int CountBegins(string endpoint) { lock (_lock) return Begins.FindAll(x => x == endpoint).Count; }
@@ -276,6 +290,36 @@ namespace Hapbeat.Tests
         }
 
         [Test]
+        public void SourceGainPanAndCompletion_DoNotAffectLoopingSibling()
+        {
+            var sink = new RecordingSink();
+            bool endpointKnown = false;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, _ =>
+                endpointKnown
+                    ? new List<HapbeatClient.StreamEndpoint> { Endpoints[0] }
+                    : new List<HapbeatClient.StreamEndpoint>(),
+                () => 0.01f, _ => { });
+            var sibling = mixer.AddSamples(ConstantSamples(0.25f), 16000, 1, 1f, 1f,
+                "*/pos_l_arm", true);
+            var oneShot = mixer.AddSamples(ConstantSamples(0.5f), 16000, 1, 1f, 0.5f,
+                "*/pos_l_arm", false);
+            oneShot.Pan = -1f;
+
+            endpointKnown = true;
+            mixer.ReconcileEndpoints();
+
+            WaitFor(() => oneShot.IsStopped && sink.CountData("192.0.2.10:7700") > 1);
+            byte[] mixed = sink.Packets.Find(x => x.endpoint == "192.0.2.10:7700").pcm;
+            Assert.AreEqual(16383, ReadPcm16(mixed, 0, 0), 1);
+            Assert.AreEqual(8191, ReadPcm16(mixed, 0, 1), 1);
+            Assert.IsTrue(sibling.IsActive);
+            Assert.AreEqual(0, sink.CountEnds("192.0.2.10:7700"));
+            byte[] siblingOnly = sink.Packets.FindLast(x => x.endpoint == "192.0.2.10:7700").pcm;
+            Assert.AreEqual(8191, ReadPcm16(siblingOnly, 0, 0), 1);
+            Assert.AreEqual(8191, ReadPcm16(siblingOnly, 0, 1), 1);
+        }
+
+        [Test]
         public void UnresolvedTarget_StopRemovesDeferredSourceWithoutScheduler()
         {
             var sink = new RecordingSink();
@@ -289,30 +333,6 @@ namespace Hapbeat.Tests
             Assert.IsFalse(mixer.IsStreaming);
             Assert.IsTrue(playback.IsStopped);
             Assert.IsEmpty(sink.Begins);
-        }
-
-        [Test]
-        public void UnresolvedConcreteTarget_TargetPatternStopPreventsLaterJoin()
-        {
-            var sink = new RecordingSink();
-            bool endpointKnown = false;
-            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
-            {
-                return endpointKnown && HapbeatClient.AddressMatches(target, Endpoints[0].Address)
-                    ? new List<HapbeatClient.StreamEndpoint> { Endpoints[0] }
-                    : new List<HapbeatClient.StreamEndpoint>();
-            }, () => 0.01f, _ => { });
-            var playback = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
-                "player_1/pos_l_arm", true);
-
-            mixer.StopTarget("*/pos_l_arm", flush: true);
-            endpointKnown = true;
-            mixer.ReconcileEndpoints();
-
-            Assert.IsTrue(playback.IsStopped);
-            Assert.IsFalse(mixer.IsStreaming);
-            Assert.IsEmpty(sink.Begins);
-            Assert.IsEmpty(sink.DataEndpoints);
         }
 
         [Test]
@@ -386,55 +406,10 @@ namespace Hapbeat.Tests
             WaitFor(() => sink.CountData("192.0.2.10:7700") > 0 && sink.CountData("192.0.2.11:7700") > 0);
 
             mixer.StopAll();
+            WaitFor(() => sink.CountEnds("192.0.2.10:7700") == 1 &&
+                          sink.CountEnds("192.0.2.11:7700") == 1, 1000);
             Assert.AreEqual(1, sink.CountEnds("192.0.2.10:7700"));
             Assert.AreEqual(1, sink.CountEnds("192.0.2.11:7700"));
-        }
-
-        [Test]
-        public void StopAllWithFlush_SendsReplacementBeginAndExactlyOneEndPerEndpoint()
-        {
-            using var mixer = Create(out var sink);
-            mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/*/group_1", true);
-            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0 &&
-                          sink.CountData("192.0.2.11:7700") > 0);
-
-            mixer.StopAll(flush: true);
-            Assert.AreEqual(2, sink.CountBegins("192.0.2.10:7700"));
-            Assert.AreEqual(2, sink.CountBegins("192.0.2.11:7700"));
-            Assert.AreEqual(1, sink.CountEnds("192.0.2.10:7700"));
-            Assert.AreEqual(1, sink.CountEnds("192.0.2.11:7700"));
-        }
-
-        [Test]
-        public void StopAllTimeout_DoesNotSendDelayedEndIntoRestartedSession()
-        {
-            var sink = new RecordingSink();
-            using var stopFinalizeEntered = new ManualResetEventSlim(false);
-            using var allowStopFinalize = new ManualResetEventSlim(false);
-            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
-            {
-                return HapbeatClient.AddressMatches(target, Endpoints[0].Address)
-                    ? new List<HapbeatClient.StreamEndpoint> { Endpoints[0] }
-                    : new List<HapbeatClient.StreamEndpoint>();
-            }, () => 0.01f, _ => { }, beforeStopFinalize: () =>
-            {
-                stopFinalizeEntered.Set();
-                allowStopFinalize.Wait(1500);
-            });
-            mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
-            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
-
-            mixer.StopAll(); // deliberately reaches the bounded 500 ms join timeout
-            Assert.IsTrue(stopFinalizeEntered.IsSet);
-            Assert.AreEqual(1, sink.CountEnds("192.0.2.10:7700"));
-            int dataBeforeRestart = sink.CountData("192.0.2.10:7700");
-            mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
-            allowStopFinalize.Set();
-
-            WaitFor(() => sink.CountBegins("192.0.2.10:7700") == 2 &&
-                          sink.CountData("192.0.2.10:7700") > dataBeforeRestart);
-            Assert.AreEqual(1, sink.CountEnds("192.0.2.10:7700"),
-                "the timed-out scheduler must suppress its delayed END");
         }
 
         [Test]
@@ -482,7 +457,7 @@ namespace Hapbeat.Tests
         }
 
         [Test]
-        public void AddressChangeAtSameEndpoint_ReplacesSessionWithEndThenBegin()
+        public void AddressChangeAtSameRoute_MigratesSessionWithoutEndOrBegin()
         {
             var sink = new RecordingSink();
             var endpoint = new IPEndPoint(IPAddress.Parse("192.0.2.10"), 7700);
@@ -498,42 +473,120 @@ namespace Hapbeat.Tests
 
             address = "player_1/pos_r_arm/group_1";
             mixer.ReconcileEndpoints();
-            WaitFor(() => sink.Begins.Count == 2 && sink.CountEnds("192.0.2.10:7700") == 1);
-            Assert.AreEqual(address, sink.BeginTargets[1]);
+            int dataBefore = sink.CountData("192.0.2.10:7700");
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > dataBefore);
+            Assert.AreEqual(1, sink.Begins.Count);
+            Assert.AreEqual(0, sink.CountEnds("192.0.2.10:7700"));
         }
 
         [Test]
-        public void TargetFlush_ResetsAndEndsOnlyMatchingEndpoint()
+        public void RouteChangeForSameAddress_MigratesSessionAndContinuesCursor()
         {
-            using var mixer = Create(out var sink);
-            mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "player_1/pos_l_arm", true);
-            mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_r_arm", true);
-            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0 && sink.CountData("192.0.2.11:7700") > 0);
+            var sink = new RecordingSink();
+            string address = "player_1/pos_l_arm/group_1";
+            var endpoint = new IPEndPoint(IPAddress.Parse("192.0.2.10"), 7700);
+            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
+            {
+                return HapbeatClient.AddressMatches(target, address)
+                    ? new List<HapbeatClient.StreamEndpoint> { new HapbeatClient.StreamEndpoint(endpoint, address) }
+                    : new List<HapbeatClient.StreamEndpoint>();
+            }, () => 0.01f, _ => { });
+            mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 1);
 
-            mixer.StopTarget("*/pos_l_arm", flush: true);
-            WaitFor(() => sink.CountEnds("192.0.2.10:7700") == 1);
-            Assert.AreEqual(2, sink.CountBegins("192.0.2.10:7700"), "initial BEGIN + flush BEGIN");
-            Assert.AreEqual(1, sink.CountBegins("192.0.2.11:7700"));
-            Assert.AreEqual(0, sink.CountEnds("192.0.2.11:7700"));
+            endpoint = new IPEndPoint(IPAddress.Parse("192.0.2.12"), 7700);
+            mixer.ReconcileEndpoints();
+
+            WaitFor(() => sink.CountData("192.0.2.12:7700") > 0);
+            Assert.AreEqual(1, sink.Begins.Count, "route migration must not restart the wire session");
+            Assert.IsEmpty(sink.Ends, "route migration must not end the wire session");
+            Assert.Greater(sink.DataOffsets.Find(x => x.endpoint == "192.0.2.12:7700").byteOffset, 0,
+                "route migration must preserve the session byte cursor");
         }
 
         [Test]
-        public void TargetFlush_DetachesWildcardSourceOnlyFromMatchingEndpoint()
+        public void EmptySession_LingersAndAcceptsSiblingWithoutEndOrBegin()
         {
             using var mixer = Create(out var sink);
-            var wildcard = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
-                "*/*/group_1", true);
-            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0 &&
-                          sink.CountData("192.0.2.11:7700") > 0);
+            var first = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
 
-            mixer.StopTarget("*/pos_l_arm", flush: true);
+            first.Stop();
+            Thread.Sleep(100);
+            var sibling = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
 
-            WaitFor(() => sink.CountEnds("192.0.2.10:7700") == 1);
-            int rightDataBefore = sink.CountData("192.0.2.11:7700");
-            WaitFor(() => sink.CountData("192.0.2.11:7700") > rightDataBefore);
-            Assert.IsTrue(wildcard.IsActive);
-            Assert.AreEqual(2, sink.CountBegins("192.0.2.10:7700"));
-            Assert.AreEqual(0, sink.CountEnds("192.0.2.11:7700"));
+            WaitFor(() => sibling.IsActive && sink.CountData("192.0.2.10:7700") > 1);
+            Assert.AreEqual(1, sink.CountBegins("192.0.2.10:7700"));
+            Assert.AreEqual(0, sink.CountEnds("192.0.2.10:7700"));
+        }
+
+        [Test]
+        public void ExpiredEndpoint_StopsDataThenEndsAfterLinger()
+        {
+            var sink = new RecordingSink();
+            bool endpointKnown = true;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, _ =>
+                endpointKnown
+                    ? new List<HapbeatClient.StreamEndpoint> { Endpoints[0] }
+                    : new List<HapbeatClient.StreamEndpoint>(),
+                () => 0.01f, _ => { });
+            var playback = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
+                "*/pos_l_arm", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 1);
+
+            endpointKnown = false;
+            mixer.ReconcileEndpoints();
+            int dataAtExpiry = sink.CountData("192.0.2.10:7700");
+
+            Thread.Sleep(100);
+            Assert.AreEqual(dataAtExpiry, sink.CountData("192.0.2.10:7700"));
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Deferred, playback.Status);
+            WaitFor(() => sink.CountEnds("192.0.2.10:7700") == 1, 1000);
+        }
+
+        [Test]
+        public void EndedEndpoint_DelaysNextBeginForAtLeastThreeHundredMilliseconds()
+        {
+            using var mixer = Create(out var sink);
+            var first = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
+            first.Stop();
+            WaitFor(() => sink.CountEnds("192.0.2.10:7700") == 1, 1000);
+
+            var restarted = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
+                "*/pos_l_arm", true);
+            WaitFor(() => sink.CountBegins("192.0.2.10:7700") == 2, 1000);
+
+            long end = sink.EndTimes.Find(x => x.endpoint == "192.0.2.10:7700").timestamp;
+            long begin = sink.BeginTimes.FindLast(x => x.endpoint == "192.0.2.10:7700").timestamp;
+            double elapsedMilliseconds = (begin - end) * 1000.0 / Stopwatch.Frequency;
+            Assert.GreaterOrEqual(elapsedMilliseconds, 300.0);
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, restarted.Status);
+        }
+
+        [Test]
+        public void EndpointJoiningLate_StartsThatEndpointAtSourceFrameZero()
+        {
+            var sink = new RecordingSink();
+            bool rightKnown = false;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
+            {
+                var result = new List<HapbeatClient.StreamEndpoint> { Endpoints[0] };
+                if (rightKnown) result.Add(Endpoints[1]);
+                return result;
+            }, () => 0.01f, _ => { });
+            var ramp = new float[1600];
+            ramp[0] = 0.25f;
+            for (int i = 1; i < ramp.Length; i++) ramp[i] = 0.75f;
+            mixer.AddSamples(ramp, 16000, 1, 1f, 1f, "*/*/group_1", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 2);
+
+            rightKnown = true;
+            mixer.ReconcileEndpoints();
+
+            WaitFor(() => sink.CountData("192.0.2.11:7700") > 0);
+            byte[] firstRightPacket = sink.Packets.Find(x => x.endpoint == "192.0.2.11:7700").pcm;
+            Assert.AreEqual(8191, ReadPcm16(firstRightPacket, 0, 0), 1);
         }
 
         private static HapbeatEndpointStreamMixer Create(out RecordingSink sink)
@@ -562,9 +615,10 @@ namespace Hapbeat.Tests
             return (short)(pcm[offset] | (pcm[offset + 1] << 8));
         }
 
-        private static void WaitFor(Func<bool> predicate)
+        private static void WaitFor(Func<bool> predicate, int timeoutMilliseconds = 500)
         {
-            for (int i = 0; i < 100; i++)
+            int attempts = Math.Max(1, timeoutMilliseconds / 5);
+            for (int i = 0; i < attempts; i++)
             {
                 if (predicate()) return;
                 Thread.Sleep(5);

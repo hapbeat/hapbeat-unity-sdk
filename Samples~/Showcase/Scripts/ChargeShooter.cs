@@ -102,18 +102,9 @@ namespace Hapbeat.Samples.Showcase
                  "避けたい場合に 0.03–0.05 を入れると安定する。")]
         [SerializeField, Range(0f, 0.5f)] private float _loopStartDelay = 0f;
 
-        [Tooltip("Loop stop と Shot 発火の間に挟む待ち時間 (秒)。\n" +
-                 " 0     = 即発火 (shot が時々鳴らなかったり強度がばらつく場合あり)。\n" +
-                 " 0.05  = default — device の ring buffer flush 処理を待つ安全マージン。\n" +
-                 " 0.10  = Wi-Fi 帯域が厳しい環境向けに広めに取る場合。\n\n" +
-                 "Release() の packet 送信順:\n" +
-                 "  STREAM_END (loop) → STREAM_BEGIN/END (ring-flush pair) → shot (BEGIN+DATA or PLAY)\n" +
-                 "これらが ~10ms 以内にバースト送信されるため:\n" +
-                 "  StreamClip shot: flush 前後で shot が loop tail と device 側 mixer で合成 →\n" +
-                 "                   試行ごとに強度がばらつく\n" +
-                 "  Command/Fire shot: PLAY が flush 処理中に到着 → 時折ドロップして無音\n" +
-                 "0.05 default で flush 処理時間を確保し両症状を解消。\n" +
-                 "HapbeatSequenceTrigger._stopShotDelay と同一ロール・同一 default。")]
+        [Tooltip("Loop stop と Shot 発火の間に挟む演出上の待ち時間 (秒)。\n" +
+                 "StreamClip 同士は endpoint session の linger 中に継ぎ目なく合流するため、\n" +
+                 "通信上の flush 待ちは不要です。0 なら即時、正値なら意図的に間を空けます。")]
         [SerializeField, Range(0f, 0.5f)] private float _shotDelayAfterLoop = 0.05f;
 
         // ────────────────────────────────────────────────────────
@@ -328,16 +319,13 @@ namespace Hapbeat.Samples.Showcase
             // ユーザーに体感させたい。)
             CancelPendingLoopStart();
 
-            // Loop stream を per-source stop + device ring buffer flush。
-            // 通常 Stop() だけだと device 側 buffer の drain で ~50-250ms の tail が残るため、
-            // StopStreamWithFlush で STREAM_BEGIN+END pair を送って即時 flush する。
+            // Loop source だけを停止する。endpoint session は 300 ms linger し、
+            // 直後の StreamClip shot は sibling を巻き込まず同じ session に合流する。
             if (_loopPlayback != null)
             {
                 _loopPlayback.Stop();
                 _loopPlayback = null;
-                if (HapbeatManager.Instance != null)
-                    HapbeatManager.Instance.StopStreamWithFlush();
-                if (_verboseLog) Debug.Log("[Charge] Loop stream stopped + ring buffer flushed");
+                if (_verboseLog) Debug.Log("[Charge] Loop stream stopped");
             }
 
             // Audio: charge loop stop + release one-shot (Light / Heavy 分岐)
@@ -359,14 +347,11 @@ namespace Hapbeat.Samples.Showcase
                 : _chargeShotModulator;
             string shotLabel = $"shot-{(isHeavy ? "heavy" : "light")} ({chargeT:F2}, mod={shotModulator:F2})";
 
-            // Loop stop の flush burst と shot の BEGIN/PLAY packet が衝突して
-            // device 側で取りこぼし / mixer 合成が起きるのを防ぐため、_shotDelayAfterLoop
-            // > 0 のときは coroutine 経由で待ってから shot 発火する。
+            // 正値なら演出上の間を空けてから shot を発火する。
             if (_shotDelayAfterLoop > 0f)
             {
                 if (_verboseLog)
-                    Debug.Log($"[Charge] shot を {_shotDelayAfterLoop:F3}s 遅延発火 " +
-                              "(loop stop の flush packet を device に処理させるため)");
+                    Debug.Log($"[Charge] shot を {_shotDelayAfterLoop:F3}s 遅延発火");
                 StartCoroutine(FireShotAfterDelay(isHeavy, shotModulator, shotLabel, _shotDelayAfterLoop));
             }
             else

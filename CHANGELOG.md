@@ -9,6 +9,19 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
+### Breaking changes（破壊的変更）
+
+- endpoint session を再 BEGIN して device buffer を flush していた `HapbeatManager.StopStreamWithFlush()` を削除しました。stream source は返された `HapbeatStreamPlayback.Stop()` で個別停止し、全 source の停止には `StopStream()` を使います。
+
+### Changed（変更）
+
+- StreamClip の endpoint session は最後の source が抜けた後も最低 300 ms 維持し、その間に追加された source を BEGIN / END なしで同じ session へ合流させます。END 後に同じ exact endpoint へ再 BEGIN する場合も最低 300 ms 待機します。
+
+### Fixed（修正）
+
+- PONG で device address または UDP route が変化した際、END / BEGIN を交差経路へ送らず、session の byte cursor と source cursor を維持したまま exact unicast の送信先を移行するよう修正しました。
+- 遅れて解決した endpoint は、他 endpoint 上の進行位置を共有せず source の frame 0 から開始します。
+
 ## [0.5.0] - 2026-08-27
 
 ### Breaking changes（破壊的変更）

@@ -49,18 +49,9 @@ namespace Hapbeat
         private float _startShotDelay = -1f;
 
         [Tooltip("Delay (seconds) between the Loop stop and the On Stop one-shot.\n" +
-                 " 0     = no delay (fire immediately, may collide with loop's flush burst).\n" +
-                 " 0.05  = default — safe margin for device to process ring-flush packets.\n" +
-                 " 0.10  = extra-safe for Wi-Fi networks under load.\n\n" +
-                 "Symmetric to Start Shot Delay, for the end of the sequence:\n" +
-                 "after Loop stop the device receives STREAM_END + STREAM_BEGIN + STREAM_END\n" +
-                 "(ring-flush pair) in rapid succession. Firing the On Stop one-shot\n" +
-                 "immediately means its STREAM_BEGIN (StreamClip) or PLAY (Command) arrives\n" +
-                 "while the device is still processing those packets, causing:\n" +
-                 "  - StreamClip: shot mixed with loop residual → strength varies per trial\n" +
-                 "  - Command:    PLAY occasionally dropped → shot silently missing\n\n" +
-                 "0.05 default chosen empirically as a sweet spot — barely perceptible as a\n" +
-                 "gap (≈1 audio chunk) but sufficient to fully isolate the two packet bursts.")]
+                 "0 fires immediately; a positive value adds an intentional timing gap.\n" +
+                 "StreamClip sources share the endpoint session during its linger period,\n" +
+                 "so no replacement BEGIN is sent to flush the device buffer.")]
         [SerializeField, Range(0f, 0.5f)]
         private float _stopShotDelay = 0.05f;
 
@@ -217,17 +208,15 @@ namespace Hapbeat
             CancelPendingLoop();
             CancelPendingStopShot(); // defensive: drop any stale stop-shot from a prior Stop
 
-            // STREAM_END + ring-flush packets go out of StopHaptic. The On Stop
-            // one-shot is scheduled after _stopShotDelay so its STREAM_BEGIN /
-            // PLAY doesn't collide with the loop's flush burst on the device.
-            // See _stopShotDelay tooltip for the symptom matrix.
-            StopHaptic(); // inherited — stops the loop (sends STREAM_END + flush)
+            // Per-source stop keeps siblings alive. The endpoint session itself
+            // lingers, so a following StreamClip can join without END / BEGIN.
+            StopHaptic();
 
             if (_stopShotDelay > 0f && !string.IsNullOrEmpty(_onStopEntryId))
             {
                 if (_verboseLog)
                     Debug.Log($"[Hapbeat] Sequence: delaying On Stop one-shot by {_stopShotDelay:F3}s on {name} " +
-                              "(workaround for loop-stop flush burst vs. shot collision)", this);
+                              "(configured sequence timing gap)", this);
                 _pendingStopShot = StartCoroutine(StopShotCoroutine(_stopShotDelay));
             }
             else

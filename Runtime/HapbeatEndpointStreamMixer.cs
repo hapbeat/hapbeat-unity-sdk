@@ -45,6 +45,8 @@ namespace Hapbeat
         private const ushort OutputSampleRate = 16000;
         private const byte OutputChannels = 2;
         private const float ChunkSeconds = 0.01f;
+        private const double EmptySessionLingerSeconds = 0.3;
+        private const double EndToBeginCooldownSeconds = 0.3;
 
         private sealed class Source
         {
@@ -54,7 +56,6 @@ namespace Hapbeat
             public readonly bool Loop;
             public readonly string Target;
             public readonly HapbeatStreamPlayback Playback;
-            public readonly HashSet<string> ExcludedEndpointKeys = new HashSet<string>();
 
             public Source(AudioClip clip, HapbeatStreamPlayback playback, bool loop, string target)
             {
@@ -81,14 +82,17 @@ namespace Hapbeat
 
         private sealed class Session
         {
-            public readonly IPEndPoint Endpoint;
-            public readonly string Key;
-            public readonly string Address;
-            public readonly string WireTarget;
+            public IPEndPoint Endpoint;
+            public string Key;
+            public string Address;
+            public string WireTarget;
             public readonly Dictionary<Source, double> Positions = new Dictionary<Source, double>();
             public readonly HashSet<Source> MatchingSources = new HashSet<Source>();
             public uint ByteOffset;
+            public bool Resolved;
+            public bool BeginSent;
             public bool EndSent;
+            public long EmptySinceTicks;
 
             public Session(IPEndPoint endpoint, string key, string address, string wireTarget)
             {
@@ -119,6 +123,7 @@ namespace Hapbeat
         private readonly Action _beforeStopFinalize;
         private readonly List<Source> _sources = new List<Source>();
         private readonly Dictionary<string, Session> _sessions = new Dictionary<string, Session>();
+        private readonly Dictionary<string, long> _lastEndTicksByEndpoint = new Dictionary<string, long>();
         private Thread _thread;
         private volatile bool _stopRequested;
         private volatile bool _suppressSchedulerTerminationPackets;
@@ -159,7 +164,15 @@ namespace Hapbeat
 
         public bool IsStreaming
         {
-            get { lock (_lock) return _sessions.Count > 0; }
+            get
+            {
+                lock (_lock)
+                {
+                    foreach (Session session in _sessions.Values)
+                        if (session.BeginSent && !session.EndSent) return true;
+                    return false;
+                }
+            }
         }
 
         /// <summary>True while logical sources are registered, including Deferred sources.</summary>
@@ -248,99 +261,42 @@ namespace Hapbeat
             }
         }
 
-        public void StopAll(bool flush = false)
+        public void StopAll()
         {
-            Thread thread;
-            List<Session> terminationSessions;
             lock (_lock)
             {
+                if (_disposed) return;
                 for (int i = 0; i < _sources.Count; i++) _sources[i].Playback.MarkStopped();
                 _sources.Clear();
-                terminationSessions = new List<Session>(_sessions.Values);
-                // The caller owns termination packets for an explicit StopAll.
-                // This remains true even if the bounded join times out, preventing
-                // the old scheduler from sending a delayed END into a reconnected
-                // client/session later.
-                _suppressSchedulerTerminationPackets = true;
-                _stopRequested = true;
-                thread = _thread;
-            }
-            bool joined = thread == null || thread.Join(500);
-            SendTerminationPackets(terminationSessions, flush);
-            if (!joined)
-            {
-                _log("Stream mixer did not exit within 500ms.");
-                return;
-            }
-            lock (_lock)
-            {
-                _sessions.Clear();
-                _thread = null;
-                _stopRequested = false;
-                _suppressSchedulerTerminationPackets = false;
-            }
-        }
-
-        public void StopTarget(string target, bool flush)
-        {
-            lock (_lock)
-            {
-                HashSet<Source> affectedSources = null;
-                foreach (Session session in _sessions.Values)
-                {
-                    if (!HapbeatClient.AddressMatches(target, session.Address)) continue;
-                    if (flush)
-                    {
-                        _sink.Begin(session.Endpoint, OutputSampleRate, OutputChannels,
-                            HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
-                    }
-                    foreach (Source source in session.MatchingSources)
-                    {
-                        source.ExcludedEndpointKeys.Add(session.Key);
-                        if (affectedSources == null) affectedSources = new HashSet<Source>();
-                        affectedSources.Add(source);
-                    }
-                }
-
-                // An exact-target Deferred source has no session from which to infer
-                // membership, but callers still expect the target-scoped stop to
-                // retire it rather than let it revive on a later PONG.
-                for (int i = 0; i < _sources.Count; i++)
-                {
-                    Source source = _sources[i];
-                    bool exactTarget = string.Equals(target ?? string.Empty,
-                        source.Target ?? string.Empty, StringComparison.Ordinal);
-                    bool concreteDeferredMatch = !SourceHasSessionLocked(source) &&
-                        (source.Target ?? string.Empty).IndexOf('*') < 0 &&
-                        HapbeatClient.AddressMatches(target, source.Target);
-                    if (!exactTarget && !concreteDeferredMatch) continue;
-                    if (affectedSources == null) affectedSources = new HashSet<Source>();
-                    affectedSources.Add(source);
-                }
-
-                ReconcileEndpointsLocked();
-                bool removed = false;
-                if (affectedSources != null)
-                {
-                    for (int i = _sources.Count - 1; i >= 0; i--)
-                    {
-                        Source source = _sources[i];
-                        if (!affectedSources.Contains(source) || SourceHasSessionLocked(source)) continue;
-                        source.Playback.MarkStopped();
-                        RemoveSourceLocked(source, i);
-                        removed = true;
-                    }
-                }
-                if (removed) ReconcileEndpointsLocked();
-                UpdatePlaybackStatesLocked();
+                RebuildSessionMembershipLocked(Stopwatch.GetTimestamp());
+                StartThreadLocked();
             }
         }
 
         public void Dispose()
         {
             if (_disposed) return;
-            StopAll();
-            _disposed = true;
+            Thread thread;
+            List<Session> terminationSessions;
+            lock (_lock)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                for (int i = 0; i < _sources.Count; i++) _sources[i].Playback.MarkStopped();
+                _sources.Clear();
+                terminationSessions = new List<Session>(_sessions.Values);
+                _suppressSchedulerTerminationPackets = true;
+                _stopRequested = true;
+                thread = _thread;
+            }
+            bool joined = thread == null || thread.Join(500);
+            SendTerminationPackets(terminationSessions);
+            if (!joined) _log("Stream mixer did not exit within 500ms.");
+            lock (_lock)
+            {
+                _sessions.Clear();
+                if (joined) _thread = null;
+            }
         }
 
         private void ReconcileEndpointsLocked()
@@ -355,41 +311,76 @@ namespace Hapbeat
                 for (int e = 0; e < endpoints.Count; e++)
                 {
                     var endpoint = endpoints[e];
-                    string key = endpoint.EndPoint.ToString();
-                    if (source.ExcludedEndpointKeys.Contains(key)) continue;
+                    string key = EndpointKey(endpoint.EndPoint, endpoint.Address);
                     wanted[key] = endpoint;
                 }
             }
 
-            var remove = new List<string>();
-            foreach (var pair in _sessions)
-                if (!wanted.ContainsKey(pair.Key)) remove.Add(pair.Key);
-            for (int i = 0; i < remove.Count; i++)
+            var unassignedSessions = new List<Session>();
+            foreach (Session session in _sessions.Values)
             {
-                Session session = _sessions[remove[i]];
-                EndSessionLocked(session);
-                _sessions.Remove(remove[i]);
+                session.Resolved = false;
+                unassignedSessions.Add(session);
+            }
+            var remainingWanted = new List<string>();
+            foreach (string key in wanted.Keys)
+            {
+                if (_sessions.TryGetValue(key, out Session exact))
+                {
+                    exact.Resolved = true;
+                    unassignedSessions.Remove(exact);
+                }
+                else remainingWanted.Add(key);
             }
 
-            foreach (var pair in wanted)
+            // A PONG can report a new route or a new address for a stream that is
+            // already armed. STREAM_DATA/END carry no target, so restarting across
+            // that boundary risks an old-path END overtaking the new BEGIN. Preserve
+            // the session and both cursors whenever either half identifies it.
+            for (int i = remainingWanted.Count - 1; i >= 0; i--)
             {
-                if (_sessions.TryGetValue(pair.Key, out Session existing))
+                string key = remainingWanted[i];
+                HapbeatClient.StreamEndpoint endpoint = wanted[key];
+                Session migration = null;
+                for (int s = 0; s < unassignedSessions.Count; s++)
                 {
-                    if (existing.Address == pair.Value.Address) continue;
-                    EndSessionLocked(existing);
-                    _sessions.Remove(pair.Key);
+                    Session candidate = unassignedSessions[s];
+                    if (candidate.Endpoint.Equals(endpoint.EndPoint) ||
+                        string.Equals(candidate.Address, endpoint.Address, StringComparison.Ordinal))
+                    {
+                        migration = candidate;
+                        break;
+                    }
                 }
+                if (migration == null) continue;
+
+                _sessions.Remove(migration.Key);
+                migration.Endpoint = endpoint.EndPoint;
+                migration.Key = key;
+                migration.Address = endpoint.Address;
+                migration.WireTarget = endpoint.Address;
+                migration.Resolved = true;
+                migration.EmptySinceTicks = 0;
+                _sessions.Add(key, migration);
+                unassignedSessions.Remove(migration);
+                remainingWanted.RemoveAt(i);
+            }
+
+            for (int i = 0; i < remainingWanted.Count; i++)
+            {
+                string key = remainingWanted[i];
+                HapbeatClient.StreamEndpoint endpoint = wanted[key];
                 // STREAM_DATA has no target. Even though this is an explicit direct
                 // endpoint, BEGIN must carry the PONG-resolved address so firmware
                 // rejects it if that IP was reassigned before the next PONG refresh.
-                var session = new Session(pair.Value.EndPoint, pair.Key, pair.Value.Address,
-                    pair.Value.Address);
-                _sessions.Add(pair.Key, session);
-                _sink.Begin(session.Endpoint, OutputSampleRate, OutputChannels,
-                    HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
+                var session = new Session(endpoint.EndPoint, key, endpoint.Address, endpoint.Address);
+                session.Resolved = true;
+                _sessions.Add(key, session);
             }
 
-            RebuildSessionMembershipLocked();
+            long now = Stopwatch.GetTimestamp();
+            RebuildSessionMembershipLocked(now);
+            ProcessSessionLifecycleLocked(now);
         }
 
         private void UpdatePlaybackStatesLocked()
@@ -400,7 +391,7 @@ namespace Hapbeat
                 bool matched = false;
                 foreach (var session in _sessions.Values)
                 {
-                    if (session.MatchingSources.Contains(source))
+                    if (session.BeginSent && !session.EndSent && session.MatchingSources.Contains(source))
                     {
                         matched = true;
                         break;
@@ -443,14 +434,20 @@ namespace Hapbeat
                             ReconcileEndpointsLocked();
                             UpdatePlaybackStatesLocked();
                         }
+                        long now = Stopwatch.GetTimestamp();
+                        ProcessSessionLifecycleLocked(now);
+                        UpdatePlaybackStatesLocked();
                         hasSources = _sources.Count > 0;
-                        if (!hasSources || _sessions.Count == 0)
+                        if (_sessions.Count == 0)
                         {
                             observedNaturalCompletion = !hasSources;
                             break;
                         }
                         foreach (var session in _sessions.Values)
-                            MixAndSendSessionLocked(session, frames, mix, pcm);
+                        {
+                            if (session.BeginSent && !session.EndSent && session.MatchingSources.Count > 0)
+                                MixAndSendSessionLocked(session, frames, mix, pcm);
+                        }
                         if (RemoveCompletedSourcesLocked())
                         {
                             ReconcileEndpointsLocked();
@@ -486,14 +483,14 @@ namespace Hapbeat
                         ReconcileEndpointsLocked();
                         UpdatePlaybackStatesLocked();
                     }
-                    // The exiting thread owns the forced-stop END as well: this
-                    // remains safe when StopAll's bounded join times out.
+                    // Dispose owns the forced-stop END even if its bounded join
+                    // times out, so the old scheduler cannot emit a later duplicate.
                     if (_stopRequested)
                     {
                         EndAllSessionsLocked();
                         _sessions.Clear();
                         _thread = null;
-                        if (_sources.Count > 0)
+                        if (_sources.Count > 0 && !_disposed)
                         {
                             _stopRequested = false;
                             ReconcileEndpointsLocked();
@@ -510,8 +507,9 @@ namespace Hapbeat
                     }
                     else
                     {
-                        EndAllSessionsLocked();
-                        _sessions.Clear();
+                        // Normal completion already passed through the 300 ms empty
+                        // session linger and lifecycle END before reaching here.
+                        ProcessSessionLifecycleLocked(Stopwatch.GetTimestamp());
                     }
                     if (_sources.Count == 0 || _stopRequested) _thread = null;
                 }
@@ -631,26 +629,7 @@ namespace Hapbeat
             }
         }
 
-        private void PruneSessionsWithoutSourcesLocked()
-        {
-            List<string> remove = null;
-            foreach (var pair in _sessions)
-            {
-                if (pair.Value.MatchingSources.Count > 0) continue;
-                if (remove == null) remove = new List<string>();
-                remove.Add(pair.Key);
-            }
-
-            if (remove == null) return;
-            for (int i = 0; i < remove.Count; i++)
-            {
-                Session session = _sessions[remove[i]];
-                EndSessionLocked(session);
-                _sessions.Remove(remove[i]);
-            }
-        }
-
-        private void RebuildSessionMembershipLocked()
+        private void RebuildSessionMembershipLocked(long now)
         {
             foreach (Session session in _sessions.Values)
             {
@@ -658,7 +637,7 @@ namespace Hapbeat
                 for (int i = 0; i < _sources.Count; i++)
                 {
                     Source source = _sources[i];
-                    if (!source.Playback.IsStopped && SessionMatchesSource(session, source))
+                    if (session.Resolved && !source.Playback.IsStopped && SessionMatchesSource(session, source))
                         session.MatchingSources.Add(source);
                 }
 
@@ -669,53 +648,83 @@ namespace Hapbeat
                     if (stalePositions == null) stalePositions = new List<Source>();
                     stalePositions.Add(source);
                 }
+                if (session.MatchingSources.Count > 0) session.EmptySinceTicks = 0;
+                else if (session.EmptySinceTicks == 0) session.EmptySinceTicks = now;
                 if (stalePositions == null) continue;
                 for (int i = 0; i < stalePositions.Count; i++)
                     session.Positions.Remove(stalePositions[i]);
             }
+        }
 
-            PruneSessionsWithoutSourcesLocked();
+        private void ProcessSessionLifecycleLocked(long now)
+        {
+            List<string> remove = null;
+            foreach (var pair in _sessions)
+            {
+                Session session = pair.Value;
+                if (session.MatchingSources.Count > 0)
+                {
+                    session.EmptySinceTicks = 0;
+                    if (!session.BeginSent && CooldownElapsedLocked(session.Key, now))
+                    {
+                        _sink.Begin(session.Endpoint, OutputSampleRate, OutputChannels,
+                            HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
+                        session.BeginSent = true;
+                    }
+                    continue;
+                }
+
+                if (session.EmptySinceTicks == 0) session.EmptySinceTicks = now;
+                double emptySeconds = (now - session.EmptySinceTicks) / (double)Stopwatch.Frequency;
+                if (emptySeconds < EmptySessionLingerSeconds) continue;
+                if (session.BeginSent) EndSessionLocked(session, now);
+                if (remove == null) remove = new List<string>();
+                remove.Add(pair.Key);
+            }
+
+            if (remove == null) return;
+            for (int i = 0; i < remove.Count; i++) _sessions.Remove(remove[i]);
+        }
+
+        private bool CooldownElapsedLocked(string endpointKey, long now)
+        {
+            if (!_lastEndTicksByEndpoint.TryGetValue(endpointKey, out long endedAt)) return true;
+            return (now - endedAt) / (double)Stopwatch.Frequency >= EndToBeginCooldownSeconds;
         }
 
         private static bool SessionMatchesSource(Session session, Source source)
         {
-            if (source.ExcludedEndpointKeys.Contains(session.Key)) return false;
             return HapbeatClient.AddressMatches(source.Target, session.Address);
-        }
-
-        private bool SourceHasSessionLocked(Source source)
-        {
-            foreach (Session session in _sessions.Values)
-                if (session.MatchingSources.Contains(source)) return true;
-            return false;
         }
 
         private void EndAllSessionsLocked()
         {
-            foreach (var session in _sessions.Values) EndSessionLocked(session);
+            long now = Stopwatch.GetTimestamp();
+            foreach (var session in _sessions.Values) EndSessionLocked(session, now);
         }
 
-        private void EndSessionLocked(Session session)
+        private void EndSessionLocked(Session session, long now)
         {
-            if (session.EndSent) return;
+            if (!session.BeginSent || session.EndSent) return;
             session.EndSent = true;
             if (!_suppressSchedulerTerminationPackets)
+            {
                 _sink.End(session.Endpoint);
+                _lastEndTicksByEndpoint[session.Key] = now;
+            }
         }
 
-        private void SendTerminationPackets(List<Session> sessions, bool flush)
+        private void SendTerminationPackets(List<Session> sessions)
         {
             for (int i = 0; i < sessions.Count; i++)
             {
                 Session session = sessions[i];
-                if (flush)
-                {
-                    _sink.Begin(session.Endpoint, OutputSampleRate, OutputChannels,
-                        HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
-                }
-                _sink.End(session.Endpoint);
+                if (session.BeginSent) _sink.End(session.Endpoint);
             }
         }
+
+        private static string EndpointKey(IPEndPoint endpoint, string address) =>
+            endpoint + "|" + (address ?? string.Empty);
 
         private void SleepPrecisely(double seconds)
         {

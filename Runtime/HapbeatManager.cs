@@ -602,9 +602,11 @@ namespace Hapbeat
             // immediately undo this.
             _shouldStayConnected = false;
 
-            // Join the background mixer thread (if any) before tearing down the
-            // socket it sends through. No-op if nothing is streaming.
-            StopStream();
+            // App teardown cannot wait for the normal 300 ms empty-session linger:
+            // dispose the mixer and finish its endpoint sessions while the socket
+            // is still alive, then release the transport.
+            _endpointStreamMixer?.Dispose();
+            _endpointStreamMixer = null;
 
             if (_client == null)
                 return;
@@ -715,18 +717,6 @@ namespace Hapbeat
         public void StopStream()
         {
             _endpointStreamMixer?.StopAll();
-        }
-
-        /// <summary>
-        /// Stream flushing is endpoint-scoped: WifiUdp multi-stream sessions never
-        /// emit a broadcast BEGIN/END pair because it could stop an unrelated
-        /// endpoint's stream.
-        /// </summary>
-        public void StopStreamWithFlush(string target = null)
-        {
-            if (string.IsNullOrEmpty(target)) _endpointStreamMixer?.StopAll(flush: true);
-            else _endpointStreamMixer?.StopTarget(
-                HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup), flush: true);
         }
 
         /// <summary>True while at least one endpoint wire stream is active.</summary>
@@ -926,7 +916,6 @@ namespace Hapbeat
             // sending while Connect() closes and reopens the socket is exactly the
             // race the send paths' snapshots guard against. Stop it properly
             // instead of relying on that guard. No-op if nothing is streaming.
-            StopStream();
             _endpointStreamMixer?.Dispose();
             _endpointStreamMixer = null;
 
@@ -953,12 +942,11 @@ namespace Hapbeat
             _shouldStayConnected = false;
 
             // Join the background mixer thread (if any) before disposing the client
-            // it sends through — must happen first so StopStream's own final
-            // STREAM_END still has a live socket to go out on. Domain-reload /
+            // it sends through — must happen first so Dispose's final STREAM_END
+            // still has a live socket to go out on. Domain-reload /
             // Play-mode-stop safety: without this, the thread would keep running
             // (raw System.Threading.Thread isn't swept by Unity like a Coroutine is)
             // and reference a disposed HapbeatClient on its next iteration.
-            StopStream();
             _endpointStreamMixer?.Dispose();
             _endpointStreamMixer = null;
 

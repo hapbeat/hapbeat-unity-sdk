@@ -3,7 +3,7 @@
 Single self-contained reference so an AI coding agent can use this SDK correctly
 from one file. Unity package id: `com.hapbeat.sdk`. C# namespace: `Hapbeat`.
 
-- last-verified-against: package 0.3.0 (requires Unity `6000.0`+)
+- last-verified-against: package 0.5.0 (requires Unity `6000.0`+)
 - Source of truth is the code: public runtime API in `Runtime/HapbeatManager.cs`,
   the EventMap model in `Runtime/HapbeatEventMap.cs` + `Runtime/HapbeatEventEntry.cs`,
   WifiUdp routing / addressing in `Runtime/HapbeatClient.cs`, settings in
@@ -83,7 +83,6 @@ public void Discover(int timeoutMs = 3000)
 public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float gain = 1.0f, string target = null, bool loop = false)
 public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop)
 public void StopStream()
-public void StopStreamWithFlush(string target = null)
 ```
 Useful state / events:
 ```csharp
@@ -219,6 +218,9 @@ target the EventMap supplies.
   each source to 16 kHz stereo PCM16 and mixes matching sources per device endpoint.
   A source without a matching PONG-resolved endpoint returns a non-null playback in
   `Deferred` state and sends no stream packet until that endpoint is discovered.
+- An endpoint session stays armed for at least 300 ms after its last source leaves.
+  A source added during that linger joins the same session without another BEGIN.
+  After END, a new BEGIN to the same exact endpoint is delayed by at least 300 ms.
 - `IsConnected` only means the socket is open; use `AliveDeviceCount` / `OnPong` to
   know a device actually answered. StreamClip requires a matching PONG; one-shot
   commands can still use their broadcast fallback.
