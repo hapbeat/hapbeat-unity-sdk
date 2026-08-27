@@ -9,7 +9,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
-## [0.5.0-d1] - 2026-08-27
+## [0.5.0] - 2026-08-27
 
 ### Breaking changes（破壊的変更）
 
