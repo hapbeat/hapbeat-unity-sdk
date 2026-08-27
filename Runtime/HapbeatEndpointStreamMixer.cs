@@ -53,28 +53,25 @@ namespace Hapbeat
             public readonly float[] Samples;
             public readonly int SampleRate;
             public readonly int Channels;
-            public readonly bool Loop;
             public readonly string Target;
             public readonly HapbeatStreamPlayback Playback;
 
-            public Source(AudioClip clip, HapbeatStreamPlayback playback, bool loop, string target)
+            public Source(AudioClip clip, HapbeatStreamPlayback playback, string target)
             {
                 Samples = new float[clip.samples * clip.channels];
                 clip.GetData(Samples, 0); // Unity API: called by Add on the main thread.
                 SampleRate = clip.frequency;
                 Channels = clip.channels;
-                Loop = loop;
                 Target = target;
                 Playback = playback;
             }
 
             public Source(float[] samples, int sampleRate, int channels,
-                HapbeatStreamPlayback playback, bool loop, string target)
+                HapbeatStreamPlayback playback, string target)
             {
                 Samples = samples ?? throw new ArgumentNullException(nameof(samples));
                 SampleRate = sampleRate;
                 Channels = channels;
-                Loop = loop;
                 Target = target;
                 Playback = playback;
             }
@@ -217,8 +214,8 @@ namespace Hapbeat
             if (clip == null) return null;
             RefreshSendAheadSeconds();
             var playback = new HapbeatStreamPlayback(
-                baselineGain, initialGain, OnPlaybackStopRequested);
-            var source = new Source(clip, playback, loop, resolvedTarget);
+                baselineGain, initialGain, loop, OnPlaybackStopRequested);
+            var source = new Source(clip, playback, resolvedTarget);
             lock (_lock)
             {
                 ThrowIfDisposed();
@@ -235,8 +232,8 @@ namespace Hapbeat
         {
             RefreshSendAheadSeconds();
             var playback = new HapbeatStreamPlayback(
-                baselineGain, initialGain, OnPlaybackStopRequested);
-            var source = new Source(samples, sampleRate, channels, playback, loop, target);
+                baselineGain, initialGain, loop, OnPlaybackStopRequested);
+            var source = new Source(samples, sampleRate, channels, playback, target);
             lock (_lock)
             {
                 ThrowIfDisposed();
@@ -550,7 +547,7 @@ namespace Hapbeat
             {
                 if (position >= sourceFrames)
                 {
-                    if (!source.Loop) break;
+                    if (!source.Playback.Loop) break;
                     position %= sourceFrames;
                 }
                 int index = (int)position;
@@ -592,7 +589,7 @@ namespace Hapbeat
             for (int i = _sources.Count - 1; i >= 0; i--)
             {
                 Source source = _sources[i];
-                if (source.Loop || source.Playback.IsStopped) continue;
+                if (source.Playback.Loop || source.Playback.IsStopped) continue;
                 bool matchedAnySession = false;
                 bool completedEverywhere = true;
                 foreach (var session in _sessions.Values)

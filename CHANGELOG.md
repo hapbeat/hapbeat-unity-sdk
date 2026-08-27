@@ -16,6 +16,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 ### Changed（変更）
 
 - StreamClip の endpoint session は最後の source が抜けた後も最低 300 ms 維持し、その間に追加された source を BEGIN / END なしで同じ session へ合流させます。END 後に同じ exact endpoint へ再 BEGIN する場合も最低 300 ms 待機します。
+- `HapbeatStreamPlayback` に playback lifetime 内で安定した `Id` と、実行中に読み書きできる `Loop` を追加しました。`Loop` の変更は既存 endpoint の全 source cursor と、後から解決した endpoint の frame 0 cursor の両方へ反映されます。
 
 ### Fixed（修正）
 

@@ -101,8 +101,9 @@ public event Action<long> OnPong;  // round-trip time (us)
 ```
 
 `HapbeatStreamPlayback` (returned by `StreamAudioClip`) — write per frame to
-modulate one source: `float Gain { get; set; }`, `float Pan { get; set; }`,
-`float BaselineGain { get; }`, `void ApplyGainModulation(float)`,
+modulate one source: `string Id { get; }`, `float Gain { get; set; }`,
+`float Pan { get; set; }`, `bool Loop { get; set; }`, `float BaselineGain { get; }`,
+`void ApplyGainModulation(float)`,
 `bool IsStopped { get; }`, `bool IsActive { get; }`, `void Stop()`.
 
 ## Address Override (0.3.0) — one build, many headsets

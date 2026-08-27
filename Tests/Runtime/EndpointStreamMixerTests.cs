@@ -320,6 +320,66 @@ namespace Hapbeat.Tests
         }
 
         [Test]
+        public void PlaybackIdIsStable_AndRuntimeLoopControlsExistingEndpoint()
+        {
+            var sink = new RecordingSink();
+            bool endpointKnown = false;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, _ =>
+                endpointKnown
+                    ? new List<HapbeatClient.StreamEndpoint> { Endpoints[0] }
+                    : new List<HapbeatClient.StreamEndpoint>(),
+                () => 0.01f, _ => { });
+            var playback = mixer.AddSamples(ConstantSamples(0.25f), 16000, 1, 1f, 1f,
+                "*/pos_l_arm", false);
+            var other = mixer.AddSamples(ConstantSamples(0.25f), 16000, 1, 1f, 1f,
+                "*/pos_r_arm", false);
+
+            string id = playback.Id;
+            Assert.That(id, Has.Length.EqualTo(32));
+            Assert.AreEqual(id, playback.Id);
+            Assert.AreNotEqual(id, other.Id);
+            Assert.IsFalse(playback.Loop);
+            playback.Loop = true;
+            endpointKnown = true;
+            mixer.ReconcileEndpoints();
+
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 2);
+            Assert.IsTrue(playback.IsActive);
+            playback.Loop = false;
+            WaitFor(() => playback.IsStopped);
+        }
+
+        [Test]
+        public void LoopChangeAppliesToLateEndpoint_WithoutAffectingSibling()
+        {
+            var sink = new RecordingSink();
+            bool rightKnown = false;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, _ =>
+            {
+                var result = new List<HapbeatClient.StreamEndpoint> { Endpoints[0] };
+                if (rightKnown) result.Add(Endpoints[1]);
+                return result;
+            }, () => 0.01f, _ => { });
+            var sibling = mixer.AddSamples(ConstantSamples(0.25f), 16000, 1, 1f, 1f,
+                "*/*/group_1", true);
+            var mutable = mixer.AddSamples(ConstantSamples(0.5f), 16000, 1, 1f, 1f,
+                "*/*/group_1", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 2);
+
+            mutable.Loop = false;
+            rightKnown = true;
+            mixer.ReconcileEndpoints();
+
+            WaitFor(() => mutable.IsStopped && sink.CountData("192.0.2.11:7700") > 0);
+            Assert.IsTrue(sibling.Loop);
+            Assert.IsTrue(sibling.IsActive);
+            Assert.AreEqual(0, sink.CountEnds("192.0.2.10:7700"));
+            Assert.AreEqual(0, sink.CountEnds("192.0.2.11:7700"));
+            int rightDataBefore = sink.CountData("192.0.2.11:7700");
+            WaitFor(() => sink.CountData("192.0.2.11:7700") > rightDataBefore);
+        }
+
+        [Test]
         public void UnresolvedTarget_StopRemovesDeferredSourceWithoutScheduler()
         {
             var sink = new RecordingSink();

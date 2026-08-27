@@ -651,8 +651,8 @@ namespace Hapbeat
         /// scheduler thread (non-blocking for Unity's main thread).
         ///
         /// <para>
-        /// Returns a <see cref="HapbeatStreamPlayback"/> handle whose <c>Gain</c>
-        /// and <c>Pan</c> properties can be written each frame to modulate the
+        /// Returns a <see cref="HapbeatStreamPlayback"/> handle whose <c>Gain</c>,
+        /// <c>Pan</c>, and <c>Loop</c> properties can be written at runtime to modulate the
         /// stream continuously. This is the mechanism <see cref="HapbeatParameterBinding"/>
         /// uses to map game state (velocity, position, …) to haptic intensity /
         /// stereo balance in real time.
@@ -675,8 +675,8 @@ namespace Hapbeat
         /// override this per frame via the returned handle.</param>
         /// <param name="target">Optional target filter (e.g. "player_1/pos_neck").
         /// Null selects every resolved device endpoint without broadcasting STREAM_DATA.</param>
-        /// <param name="loop">If true, the source loops until
-        /// <see cref="HapbeatStreamPlayback.Stop"/> is called.</param>
+        /// <param name="loop">Initial value for <see cref="HapbeatStreamPlayback.Loop"/>.
+        /// It can be changed while the source is active.</param>
         /// <returns>Per-source handle for runtime control, or <c>null</c> when
         /// the client is disconnected or <paramref name="clip"/> is null. A
         /// non-null handle may report <see cref="HapbeatStreamPlaybackStatus.Deferred"/>

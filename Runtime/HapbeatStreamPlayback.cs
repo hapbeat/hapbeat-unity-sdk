@@ -21,7 +21,7 @@ namespace Hapbeat
 
     /// <summary>
     /// Handle to an active StreamClip playback. Exposes thread-safe runtime
-    /// controls (<see cref="Gain"/>, <see cref="Pan"/>) that
+    /// controls (<see cref="Gain"/>, <see cref="Pan"/>, <see cref="Loop"/>) that
     /// <see cref="HapbeatParameterBinding"/> can write to each frame for
     /// continuous haptic modulation.
     ///
@@ -49,6 +49,7 @@ namespace Hapbeat
     {
         private float _gain;
         private float _pan;
+        private int _loop;
         private int _stopped; // 0 = running, 1 = stopped
         private int _status = (int)HapbeatStreamPlaybackStatus.Deferred;
         private int _deferReason = (int)HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint;
@@ -64,16 +65,18 @@ namespace Hapbeat
         /// </summary>
         public float BaselineGain { get; }
 
-        internal HapbeatStreamPlayback(float baselineGain, Action onStopRequested = null)
-            : this(baselineGain, baselineGain, onStopRequested) { }
+        /// <summary>Stable logical-source identifier for this playback lifetime.</summary>
+        public string Id { get; }
 
         internal HapbeatStreamPlayback(float baselineGain, float initialGain,
-            Action onStopRequested = null)
+            bool loop, Action onStopRequested = null)
         {
+            Id = Guid.NewGuid().ToString("N");
             BaselineGain = baselineGain;
             _onStopRequested = onStopRequested;
             Volatile.Write(ref _gain, initialGain);
             Volatile.Write(ref _pan, 0f);
+            Volatile.Write(ref _loop, loop ? 1 : 0);
             Volatile.Write(ref _stopped, 0);
         }
 
@@ -108,6 +111,17 @@ namespace Hapbeat
         {
             get => Volatile.Read(ref _pan);
             set => Volatile.Write(ref _pan, Mathf.Clamp(value, -1f, 1f));
+        }
+
+        /// <summary>
+        /// Whether this logical source repeats after its final frame. Thread-safe;
+        /// changes apply to every existing endpoint cursor and to endpoints that
+        /// resolve later. Setting this after the playback has stopped cannot revive it.
+        /// </summary>
+        public bool Loop
+        {
+            get => Volatile.Read(ref _loop) != 0;
+            set => Volatile.Write(ref _loop, value ? 1 : 0);
         }
 
         /// <summary>True once <see cref="Stop"/> has been called (or the clip
