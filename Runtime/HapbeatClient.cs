@@ -36,13 +36,19 @@ namespace Hapbeat
     /// </summary>
     public class HapbeatClient : IDisposable
     {
-        /// <summary>Invoked on main thread when a PONG response is received.</summary>
+        /// <summary>
+        /// Invoked on the main thread for a PONG response to a local PING.
+        /// Unsolicited identity PONGs do not invoke this event because they have
+        /// no RTT or time-sync sample.
+        /// </summary>
         public event Action<long, long> OnPong; // (rttUs, serverTimeUs)
 
         /// <summary>
         /// Invoked on main thread for each PONG, with the source endpoint.
         /// Use this to track per-device liveness (broadcast may yield multiple
         /// PONGs per PING — one per responsive device).
+        /// The RTT argument is zero for an unsolicited identity PONG, which has
+        /// no corresponding PING to measure.
         /// </summary>
         public event Action<IPEndPoint, long> OnPongFrom; // (sender, rttUs)
 
@@ -1263,16 +1269,25 @@ namespace Hapbeat
             // no Hapbeat behind it (see BroadcastRoute).
             LockRouteFor(sender.Address);
 
-            // Calculate RTT using the original ping timestamp
-            long rttUs;
-            if (_pendingPings.TryRemove(seq, out long sentTimeUs))
+            // timestamp=0 is the contracts sentinel for an unsolicited identity
+            // update, not a response to any PING. It still reached this method so
+            // the endpoint/identity/liveness registries above are refreshed, but
+            // it must not consume a real pending PING (seq=0 is also a valid
+            // sequence number) or publish a bogus RTT/time-sync sample.
+            bool isUnsolicitedIdentityPong = timestamp == 0;
+            long rttUs = 0;
+            if (!isUnsolicitedIdentityPong)
             {
-                rttUs = nowUs - sentTimeUs;
-            }
-            else
-            {
-                // Fallback: use the timestamp from the pong payload
-                rttUs = nowUs - timestamp;
+                // Calculate RTT using the original ping timestamp
+                if (_pendingPings.TryRemove(seq, out long sentTimeUs))
+                {
+                    rttUs = nowUs - sentTimeUs;
+                }
+                else
+                {
+                    // Fallback: use the timestamp from the pong payload
+                    rttUs = nowUs - timestamp;
+                }
             }
 
             // broadcast 経路だと device 毎に複数 PONG が届く。送信元 endpoint を
@@ -1282,7 +1297,8 @@ namespace Hapbeat
             var capturedSender = new IPEndPoint(sender.Address, sender.Port);
             EnqueueMainThread(() =>
             {
-                OnPong?.Invoke(rttUs, serverTime);
+                if (!isUnsolicitedIdentityPong)
+                    OnPong?.Invoke(rttUs, serverTime);
                 OnPongFrom?.Invoke(capturedSender, rttUs);
             });
         }
