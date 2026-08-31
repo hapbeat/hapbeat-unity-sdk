@@ -53,7 +53,8 @@ namespace Hapbeat
             public readonly float[] Samples;
             public readonly int SampleRate;
             public readonly int Channels;
-            public readonly string Target;
+            public readonly string AuthoredTarget;
+            public string EffectiveTarget;
             public readonly HapbeatStreamPlayback Playback;
 
             public Source(AudioClip clip, HapbeatStreamPlayback playback, string target)
@@ -62,7 +63,7 @@ namespace Hapbeat
                 clip.GetData(Samples, 0); // Unity API: called by Add on the main thread.
                 SampleRate = clip.frequency;
                 Channels = clip.channels;
-                Target = target;
+                AuthoredTarget = target;
                 Playback = playback;
             }
 
@@ -72,7 +73,7 @@ namespace Hapbeat
                 Samples = samples ?? throw new ArgumentNullException(nameof(samples));
                 SampleRate = sampleRate;
                 Channels = channels;
-                Target = target;
+                AuthoredTarget = target;
                 Playback = playback;
             }
         }
@@ -114,6 +115,7 @@ namespace Hapbeat
 
         private readonly IHapbeatEndpointStreamPacketSink _sink;
         private readonly Func<string, List<HapbeatClient.StreamEndpoint>> _resolveEndpoints;
+        private readonly Func<string, string> _resolveEffectiveTarget;
         private readonly Func<float> _getSendAheadSeconds;
         private readonly Action<string> _log;
         private readonly Action _beforeNaturalFinalize;
@@ -134,10 +136,12 @@ namespace Hapbeat
 
         public HapbeatEndpointStreamMixer(Func<HapbeatClient> getClient,
             Func<string, List<HapbeatClient.StreamEndpoint>> resolveEndpoints,
+            Func<string, string> resolveEffectiveTarget,
             Func<float> getSendAheadSeconds, Action<string> log)
         {
             _sink = new ClientPacketSink(getClient);
             _resolveEndpoints = resolveEndpoints;
+            _resolveEffectiveTarget = resolveEffectiveTarget ?? throw new ArgumentNullException(nameof(resolveEffectiveTarget));
             _getSendAheadSeconds = getSendAheadSeconds;
             _sendAheadSeconds = Math.Max(0.01f, getSendAheadSeconds());
             _log = log;
@@ -148,10 +152,12 @@ namespace Hapbeat
         internal HapbeatEndpointStreamMixer(IHapbeatEndpointStreamPacketSink sink,
             Func<string, List<HapbeatClient.StreamEndpoint>> resolveEndpoints,
             Func<float> getSendAheadSeconds, Action<string> log,
-            Action beforeNaturalFinalize = null, Action beforeStopFinalize = null)
+            Action beforeNaturalFinalize = null, Action beforeStopFinalize = null,
+            Func<string, string> resolveEffectiveTarget = null)
         {
             _sink = sink;
             _resolveEndpoints = resolveEndpoints;
+            _resolveEffectiveTarget = resolveEffectiveTarget ?? (target => target);
             _getSendAheadSeconds = getSendAheadSeconds;
             _sendAheadSeconds = Math.Max(0.01f, getSendAheadSeconds());
             _log = log;
@@ -209,13 +215,13 @@ namespace Hapbeat
         }
 
         public HapbeatStreamPlayback Add(AudioClip clip, float baselineGain, float initialGain,
-            string resolvedTarget, bool loop)
+            string authoredTarget, bool loop)
         {
             if (clip == null) return null;
             RefreshSendAheadSeconds();
             var playback = new HapbeatStreamPlayback(
                 baselineGain, initialGain, loop, OnPlaybackStopRequested);
-            var source = new Source(clip, playback, resolvedTarget);
+            var source = new Source(clip, playback, authoredTarget);
             lock (_lock)
             {
                 ThrowIfDisposed();
@@ -255,6 +261,24 @@ namespace Hapbeat
                 ReconcileEndpointsLocked();
                 UpdatePlaybackStatesLocked();
                 StartThreadLocked();
+            }
+        }
+
+        /// <summary>
+        /// Re-resolves every logical source from its authored target after a runtime
+        /// address override changes. Returns true when any source remains deferred
+        /// and discovery should be asked for a fresh PONG.
+        /// </summary>
+        internal bool NotifyAddressOverrideChanged()
+        {
+            RefreshSendAheadSeconds();
+            lock (_lock)
+            {
+                if (_disposed) return false;
+                ReconcileEndpointsLocked();
+                UpdatePlaybackStatesLocked();
+                StartThreadLocked();
+                return HasDeferredSourcesLocked();
             }
         }
 
@@ -303,7 +327,8 @@ namespace Hapbeat
             {
                 Source source = _sources[i];
                 if (source.Playback.IsStopped) continue;
-                List<HapbeatClient.StreamEndpoint> endpoints = _resolveEndpoints(source.Target);
+                source.EffectiveTarget = _resolveEffectiveTarget(source.AuthoredTarget);
+                List<HapbeatClient.StreamEndpoint> endpoints = _resolveEndpoints(source.EffectiveTarget);
                 if (endpoints == null) continue;
                 for (int e = 0; e < endpoints.Count; e++)
                 {
@@ -397,6 +422,17 @@ namespace Hapbeat
                 if (matched) source.Playback.MarkActive();
                 else source.Playback.MarkDeferred(HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint);
             }
+        }
+
+        private bool HasDeferredSourcesLocked()
+        {
+            for (int i = 0; i < _sources.Count; i++)
+            {
+                Source source = _sources[i];
+                if (!source.Playback.IsStopped && source.Playback.Status == HapbeatStreamPlaybackStatus.Deferred)
+                    return true;
+            }
+            return false;
         }
 
         private void StartThreadLocked()
@@ -691,7 +727,7 @@ namespace Hapbeat
 
         private static bool SessionMatchesSource(Session session, Source source)
         {
-            return HapbeatClient.AddressMatches(source.Target, session.Address);
+            return HapbeatClient.AddressMatches(source.EffectiveTarget, session.Address);
         }
 
         private void EndAllSessionsLocked()

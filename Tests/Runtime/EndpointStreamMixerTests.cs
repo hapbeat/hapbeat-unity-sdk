@@ -107,6 +107,87 @@ namespace Hapbeat.Tests
         }
 
         [Test]
+        public void AddressOverrideChange_ReconcilesExistingSourceWithoutReplay()
+        {
+            var sink = new RecordingSink();
+            string effectiveTarget = Endpoints[0].Address;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
+            {
+                var endpoints = new List<HapbeatClient.StreamEndpoint>();
+                foreach (var endpoint in Endpoints)
+                    if (HapbeatClient.AddressMatches(target, endpoint.Address)) endpoints.Add(endpoint);
+                return endpoints;
+            }, () => 0.01f, _ => { }, resolveEffectiveTarget: _ => effectiveTarget);
+
+            var playback = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
+                "player_1/pos_l_arm/group_1", true);
+            var sibling = mixer.AddSamples(ConstantSamples(0.25f), 16000, 1, 1f, 1f,
+                "player_1/pos_l_arm/group_1", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
+
+            effectiveTarget = Endpoints[1].Address;
+            Assert.IsFalse(mixer.NotifyAddressOverrideChanged());
+            int oldDataCount = sink.CountData("192.0.2.10:7700");
+            WaitFor(() => sink.CountData("192.0.2.11:7700") > 0);
+            Thread.Sleep(30);
+
+            Assert.AreEqual(oldDataCount, sink.CountData("192.0.2.10:7700"),
+                "the old endpoint must stop receiving DATA immediately");
+            Assert.AreEqual(1, sink.CountBegins("192.0.2.11:7700"));
+            Assert.AreEqual(Endpoints[1].Address, sink.BeginTargets[sink.Begins.IndexOf("192.0.2.11:7700")],
+                "STREAM_BEGIN must use the PONG endpoint address without re-resolving it");
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, playback.Status);
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, sibling.Status,
+                "all matching logical sources must continue mixing after the route changes");
+
+            // Clearing the override restores the source's authored target without
+            // replacing its public handle or replaying the source.
+            effectiveTarget = Endpoints[0].Address;
+            Assert.IsFalse(mixer.NotifyAddressOverrideChanged());
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > oldDataCount);
+            Assert.AreEqual(1, sink.CountBegins("192.0.2.10:7700"));
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, playback.Status);
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, sibling.Status);
+        }
+
+        [Test]
+        public void AddressOverrideChange_ToUnknownEndpointDefersThenPongReconciles()
+        {
+            var sink = new RecordingSink();
+            string effectiveTarget = Endpoints[0].Address;
+            bool secondEndpointKnown = false;
+            using var mixer = new HapbeatEndpointStreamMixer(sink, target =>
+            {
+                var endpoints = new List<HapbeatClient.StreamEndpoint>();
+                if (HapbeatClient.AddressMatches(target, Endpoints[0].Address)) endpoints.Add(Endpoints[0]);
+                if (secondEndpointKnown && HapbeatClient.AddressMatches(target, Endpoints[1].Address)) endpoints.Add(Endpoints[1]);
+                return endpoints;
+            }, () => 0.01f, _ => { }, resolveEffectiveTarget: _ => effectiveTarget);
+
+            var playback = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f,
+                "player_1/pos_l_arm/group_1", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 0);
+
+            effectiveTarget = Endpoints[1].Address;
+            Assert.IsTrue(mixer.NotifyAddressOverrideChanged(),
+                "the manager must issue one discovery PING when the re-resolved source is deferred");
+            int oldDataCount = sink.CountData("192.0.2.10:7700");
+            Thread.Sleep(30);
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Deferred, playback.Status);
+            Assert.AreEqual(oldDataCount, sink.CountData("192.0.2.10:7700"));
+            Assert.IsEmpty(sink.Begins.FindAll(endpoint => endpoint == "192.0.2.11:7700"),
+                "no unresolved stream may fall back to broadcast");
+            Assert.IsEmpty(sink.DataEndpoints.FindAll(endpoint => endpoint == "192.0.2.11:7700"));
+
+            // This is the same reconciliation invoked by HapbeatManager's PONG callback.
+            secondEndpointKnown = true;
+            mixer.ReconcileEndpoints();
+            WaitFor(() => sink.CountData("192.0.2.11:7700") > 0);
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, playback.Status);
+            Assert.AreEqual(Endpoints[1].Address, sink.BeginTargets[sink.Begins.IndexOf("192.0.2.11:7700")]);
+        }
+
+        [Test]
         public void EndpointPackets_ContainOnlyTheirMatchingSource()
         {
             using var mixer = Create(out var sink);

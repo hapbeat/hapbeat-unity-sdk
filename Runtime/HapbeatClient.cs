@@ -257,8 +257,9 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Set the forced player/group applied to every outgoing target string
-        /// (Play/Stop/StopAll/StreamBegin) via <see cref="ResolveTarget(string)"/>.
+        /// Set the forced player/group applied to PLAY/STOP/STOP_ALL target strings
+        /// via <see cref="ResolveTarget(string)"/>. The endpoint stream mixer applies
+        /// the same values to each logical stream source before endpoint resolution.
         /// Pass -1 to disable either axis. Values outside 1..99 are normalized
         /// to -1 (disabled) — see <see cref="NormalizeOverride"/>.
         /// </summary>
@@ -551,7 +552,7 @@ namespace Hapbeat
             byte format, uint totalSamples, float gain, string target = null)
         {
             byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(
-                sampleRate, channels, format, totalSamples, gain, ResolveTarget(target));
+                sampleRate, channels, format, totalSamples, gain, target);
             SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_BEGIN, payload);
         }
 

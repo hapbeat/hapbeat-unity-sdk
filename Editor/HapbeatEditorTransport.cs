@@ -158,18 +158,17 @@ namespace Hapbeat.Editor
             if (_streamMixer != null)
                 StopStream();
 
-            string resolvedTarget = HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup);
-            HapbeatStreamPlayback playback = GetStreamMixer().Add(clip, gain, gain, resolvedTarget, loop);
+            HapbeatStreamPlayback playback = GetStreamMixer().Add(clip, gain, gain, target, loop);
             if (playback.IsActive)
             {
                 Debug.Log($"[Hapbeat:Editor] \u266a StreamClip \"{clip.name}\" " +
                           $"{clip.frequency}Hz/{clip.channels}ch gain={gain:F2} loop={loop} unicast" +
-                          (string.IsNullOrEmpty(resolvedTarget) ? "" : $" target={resolvedTarget}"));
+                          (string.IsNullOrEmpty(target) ? "" : $" target={target}"));
             }
             else
             {
                 Debug.LogWarning($"[Hapbeat:Editor] StreamClip deferred: no PONG-resolved endpoint matches " +
-                                 $"target '{resolvedTarget}'. STREAM_DATA was not broadcast.");
+                                 $"target '{target}'. STREAM_DATA was not broadcast.");
             }
         }
 
@@ -222,6 +221,7 @@ namespace Hapbeat.Editor
                 target => _client != null
                     ? _client.GetResolvedStreamEndpoints(target)
                     : new System.Collections.Generic.List<HapbeatClient.StreamEndpoint>(),
+                target => HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup),
                 ResolveSendAheadSeconds,
                 message => Debug.LogWarning($"[Hapbeat:Editor] {message}"));
             return _streamMixer;

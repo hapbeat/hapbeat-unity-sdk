@@ -481,6 +481,16 @@ namespace Hapbeat
             if (_client != null)
                 _client.SetAddressOverride(_overridePlayer, _overrideGroup);
 
+            // Logical stream sources retain their authored EventMap target. The mixer
+            // recalculates their effective target here, so changing the override moves
+            // an active source without requiring the caller to play it again.
+            if (_endpointStreamMixer != null && _endpointStreamMixer.NotifyAddressOverrideChanged() &&
+                _client != null && _client.IsConnected)
+            {
+                _client.SendPing();
+                _lastPingTime = Time.realtimeSinceStartup;
+            }
+
             // Persist only the axes the build leaves to this device. Writing a
             // forced axis would bake the build's value into PlayerPrefs, so a
             // later build that un-forces that axis would silently inherit it.
@@ -702,12 +712,11 @@ namespace Hapbeat
             // Streaming intentionally waits for a PONG-backed addressed
             // endpoint instead of broadcasting target-less STREAM_DATA. The returned
             // handle exposes Deferred/Active/Stopped through Status.
-            string resolvedTarget = HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup);
             HapbeatStreamPlayback playback = GetEndpointStreamMixer().Add(
-                clip, baselineGain, initialGain, resolvedTarget, loop);
+                clip, baselineGain, initialGain, target, loop);
             if (playback.Status == HapbeatStreamPlaybackStatus.Deferred)
             {
-                Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: no addressed WifiUdp endpoint matches target '{resolvedTarget}'. STREAM_DATA was not broadcast.");
+                Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: no addressed WifiUdp endpoint matches target '{target}'. STREAM_DATA was not broadcast.");
             }
             return playback;
         }
@@ -740,6 +749,7 @@ namespace Hapbeat
                 target => _client != null
                     ? _client.GetResolvedStreamEndpoints(target)
                     : new List<HapbeatClient.StreamEndpoint>(),
+                target => HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup),
                 () => _config != null ? _config.streamSendAheadSeconds : 0.05f,
                 Log);
             return _endpointStreamMixer;
