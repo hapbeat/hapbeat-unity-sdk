@@ -339,17 +339,19 @@ namespace Hapbeat.Editor
         internal static string FindKitManifest(string kitAssetDir)
         {
             if (string.IsNullOrEmpty(kitAssetDir)) return null;
+            // FindManifestForClip deliberately visits the Assets root as well.
+            // It has no trailing slash, so slicing by "Assets/" would throw.
+            if (kitAssetDir != "Assets" && !kitAssetDir.StartsWith("Assets/", System.StringComparison.Ordinal)) return null;
+            string kitAbs = kitAssetDir == "Assets" ? Application.dataPath :
+                Path.Combine(Application.dataPath, kitAssetDir.Substring("Assets/".Length));
             string kitName = Path.GetFileName(kitAssetDir);
 
             // Preferred: <kitname>-manifest.json (fast path).
             string preferred = $"{kitAssetDir}/{kitName}-manifest.json";
-            string preferredAbs = Path.Combine(Application.dataPath,
-                preferred.Substring("Assets/".Length));
+            string preferredAbs = Path.Combine(kitAbs, kitName + "-manifest.json");
             if (File.Exists(preferredAbs)) return preferred;
 
             // Fallback: any *manifest*.json in this kit folder (top-level only).
-            string kitAbs = Path.Combine(Application.dataPath,
-                kitAssetDir.Substring("Assets/".Length));
             if (!Directory.Exists(kitAbs)) return null;
             foreach (var file in Directory.GetFiles(kitAbs, "*manifest*.json",
                 SearchOption.TopDirectoryOnly))
