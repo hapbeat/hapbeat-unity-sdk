@@ -155,8 +155,8 @@ Package Manager > Hapbeat SDK > Samples からインポートできます。
 |---|---|---|
 | **BasicExample** | 最小シーン。キーボード（Space: CLIP 単発 / R: CLIP ループ / F: FIRE / S: 全停止 / C: Ping）で疎通確認 | なし |
 | **Showcase** | 1 シーン 5 ゾーンで主要な配線パターンを一通り体験（衝突 / Animator state / シーケンス / Tick / スクリプト）。キーボード + マウスのみ | なし |
-| **XR Helpers** | XR Interaction Toolkit 用のフィルタコンポーネント（`HapbeatXRGrabFilter` / `HapbeatXRSocketFilter`） | XRI |
-| **XRI Hand Demo (haptics add-on)** | XRI の *Hands Interaction Demo* シーンに触覚を後付け。EventMap と Kit のみ同梱し、配線は Editor コマンドで適用 | XRI + XR Helpers サンプル |
+| **XR Helpers** | XR Interaction Toolkit 用のフィルタと左右手ルーター（`HapbeatXRGrabFilter` / `HapbeatXRSocketFilter` / `HapbeatXRHandSideRouter`） | XRI |
+| **XRI Hand Demo (haptics add-on)** | XRI の *Hands Interaction Demo* シーンに触覚を後付け。左右別 EventMap と Kit を同梱し、配線は Editor コマンドで適用 | XRI + XR Helpers サンプル |
 | **VR Config Example** | Quest 等の実機で Address Override を設定・テスト再生する最小シーン。XRI 非依存（Input System のみ） | なし |
 
 ### XRI Hand Demo の使い方
@@ -167,6 +167,9 @@ XRI のサンプルシーンは Unity Companion License のため改変版を再
 2. `Hapbeat > Samples > Augment XRI Hand Demo` を実行
 
 冪等（既存のコンポーネント・同一の配線はスキップ）で、全操作は 1 つの Undo にまとまります。診断用の Event Logger 配線が必要な場合は `Hapbeat > Samples > Augment XRI Hand Demo (+ diagnostic Event Logger)` を使います。
+
+左右の手を個別に出力するため、左用・右用の EventMap は同じ触覚内容で、宛先だけ
+`player_1/pos_l_wrist` と `player_1/pos_r_wrist` に分かれます。BandWL を各アドレスへ設定してください。
 
 手順の詳細は [XRI Hand Demo クイックスタート](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/xri-handdemo-quickstart/) を参照。
 

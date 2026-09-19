@@ -9,6 +9,10 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
+### Added（追加）
+
+- XRI Hand Demo を左右の手ごとに独立した EventMap で出力できるようにしました。`HandsDemoLeftEventMap.asset` は `player_1/pos_l_wrist`、`HandsDemoRightEventMap.asset` は `player_1/pos_r_wrist` を対象にし、既存と同一の clip / gain / entry ID を使います。`HapbeatXRHandSideRouter` が XRI interactor の handedness から grab / poke / UI / snap を対応する Map へ振り分けます。
+
 ### Breaking changes（破壊的変更）
 
 - endpoint session を再 BEGIN して device buffer を flush していた `HapbeatManager.StopStreamWithFlush()` を削除しました。stream source は返された `HapbeatStreamPlayback.Stop()` で個別停止し、全 source の停止には `StopStream()` を使います。

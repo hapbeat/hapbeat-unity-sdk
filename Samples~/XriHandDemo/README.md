@@ -11,7 +11,8 @@ scene **you** import from the XRI package.
 
 | File | What it is |
 |---|---|
-| `HandsDemoEventMap.asset` | 10 haptic entries (grab / hold / UI click / scratch / snap / poke) |
+| `HandsDemoLeftEventMap.asset` | 10 left-hand haptic entries, routed to `player_1/pos_l_wrist` |
+| `HandsDemoRightEventMap.asset` | The same 10 entries for the right hand, routed to `player_1/pos_r_wrist` |
 | `Kit/hand-demo-kit/` | The 9 stream clips those entries play, plus the kit manifest |
 
 ## Setup
@@ -36,7 +37,10 @@ deciding which event to wire haptics to, noisy otherwise.
 - The command is idempotent: running it again adds nothing and reports what it skipped.
   Everything it does is a single Undo step.
 - It never edits XRI's own select events. The two `XR Helpers` filter components sit in
-  front of the socket interactions and expose hand-vs-socket specific events, which is
-  what the haptics are wired to.
+  front of the socket interactions. `HapbeatXRHandSideRouter` reads the XRI interactor's
+  handedness and routes every grab, poke, UI, and snap haptic to the matching EventMap.
+- Configure the two BandWL devices as `player_1/pos_l_wrist/group_1` and
+  `player_1/pos_r_wrist/group_1`. The two maps intentionally use the same clips and
+  gains; only their target differs.
 - If your XRI version renames or moves GameObjects, the command applies what it can and
   logs a warning naming every path it could not find — check the Console after running it.

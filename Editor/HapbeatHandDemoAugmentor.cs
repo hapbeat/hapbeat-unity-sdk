@@ -28,7 +28,7 @@ namespace Hapbeat.Editor
     /// the scene GameObjects by <see cref="Type.Name"/> at runtime, and their UnityEvents are
     /// edited through <see cref="SerializedObject"/> property paths, so no XRI assembly
     /// reference is needed and the package still compiles in projects without XRI.
-    /// The two <c>Samples~/XriHelpers</c> filter components are resolved the same way
+    /// The <c>Samples~/XriHelpers</c> helper components are resolved the same way
     /// (by full type name) because they only exist after that sample is imported.
     /// </para>
     ///
@@ -52,7 +52,7 @@ namespace Hapbeat.Editor
     /// </summary>
     public static class HapbeatHandDemoAugmentor
     {
-        // ── EventMap entry ids (stable GUIDs inside HandsDemoEventMap.asset) ─────
+        // ── EventMap entry ids (stable GUIDs inside both hand EventMaps) ─────────
 
         private const string EntryGrabLight      = "6a24573fe8fc487a88a93a3871cc25e7";
         private const string EntryGrabHeavy      = "c05efeacaf0a4da9a94728c70ea78824";
@@ -130,6 +130,7 @@ namespace Hapbeat.Editor
 
         private const string GrabFilterTypeName   = "Hapbeat.Samples.XriHelpers.HapbeatXRGrabFilter";
         private const string SocketFilterTypeName = "Hapbeat.Samples.XriHelpers.HapbeatXRSocketFilter";
+        private const string HandSideRouterTypeName = "Hapbeat.Samples.XriHelpers.HapbeatXRHandSideRouter";
 
         // XRI interactable events used as diagnostic sources (§2.2 of the recipe).
         private static readonly string[] DiagnosticEventFields =
@@ -150,20 +151,45 @@ namespace Hapbeat.Editor
         [MenuItem("Hapbeat/Samples/Augment XRI Hand Demo (+ diagnostic Event Logger)", false, 61)]
         private static void AugmentWithDiagnosticsMenu() => Run(true);
 
+        // Intended for maintainer automation with Unity's -executeMethod. It acts
+        // on the currently open XRI scene, saves only the dirty loaded scenes, and
+        // never enters Play mode.
+        public static void AugmentOpenSceneForAutomation()
+        {
+            Run(false);
+            for (var i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (scene.isLoaded && scene.isDirty)
+                    EditorSceneManager.SaveScene(scene);
+            }
+            AssetDatabase.SaveAssets();
+        }
+
         // ── Entry point ─────────────────────────────────────────────────────────
 
         private static void Run(bool includeDiagnostics)
         {
             var warnings = new List<string>();
 
-            var eventMap = LoadEventMap();
-            if (eventMap == null)
+            var maps = LoadEventMaps();
+            if (maps == null)
             {
                 EditorUtility.DisplayDialog(
                     "Hapbeat — XRI Hand Demo",
-                    "HandsDemoEventMap.asset was not found in this project.\n\n" +
+                    "HandsDemoLeftEventMap.asset and HandsDemoRightEventMap.asset were not found in this project.\n\n" +
                     "Import the Hapbeat SDK sample \"XRI Hand Demo (haptics add-on)\" from the " +
                     "Package Manager first, then run this command again.",
+                    "OK");
+                return;
+            }
+
+            if (FindTypeByFullName(HandSideRouterTypeName) == null)
+            {
+                EditorUtility.DisplayDialog(
+                    "Hapbeat — XRI Hand Demo",
+                    "HapbeatXRHandSideRouter was not found.\n\n" +
+                    "Import the Hapbeat SDK sample \"XR Helpers\" before augmenting the XRI Hand Demo.",
                     "OK");
                 return;
             }
@@ -192,8 +218,8 @@ namespace Hapbeat.Editor
             var stats = new Stats();
             var dirtyScenes = new HashSet<Scene>();
 
-            BuildComponents(eventMap, includeDiagnostics, stats, warnings, dirtyScenes);
-            BuildWiring(includeDiagnostics, stats, warnings, dirtyScenes);
+            BuildComponents(maps, includeDiagnostics, stats, warnings, dirtyScenes);
+            BuildWiring(maps, includeDiagnostics, stats, warnings, dirtyScenes);
 
             foreach (var scene in dirtyScenes)
             {
@@ -219,9 +245,15 @@ namespace Hapbeat.Editor
             public int WiresSkipped;
         }
 
+        private sealed class SideMaps
+        {
+            public HapbeatEventMap Left;
+            public HapbeatEventMap Right;
+        }
+
         // ── Component placement (§1 of the recipe) ───────────────────────────────
 
-        private static void BuildComponents(HapbeatEventMap map, bool includeDiagnostics,
+        private static void BuildComponents(SideMaps maps, bool includeDiagnostics,
                                             Stats stats, List<string> warnings, HashSet<Scene> dirty)
         {
             // Scene root: the manager. Only create the router GameObject when the
@@ -241,63 +273,284 @@ namespace Hapbeat.Editor
             }
 
             foreach (var path in TouchpadButtonPaths)
-                AddTrigger<HapbeatUnityEventTrigger>(path, map, EntryUiClickHeavy, stats, warnings, dirty);
+                AddSideTrigger<HapbeatUnityEventTrigger>(path, maps, EntryUiClickHeavy, stats, warnings, dirty);
 
             foreach (var path in PokeUiTogglePaths)
-                AddTrigger<HapbeatUnityEventTrigger>(path, map, EntryUiClickLight, stats, warnings, dirty);
+                AddSideTrigger<HapbeatUnityEventTrigger>(path, maps, EntryUiClickLight, stats, warnings, dirty);
             foreach (var path in PokeUiButtonPaths)
-                AddTrigger<HapbeatUnityEventTrigger>(path, map, EntryUiClickLight, stats, warnings, dirty);
-            AddTrigger<HapbeatUnityEventTrigger>(PokeUiDropdownPath, map, EntryUiClickLight, stats, warnings, dirty);
+                AddSideTrigger<HapbeatUnityEventTrigger>(path, maps, EntryUiClickLight, stats, warnings, dirty);
+            AddSideTrigger<HapbeatUnityEventTrigger>(PokeUiDropdownPath, maps, EntryUiClickLight, stats, warnings, dirty);
 
-            AddComponentWithFields<HapbeatTickEmitter>(SliderPath, stats, warnings, dirty, so =>
-            {
-                SetProperty(so, "_eventMap", map, warnings);
-                SetProperty(so, "_entryId", EntryUiClickLight, warnings);
-                SetProperty(so, "_gainMultiplier", 0.4f, warnings);
-                SetProperty(so, "_tickThreshold", 0.05f, warnings);
-            });
+            AddSideTick(SliderPath, maps, EntryUiClickLight, 0.4f, 0.05f, stats, warnings, dirty);
+            AddSideTick(ScrollPath, maps, EntryUiClickLight, 0.8f, 0.165f, stats, warnings, dirty);
 
-            AddComponentWithFields<HapbeatTickEmitter>(ScrollPath, stats, warnings, dirty, so =>
-            {
-                SetProperty(so, "_eventMap", map, warnings);
-                SetProperty(so, "_entryId", EntryUiClickLight, warnings);
-                SetProperty(so, "_gainMultiplier", 0.8f, warnings);
-                SetProperty(so, "_tickThreshold", 0.165f, warnings);
-            });
+            AddSideTrigger<HapbeatUnityEventTrigger>(GrabArrowPath, maps, EntryGrabLight, stats, warnings, dirty);
+            AddSideTrigger<HapbeatUnityEventTrigger>(GrabCylinderPath, maps, EntryGrabLight, stats, warnings, dirty);
 
-            AddTrigger<HapbeatUnityEventTrigger>(GrabArrowPath, map, EntryGrabLight, stats, warnings, dirty);
-            AddTrigger<HapbeatUnityEventTrigger>(GrabCylinderPath, map, EntryGrabLight, stats, warnings, dirty);
+            AddSideSequence(Cube1Path, maps, EntryGrabHoldLight, EntryGrabLight, EntryGrabLight, 0f, stats, warnings, dirty);
+            AddSideSequence(Cube2Path, maps, EntryGrabHoldLight, EntryGrabLight, EntryGrabLight, 0f, stats, warnings, dirty);
+            AddSideSequence(Cube3Path, maps, EntryGrabHoldMiddle, EntryGrabHeavy, EntryGrabHeavy, 0.1f, stats, warnings, dirty);
 
-            AddSequence(Cube1Path, map, EntryGrabHoldLight, EntryGrabLight, EntryGrabLight, 0f, stats, warnings, dirty);
-            AddSequence(Cube2Path, map, EntryGrabHoldLight, EntryGrabLight, EntryGrabLight, 0f, stats, warnings, dirty);
-            AddSequence(Cube3Path, map, EntryGrabHoldMiddle, EntryGrabHeavy, EntryGrabHeavy, 0.1f, stats, warnings, dirty);
+            AddSideSequence(PawnPath, maps, EntryScratch, null, null, 0f, stats, warnings, dirty);
+            AddSideBinding(PawnPath, PawnPath, maps, BindingPawn, null, null, stats, warnings, dirty);
 
-            AddSequence(PawnPath, map, EntryScratch, null, null, 0f, stats, warnings, dirty);
-            AddBinding(PawnPath, PawnPath, map, BindingPawn, null, null, stats, warnings, dirty);
-
-            AddSequence(SpherePath, map, EntryScratch, null, null, 0f, stats, warnings, dirty);
-            AddBinding(SpherePath, SpherePath, map, BindingFlatSphere, null, null, stats, warnings, dirty);
+            AddSideSequence(SpherePath, maps, EntryScratch, null, null, 0f, stats, warnings, dirty);
+            AddSideBinding(SpherePath, SpherePath, maps, BindingFlatSphere, null, null, stats, warnings, dirty);
 
             if (includeDiagnostics)
                 AddComponentWithFields<HapbeatEventLogger>(PokePath, stats, warnings, dirty, null);
 
-            AddTrigger<HapbeatUnityEventTrigger>(PokePath, map, EntryPushFeedback, stats, warnings, dirty);
+            AddSideTrigger<HapbeatUnityEventTrigger>(PokePath, maps, EntryPushFeedback, stats, warnings, dirty);
             // Inverted input range (min > max): the button travels downwards, so the
             // deepest press maps to the strongest gain. Effective values come from the
             // linked EventMap binding; these locals are the fallback.
-            AddBinding(PokePath, PokeInnerPath, map, BindingPokeButton, 0.0165f, 0f, stats, warnings, dirty);
+            AddSideBinding(PokePath, PokeInnerPath, maps, BindingPokeButton, 0.0165f, 0f, stats, warnings, dirty);
             // Second binding on the inner Button, as recorded in the reference scene.
             // HapbeatTriggerBase.FindBindingForEntry takes the first match in
             // Self -> Children -> Parent order, so this one is redundant in practice;
             // it is reproduced to stay faithful to the reference wiring.
-            AddBinding(PokeInnerPath, PokeInnerPath, map, BindingPokeButton, null, null, stats, warnings, dirty);
+            AddSideBinding(PokeInnerPath, PokeInnerPath, maps, BindingPokeButton, null, null, stats, warnings, dirty);
 
-            AddSequence(ShapePath, map, EntryGrabHoldHeavy, EntryGrabHeavy, EntryGrabHeavy, 0f, stats, warnings, dirty);
-            AddTrigger<HapbeatUnityEventTrigger>(SocketPath, map, EntrySnapFit, stats, warnings, dirty);
+            AddSideSequence(ShapePath, maps, EntryGrabHoldHeavy, EntryGrabHeavy, EntryGrabHeavy, 0f, stats, warnings, dirty);
+            AddSideTrigger<HapbeatUnityEventTrigger>(SocketPath, maps, EntrySnapFit, stats, warnings, dirty);
 
-            // XriHelpers sample components — present only after that sample is imported.
-            AddComponentByTypeName(ShapePath, GrabFilterTypeName, stats, warnings, dirty);
+            // The socket helper suppresses a known XRI re-hover after deselect.
             AddComponentByTypeName(SocketPath, SocketFilterTypeName, stats, warnings, dirty);
+        }
+
+        private static void AddSideTrigger<T>(string path, SideMaps maps, string entryId,
+                                              Stats stats, List<string> warnings, HashSet<Scene> dirty)
+            where T : HapbeatTriggerBase
+        {
+            var left = GetOrAddMappedTrigger<T>(path, maps.Left, entryId, stats, warnings, dirty, null);
+            var right = GetOrAddMappedTrigger<T>(path, maps.Right, entryId, stats, warnings, dirty, null);
+            EnsureHandSideRouter(path, stats, warnings, dirty);
+        }
+
+        private static void AddSideSequence(string path, SideMaps maps, string loopEntry,
+                                            string onStartEntry, string onStopEntry, float cooldown,
+                                            Stats stats, List<string> warnings, HashSet<Scene> dirty)
+        {
+            Action<SerializedObject> configure = so =>
+            {
+                SetProperty(so, "_onStartEntryId", onStartEntry ?? string.Empty, warnings);
+                SetProperty(so, "_onStopEntryId", onStopEntry ?? string.Empty, warnings);
+                if (cooldown > 0f) SetProperty(so, "_cooldown", cooldown, warnings);
+            };
+            GetOrAddMappedTrigger<HapbeatSequenceTrigger>(path, maps.Left, loopEntry, stats, warnings, dirty, configure);
+            GetOrAddMappedTrigger<HapbeatSequenceTrigger>(path, maps.Right, loopEntry, stats, warnings, dirty, configure);
+            EnsureHandSideRouter(path, stats, warnings, dirty);
+        }
+
+        private static void AddSideTick(string path, SideMaps maps, string entryId, float gainMultiplier,
+                                        float tickThreshold, Stats stats, List<string> warnings, HashSet<Scene> dirty)
+        {
+            Action<SerializedObject> configure = so =>
+            {
+                SetProperty(so, "_gainMultiplier", gainMultiplier, warnings);
+                SetProperty(so, "_tickThreshold", tickThreshold, warnings);
+            };
+            GetOrAddMappedTrigger<HapbeatTickEmitter>(path, maps.Left, entryId, stats, warnings, dirty, configure);
+            GetOrAddMappedTrigger<HapbeatTickEmitter>(path, maps.Right, entryId, stats, warnings, dirty, configure);
+            EnsureHandSideRouter(path, stats, warnings, dirty);
+        }
+
+        private static void AddSideBinding(string path, string sourceTransformPath, SideMaps maps, string bindingId,
+                                           float? inputMin, float? inputMax, Stats stats, List<string> warnings,
+                                           HashSet<Scene> dirty)
+        {
+            var sourceGo = FindByPath(sourceTransformPath);
+            if (sourceGo == null)
+                warnings.Add($"binding source Transform '{sourceTransformPath}' not found — binding on '{path}' left without a source.");
+
+            AddMappedBinding(path, sourceGo, maps.Left, bindingId, inputMin, inputMax, stats, warnings, dirty);
+            AddMappedBinding(path, sourceGo, maps.Right, bindingId, inputMin, inputMax, stats, warnings, dirty);
+        }
+
+        private static void AddMappedBinding(string path, GameObject sourceGo, HapbeatEventMap map, string bindingId,
+                                             float? inputMin, float? inputMax, Stats stats, List<string> warnings,
+                                             HashSet<Scene> dirty)
+        {
+            var go = FindByPath(path);
+            if (go == null)
+            {
+                warnings.Add($"GameObject '{path}' not found — skipped HapbeatParameterBinding.");
+                stats.ComponentsSkipped += 1;
+                return;
+            }
+
+            HapbeatParameterBinding binding = null;
+            foreach (var candidate in go.GetComponents<HapbeatParameterBinding>())
+            {
+                var candidateSo = new SerializedObject(candidate);
+                var candidateMap = candidateSo.FindProperty("_linkedEventMap").objectReferenceValue as HapbeatEventMap;
+                if (candidateMap == map)
+                {
+                    binding ??= candidate;
+                    continue;
+                }
+
+                // Replace only bindings created by the pre-side-routing version of
+                // this sample. Bindings for any other user-authored map remain.
+                if (candidateMap != null && candidateMap.name == "HandsDemoEventMap")
+                    Undo.DestroyObjectImmediate(candidate);
+            }
+
+            if (binding == null)
+            {
+                binding = Undo.AddComponent<HapbeatParameterBinding>(go);
+                stats.ComponentsAdded += 1;
+                dirty.Add(go.scene);
+            }
+            else
+            {
+                stats.ComponentsSkipped += 1;
+            }
+
+            var so = new SerializedObject(binding);
+            if (sourceGo != null) SetProperty(so, "_sourceTransform", sourceGo.transform, warnings);
+            SetProperty(so, "_linkedEventMap", map, warnings);
+            SetProperty(so, "_linkedBindingId", bindingId, warnings);
+            if (inputMin.HasValue) SetProperty(so, "_inputMin", inputMin.Value, warnings);
+            if (inputMax.HasValue) SetProperty(so, "_inputMax", inputMax.Value, warnings);
+            so.ApplyModifiedProperties();
+        }
+
+        private static T GetOrAddMappedTrigger<T>(string path, HapbeatEventMap map, string entryId,
+                                                   Stats stats, List<string> warnings, HashSet<Scene> dirty,
+                                                   Action<SerializedObject> configure)
+            where T : HapbeatTriggerBase
+        {
+            var go = FindByPath(path);
+            if (go == null)
+            {
+                warnings.Add($"GameObject '{path}' not found — skipped {typeof(T).Name}.");
+                stats.ComponentsSkipped += 1;
+                return null;
+            }
+
+            T result = null;
+            foreach (var candidate in go.GetComponents<T>())
+            {
+                var candidateSo = new SerializedObject(candidate);
+                var candidateMap = candidateSo.FindProperty("_eventMap").objectReferenceValue as HapbeatEventMap;
+                if (candidateMap == map)
+                {
+                    result = candidate;
+                    break;
+                }
+
+                // Version 0.5.0 and earlier put one all-target map directly on
+                // each sample object. This augmentor owns those components, so
+                // remove only that named legacy map before creating side-specific
+                // replacements. User-authored maps are never touched.
+                if (candidateMap != null && candidateMap.name == "HandsDemoEventMap")
+                    Undo.DestroyObjectImmediate(candidate);
+            }
+
+            if (result == null)
+            {
+                result = Undo.AddComponent<T>(go);
+                stats.ComponentsAdded += 1;
+                dirty.Add(go.scene);
+            }
+            else
+            {
+                stats.ComponentsSkipped += 1;
+            }
+
+            var so = new SerializedObject(result);
+            SetProperty(so, "_eventMap", map, warnings);
+            SetProperty(so, "_entryId", entryId, warnings);
+            configure?.Invoke(so);
+            so.ApplyModifiedProperties();
+            return result;
+        }
+
+        private static Component EnsureHandSideRouter(string path, Stats stats, List<string> warnings, HashSet<Scene> dirty)
+        {
+            var type = FindTypeByFullName(HandSideRouterTypeName);
+            if (type == null)
+            {
+                warnings.Add($"type '{HandSideRouterTypeName}' not found — import XR Helpers.");
+                stats.ComponentsSkipped += 1;
+                return null;
+            }
+
+            var go = FindByPath(path);
+            if (go == null) return null;
+            var existing = go.GetComponent(type);
+            if (existing != null) return existing;
+
+            var router = Undo.AddComponent(go, type);
+            stats.ComponentsAdded += 1;
+            dirty.Add(go.scene);
+            return router;
+        }
+
+        private static T FindMappedTrigger<T>(string path, HapbeatEventMap map) where T : HapbeatTriggerBase
+        {
+            var go = FindByPath(path);
+            if (go == null) return null;
+            foreach (var candidate in go.GetComponents<T>())
+            {
+                var so = new SerializedObject(candidate);
+                if (so.FindProperty("_eventMap").objectReferenceValue == map) return candidate;
+            }
+            return null;
+        }
+
+        private static Component FindHandSideRouter(string path)
+        {
+            var go = FindByPath(path);
+            var type = FindTypeByFullName(HandSideRouterTypeName);
+            return go != null && type != null ? go.GetComponent(type) : null;
+        }
+
+        private static void WireToComponent(Component source, string sourcePath, string eventField, Component target,
+                                            string method, PersistentListenerMode mode, string stringArgument,
+                                            Stats stats, List<string> warnings, HashSet<Scene> dirty)
+        {
+            if (source == null || target == null)
+            {
+                warnings.Add($"missing source or target for {sourcePath}.{eventField} -> {method}.");
+                stats.WiresSkipped += 1;
+                return;
+            }
+
+            var result = AddPersistentCall(source, eventField, target, method, mode, stringArgument, warnings);
+            if (result == WireResult.Added)
+            {
+                stats.WiresAdded += 1;
+                dirty.Add(source.gameObject.scene);
+            }
+            else
+            {
+                stats.WiresSkipped += 1;
+            }
+        }
+
+        private static void WireSourceToRouter(string sourcePath, string[] sourceComponentNames, string eventField,
+                                               string routerMethod, PersistentListenerMode mode, Stats stats,
+                                               List<string> warnings, HashSet<Scene> dirty)
+        {
+            var go = FindByPath(sourcePath);
+            var source = go != null ? FindComponentByTypeName(go, sourceComponentNames) : null;
+            WireToComponent(source, sourcePath, eventField, FindHandSideRouter(sourcePath), routerMethod, mode,
+                            null, stats, warnings, dirty);
+        }
+
+        private static void WireRouterToSideTriggers<T>(string routerPath, SideMaps maps, string leftEvent,
+                                                        string rightEvent, string targetPath, string method,
+                                                        PersistentListenerMode mode, Stats stats,
+                                                        List<string> warnings, HashSet<Scene> dirty)
+            where T : HapbeatTriggerBase
+        {
+            var leftTarget = FindMappedTrigger<T>(targetPath, maps.Left);
+            var rightTarget = FindMappedTrigger<T>(targetPath, maps.Right);
+            var router = FindHandSideRouter(routerPath);
+            WireToComponent(router, routerPath, leftEvent, leftTarget, method, mode, null, stats, warnings, dirty);
+            WireToComponent(router, routerPath, rightEvent, rightTarget, method, mode, null, stats, warnings, dirty);
         }
 
         private static void AddTrigger<T>(string path, HapbeatEventMap map, string entryId,
@@ -430,7 +683,69 @@ namespace Hapbeat.Editor
 
         // ── UnityEvent wiring (§2 of the recipe) ─────────────────────────────────
 
-        private static void BuildWiring(bool includeDiagnostics, Stats stats,
+        private static void BuildWiring(SideMaps maps, bool includeDiagnostics, Stats stats,
+                                        List<string> warnings, HashSet<Scene> dirty)
+        {
+            foreach (var path in TouchpadButtonPaths)
+            {
+                WireSourceToRouter(path, new[] { "Button" }, "m_OnClick", "RouteVoid", PersistentListenerMode.Void, stats, warnings, dirty);
+                WireRouterToSideTriggers<HapbeatUnityEventTrigger>(path, maps, "OnLeftRouted", "OnRightRouted", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+            }
+
+            foreach (var path in PokeUiTogglePaths)
+            {
+                WireSourceToRouter(path, new[] { "Toggle" }, "onValueChanged", "RouteVoid", PersistentListenerMode.Void, stats, warnings, dirty);
+                WireRouterToSideTriggers<HapbeatUnityEventTrigger>(path, maps, "OnLeftRouted", "OnRightRouted", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+            }
+            foreach (var path in PokeUiButtonPaths)
+            {
+                WireSourceToRouter(path, new[] { "Button" }, "m_OnClick", "RouteVoid", PersistentListenerMode.Void, stats, warnings, dirty);
+                WireRouterToSideTriggers<HapbeatUnityEventTrigger>(path, maps, "OnLeftRouted", "OnRightRouted", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+            }
+            WireSourceToRouter(PokeUiDropdownPath, new[] { "Dropdown", "TMP_Dropdown" }, "m_OnValueChanged", "RouteVoid", PersistentListenerMode.Void, stats, warnings, dirty);
+            WireRouterToSideTriggers<HapbeatUnityEventTrigger>(PokeUiDropdownPath, maps, "OnLeftRouted", "OnRightRouted", PokeUiDropdownPath, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+
+            WireSourceToRouter(SliderPath, new[] { "Slider" }, "m_OnValueChanged", "RouteFloat", PersistentListenerMode.EventDefined, stats, warnings, dirty);
+            WireRouterToSideTriggers<HapbeatTickEmitter>(SliderPath, maps, "OnLeftRoutedFloat", "OnRightRoutedFloat", SliderPath, "Fire", PersistentListenerMode.EventDefined, stats, warnings, dirty);
+            WireSourceToRouter(ScrollPath, new[] { "ScrollRect" }, "m_OnValueChanged", "RouteVector2", PersistentListenerMode.EventDefined, stats, warnings, dirty);
+            WireRouterToSideTriggers<HapbeatTickEmitter>(ScrollPath, maps, "OnLeftRoutedVector2", "OnRightRoutedVector2", ScrollPath, "Fire", PersistentListenerMode.EventDefined, stats, warnings, dirty);
+
+            foreach (var path in new[] { GrabArrowPath, GrabCylinderPath })
+            {
+                WireRouterToSideTriggers<HapbeatUnityEventTrigger>(path, maps, "OnLeftSelectEntered", "OnRightSelectEntered", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+                WireRouterToSideTriggers<HapbeatUnityEventTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+            }
+
+            foreach (var path in new[] { Cube1Path, Cube2Path, Cube3Path })
+            {
+                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectEntered", "OnRightSelectEntered", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
+            }
+
+            foreach (var path in new[] { PawnPath, SpherePath })
+            {
+                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftFirstSelectEntered", "OnRightFirstSelectEntered", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectEntered", "OnRightSelectEntered", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftLastSelectExited", "OnRightLastSelectExited", path, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
+                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
+            }
+
+            WireRouterToSideTriggers<HapbeatUnityEventTrigger>(PokePath, maps, "OnLeftFirstHoverEntered", "OnRightFirstHoverEntered", PokePath, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+            WireRouterToSideTriggers<HapbeatUnityEventTrigger>(PokePath, maps, "OnLeftLastHoverExited", "OnRightLastHoverExited", PokePath, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
+
+            var socketFilterType = FindTypeByFullName(SocketFilterTypeName);
+            var socketFilter = socketFilterType != null ? FindByPath(SocketPath)?.GetComponent(socketFilterType) : null;
+            WireToComponent(socketFilter, SocketPath, "OnInitialHoverEntered", FindHandSideRouter(ShapePath), "RouteVoid", PersistentListenerMode.Void, null, stats, warnings, dirty);
+            WireRouterToSideTriggers<HapbeatUnityEventTrigger>(ShapePath, maps, "OnLeftRouted", "OnRightRouted", SocketPath, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
+            WireRouterToSideTriggers<HapbeatSequenceTrigger>(ShapePath, maps, "OnLeftRouted", "OnRightRouted", ShapePath, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
+
+            if (!includeDiagnostics) return;
+            foreach (var field in DiagnosticEventFields)
+                Wire(PokePath, new[] { "XRSimpleInteractable" }, field, PokePath, typeof(HapbeatEventLogger),
+                     "LogEvent", PersistentListenerMode.String, StripSerializedPrefix(field), stats, warnings, dirty);
+        }
+
+        private static void BuildLegacyWiring(bool includeDiagnostics, Stats stats,
                                         List<string> warnings, HashSet<Scene> dirty)
         {
             // uGUI sources on the touchpad: Button.onClick -> Fire.
@@ -668,15 +983,23 @@ namespace Hapbeat.Editor
 
         // ── Lookup helpers ──────────────────────────────────────────────────────
 
-        private static HapbeatEventMap LoadEventMap()
+        private static SideMaps LoadEventMaps()
         {
-            foreach (var guid in AssetDatabase.FindAssets("HandsDemoEventMap t:HapbeatEventMap"))
+            HapbeatEventMap left = null;
+            HapbeatEventMap right = null;
+            foreach (var guid in AssetDatabase.FindAssets("HandsDemoLeftEventMap t:HapbeatEventMap"))
             {
                 var path = AssetDatabase.GUIDToAssetPath(guid);
                 var map = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(path);
-                if (map != null) return map;
+                if (map != null) { left = map; break; }
             }
-            return null;
+            foreach (var guid in AssetDatabase.FindAssets("HandsDemoRightEventMap t:HapbeatEventMap"))
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var map = AssetDatabase.LoadAssetAtPath<HapbeatEventMap>(path);
+                if (map != null) { right = map; break; }
+            }
+            return left != null && right != null ? new SideMaps { Left = left, Right = right } : null;
         }
 
         /// <summary>
