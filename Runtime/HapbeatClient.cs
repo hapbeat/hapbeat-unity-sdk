@@ -30,6 +30,19 @@ namespace Hapbeat
     }
 
     /// <summary>
+    /// Wire format used for one resolved stream endpoint. <see cref="V2"/> is the
+    /// lease/generation format (stream-session-v2.md). <see cref="Legacy"/> is the
+    /// pre-v2 format kept for devices on older firmware; it is chosen only when a
+    /// matched direct reply to this client's extended PING carries no HBS2 tail
+    /// (DEC-075) and is never inferred from a missing lease.
+    /// </summary>
+    internal enum StreamEndpointMode
+    {
+        V2 = 0,
+        Legacy = 1,
+    }
+
+    /// <summary>
     /// Internal WifiUdp client for communicating with Hapbeat devices.
     /// Discovery is broadcast; addressed commands and streams can use device unicast.
     /// Receive runs on a background thread; callbacks are queued for main-thread dispatch.
@@ -250,6 +263,23 @@ namespace Hapbeat
         private readonly Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint> _nextGenerationByLease =
             new Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint>();
         private readonly object _streamLeaseLock = new object();
+
+        // Endpoints classified as pre-v2 firmware (stream-session-v2.md "Legacy
+        // receiver fallback"), keyed like _streamLeases, value = echoed timestamp of
+        // the matched reply that classified them. Mutually exclusive with
+        // _streamLeases. Deliberately NOT cleared by RenewStreamLeaseIncarnation:
+        // legacy firmware has no lease, so focus changes / reacquire must not
+        // interrupt its streams. Cleared on Disconnect with other device knowledge.
+        private readonly ConcurrentDictionary<IPAddress, long> _legacyStreamEndpoints =
+            new ConcurrentDictionary<IPAddress, long>();
+
+        // Echoed timestamp of the last accepted matched reply per endpoint across
+        // BOTH classes, so a late reply can never flip v2<->legacy backwards.
+        // Guarded by _streamLeaseLock. Timestamps are strictly increasing for the
+        // client's lifetime, so this survives incarnation renewal safely.
+        private readonly Dictionary<IPAddress, long> _lastMatchedStreamReplyUs =
+            new Dictionary<IPAddress, long>();
+
         private ulong _clientIncarnation;
         private long _lastLeasePingTimestampUs;
         private long _nextAcceptedStreamLeaseRouteOrder;
@@ -339,6 +369,9 @@ namespace Hapbeat
             {
                 _pendingPings.Clear();
                 _streamLeases.Clear();
+                _legacyStreamEndpoints.Clear();
+                _lastMatchedStreamReplyUs.Clear();
+                _loggedStreamModes.Clear();
             }
 
             // Device knowledge is per-connection: after a reconnect (Wi-Fi change,
@@ -399,13 +432,16 @@ namespace Hapbeat
             public readonly IPEndPoint EndPoint;
             public readonly string Address;
             public readonly HapbeatProtocol.StreamLeaseIdentity Lease;
+            public readonly StreamEndpointMode Mode;
 
             public StreamEndpoint(IPEndPoint endPoint, string address,
-                HapbeatProtocol.StreamLeaseIdentity lease = default)
+                HapbeatProtocol.StreamLeaseIdentity lease = default,
+                StreamEndpointMode mode = StreamEndpointMode.V2)
             {
                 EndPoint = endPoint;
                 Address = address;
                 Lease = lease;
+                Mode = mode;
             }
         }
 
@@ -437,22 +473,50 @@ namespace Hapbeat
                         currentRoutes[pair.Value.Identity] = candidate;
                     }
                 }
+
+                // Pre-v2 endpoints have no lease. A v2 state for the same IP (even a
+                // deferred one) wins; the two maps are kept exclusive regardless.
+                foreach (var pair in _legacyStreamEndpoints)
+                {
+                    if (_streamLeases.ContainsKey(pair.Key)) continue;
+                    if (TryResolveStreamRoute(pair.Key, target, nowUs, ttlUs,
+                            out IPEndPoint legacyEndpoint, out string legacyAddress))
+                    {
+                        result.Add(new StreamEndpoint(legacyEndpoint, legacyAddress, default,
+                            StreamEndpointMode.Legacy));
+                    }
+                }
             }
 
             foreach (StreamLeaseRoute route in currentRoutes.Values)
             {
-                IPAddress ipAddress = route.Address;
-                if (!_knownDeviceIps.TryGetValue(ipAddress, out long lastPongUs) ||
-                    nowUs - lastPongUs > ttlUs)
-                    continue;
-                if (!_deviceAddresses.TryGetValue(ipAddress, out string address) ||
-                    string.IsNullOrEmpty(address) ||
-                    !AddressMatches(target, address))
-                    continue;
-                if (_knownDeviceEndpoints.TryGetValue(ipAddress, out IPEndPoint endpoint))
+                if (TryResolveStreamRoute(route.Address, target, nowUs, ttlUs,
+                        out IPEndPoint endpoint, out string address))
                     result.Add(new StreamEndpoint(endpoint, address, route.State.Identity));
             }
             return result;
+        }
+
+        private bool TryResolveStreamRoute(IPAddress ipAddress, string target, long nowUs, long ttlUs,
+            out IPEndPoint endpoint, out string address)
+        {
+            endpoint = null;
+            address = null;
+            if (!_knownDeviceIps.TryGetValue(ipAddress, out long lastPongUs) ||
+                nowUs - lastPongUs > ttlUs)
+                return false;
+            if (!_deviceAddresses.TryGetValue(ipAddress, out address) ||
+                string.IsNullOrEmpty(address) ||
+                !AddressMatches(target, address))
+                return false;
+            return _knownDeviceEndpoints.TryGetValue(ipAddress, out endpoint);
+        }
+
+        /// <summary>Whether a matched reply classified this device IP as pre-v2 firmware.</summary>
+        internal bool IsLegacyStreamEndpoint(IPAddress address)
+        {
+            lock (_streamLeaseLock)
+                return address != null && _legacyStreamEndpoints.ContainsKey(address);
         }
 
         /// <summary>
@@ -709,6 +773,42 @@ namespace Hapbeat
         {
             SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_END,
                 HapbeatProtocol.BuildStreamEndPayload(identity));
+        }
+
+        // Pre-v2 stream format for endpoints classified Legacy (stream-session-v2.md
+        // "Legacy receiver fallback"): header protocol_version=1, no identity
+        // envelope, empty END, exact unicast. No lease gating: legacy firmware has no
+        // lease. The mixer owns the per-endpoint 300 ms END->BEGIN guard, and
+        // OnStreamSessionBegan is deliberately not raised (it carries a v2 identity).
+
+        internal void SendLegacyStreamBeginTo(IPEndPoint endpoint, ushort sampleRate, byte channels,
+            byte format, uint totalSamples, float gain, string target = null)
+        {
+            byte[] payload = HapbeatProtocol.BuildLegacyStreamBeginPayload(
+                sampleRate, channels, format, totalSamples, gain, target);
+            SendLegacyStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_BEGIN, payload);
+        }
+
+        internal void SendLegacyStreamDataTo(IPEndPoint endpoint, uint byteOffset, byte[] audioData,
+            int dataOffset, int dataLength)
+        {
+            if (!IsConnected || _udpClient == null) return;
+            ushort seq = GetNextSequenceNumber();
+            byte[] packet = HapbeatProtocol.BuildLegacyStreamDataPacket(
+                seq, byteOffset, audioData, dataOffset, dataLength);
+            SendStreamRawTo(endpoint, packet);
+        }
+
+        internal void SendLegacyStreamEndTo(IPEndPoint endpoint)
+        {
+            SendLegacyStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
+        }
+
+        private void SendLegacyStreamPacketTo(IPEndPoint endpoint, byte commandType, byte[] payload)
+        {
+            ushort seq = GetNextSequenceNumber();
+            byte[] packet = HapbeatProtocol.BuildPacket(commandType, seq, payload);
+            SendStreamRawTo(endpoint, packet);
         }
 
         /// <summary>
@@ -1527,10 +1627,21 @@ namespace Hapbeat
             lock (_streamLeaseLock)
             {
                 HapbeatProtocol.StreamLeasePongTail tail = pong.StreamLease;
-                if (!tail.IsPresent)
+                if (tail.Status == HapbeatProtocol.StreamLeaseTailStatus.Malformed)
+                {
+                    // An HBS2 marker with a bad length/version/flags/reserved field
+                    // is neither a lease nor proof of pre-v2 firmware: no class or
+                    // lease change. Ordinary discovery fields still refresh.
+                    return default;
+                }
+
+                if (tail.Status == HapbeatProtocol.StreamLeaseTailStatus.Absent)
                 {
                     // A normal unextended PONG, including an unsolicited identity
-                    // update, is still permitted to refresh endpoint discovery.
+                    // update, is still permitted to refresh endpoint discovery. Only
+                    // a matched direct reply to our extended PING may classify the
+                    // endpoint as pre-v2 firmware.
+                    EvaluateLegacyPongLocked(sender, seq, pong);
                     return default;
                 }
 
@@ -1553,12 +1664,18 @@ namespace Hapbeat
                 }
 
                 bool hadExisting = _streamLeases.TryGetValue(sender.Address, out StreamLeaseState existing);
-                if (hadExisting && pong.Timestamp <= existing.LastAcceptedTimestampUs)
+                if ((hadExisting && pong.Timestamp <= existing.LastAcceptedTimestampUs) ||
+                    !IsNewerMatchedStreamReplyLocked(sender.Address, pong.Timestamp))
                 {
                     // A delayed PONG can be structurally valid but must never roll an
-                    // endpoint back to an older boot/ticket identity or route.
+                    // endpoint back to an older boot/ticket identity, route or class.
                     return new StreamLeaseUpdate(true, false, default);
                 }
+                _lastMatchedStreamReplyUs[sender.Address] = pong.Timestamp;
+                // A matched valid v2 reply clears pre-v2 classification (firmware
+                // update). The mixer ENDs a live legacy session in its old format.
+                _legacyStreamEndpoints.TryRemove(sender.Address, out _);
+                NoteStreamModeLocked(sender.Address, StreamEndpointMode.V2);
 
                 // A superseded writer must not turn a later periodic discovery
                 // reply into an implicit takeover. Only RenewStreamLeaseIncarnation
@@ -1578,12 +1695,60 @@ namespace Hapbeat
             }
         }
 
+        /// <summary>
+        /// Classify <paramref name="sender"/> as pre-v2 firmware from a PONG with no
+        /// HBS2 marker, but only when it is a matched direct reply to this client's
+        /// current extended PING (header seq + echoed timestamp, pending request of
+        /// the active incarnation) and newer than the last accepted matched reply for
+        /// that endpoint in either class. Unsolicited (timestamp 0), unmatched or late
+        /// replies never change the class.
+        /// </summary>
+        private void EvaluateLegacyPongLocked(IPEndPoint sender, ushort seq,
+            HapbeatProtocol.PongExtendedInfo pong)
+        {
+            if (pong.Timestamp == 0 ||
+                !_pendingPings.TryGetValue(seq, out PendingPing pending) ||
+                pending.TimestampUs != pong.Timestamp ||
+                pending.ClientIncarnation != _clientIncarnation ||
+                !IsNewerMatchedStreamReplyLocked(sender.Address, pong.Timestamp))
+                return;
+
+            _lastMatchedStreamReplyUs[sender.Address] = pong.Timestamp;
+            // A matched legacy reply clears the v2 lease (firmware rollback). This is
+            // not reported through OnStreamLeaseChanged: a legacy endpoint has no
+            // lease to be "unavailable", and the ordinary PONG callback already
+            // reconciles the mixer, which ENDs the v2 session in its old format.
+            _streamLeases.TryRemove(sender.Address, out _);
+            _legacyStreamEndpoints[sender.Address] = pong.Timestamp;
+            NoteStreamModeLocked(sender.Address, StreamEndpointMode.Legacy);
+        }
+
+        private bool IsNewerMatchedStreamReplyLocked(IPAddress address, long timestampUs) =>
+            !_lastMatchedStreamReplyUs.TryGetValue(address, out long last) || timestampUs > last;
+
+        // Last class logged per endpoint, so the mode line is printed once per class
+        // change rather than once per periodic PONG or lease renewal.
+        private readonly Dictionary<IPAddress, StreamEndpointMode> _loggedStreamModes =
+            new Dictionary<IPAddress, StreamEndpointMode>();
+
+        private void NoteStreamModeLocked(IPAddress address, StreamEndpointMode mode)
+        {
+            if (_loggedStreamModes.TryGetValue(address, out StreamEndpointMode logged) && logged == mode)
+                return;
+            _loggedStreamModes[address] = mode;
+            UnityEngine.Debug.Log(mode == StreamEndpointMode.Legacy
+                ? $"[Hapbeat] Stream mode legacy (pre-v2 firmware) at {address}"
+                : $"[Hapbeat] Stream mode v2 at {address}");
+        }
+
         private void RenewStreamLeaseIncarnation()
         {
             lock (_streamLeaseLock)
             {
                 _clientIncarnation = CreateClientIncarnation();
                 _pendingPings.Clear();
+                // Legacy classification survives: pre-v2 firmware has no lease, so
+                // focus/reacquire must not interrupt its streams.
                 _streamLeases.Clear();
             }
         }

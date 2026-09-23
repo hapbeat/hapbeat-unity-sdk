@@ -98,9 +98,24 @@ namespace Hapbeat
             public override string ToString() => $"{Lease}, generation={Generation}";
         }
 
+        /// <summary>
+        /// What follows the ordinary PONG fields (stream-session-v2.md "Legacy receiver
+        /// fallback"): nothing or non-HBS2 bytes (<see cref="Absent"/>; pre-v2 firmware
+        /// on a matched reply), an exact valid 32-byte tail (<see cref="Valid"/>), or an
+        /// HBS2 marker with a wrong length/version/flags/reserved field
+        /// (<see cref="Malformed"/>; ignored for classification and leases).
+        /// </summary>
+        internal enum StreamLeaseTailStatus
+        {
+            Absent = 0,
+            Valid = 1,
+            Malformed = 2,
+        }
+
         /// <summary>Validated HBS2 tail from a PONG, or <c>IsPresent=false</c>.</summary>
         internal readonly struct StreamLeasePongTail
         {
+            public readonly StreamLeaseTailStatus Status;
             public readonly bool IsPresent;
             public readonly bool IsLeaseValid;
             public readonly bool IsLeaseSuperseded;
@@ -111,6 +126,7 @@ namespace Hapbeat
             public StreamLeasePongTail(bool isPresent, bool isLeaseValid, bool isLeaseSuperseded,
                 ulong echoedClientIncarnation, StreamLeaseIdentity lease, uint highWaterTicket)
             {
+                Status = isPresent ? StreamLeaseTailStatus.Valid : StreamLeaseTailStatus.Absent;
                 IsPresent = isPresent;
                 IsLeaseValid = isLeaseValid;
                 IsLeaseSuperseded = isLeaseSuperseded;
@@ -118,6 +134,21 @@ namespace Hapbeat
                 Lease = lease;
                 HighWaterTicket = highWaterTicket;
             }
+
+            private StreamLeasePongTail(StreamLeaseTailStatus status)
+            {
+                Status = status;
+                IsPresent = false;
+                IsLeaseValid = false;
+                IsLeaseSuperseded = false;
+                EchoedClientIncarnation = 0;
+                Lease = default;
+                HighWaterTicket = 0;
+            }
+
+            /// <summary>An HBS2 marker whose tail is not a valid version-1 extension.</summary>
+            public static StreamLeasePongTail Malformed =>
+                new StreamLeasePongTail(StreamLeaseTailStatus.Malformed);
         }
 
         /// <summary>Parsed PONG fields plus its optional HBS2 lease tail.</summary>
@@ -411,6 +442,71 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Build a pre-v2 (legacy) STREAM_BEGIN payload for receivers that predate
+        /// stream-session-v2 (message-format.md "v1 stream"): no identity envelope.
+        /// Byte-identical to the SDK's pre-v2 builder. Sent with <see cref="BuildPacket"/>
+        /// (header protocol_version=1).
+        /// </summary>
+        internal static byte[] BuildLegacyStreamBeginPayload(ushort sampleRate, byte channels, byte format,
+            uint totalSamples, float gain, string target = null)
+        {
+            // Base: sample_rate(2) + channels(1) + format(1) + total_samples(4) + gain(4) = 12
+            byte[] targetBytes = string.IsNullOrEmpty(target) ? null : Encoding.UTF8.GetBytes(target);
+            int size = 12 + (targetBytes != null ? targetBytes.Length + 1 : 0);
+            byte[] payload = new byte[size];
+
+            int offset = 0;
+            WriteUInt16(payload, offset, sampleRate); offset += 2;
+            payload[offset] = channels; offset += 1;
+            payload[offset] = format; offset += 1;
+            WriteUInt32(payload, offset, totalSamples); offset += 4;
+            WriteFloat32(payload, offset, gain); offset += 4;
+
+            // Optional: target (null-terminated UTF-8)
+            if (targetBytes != null)
+            {
+                Buffer.BlockCopy(targetBytes, 0, payload, offset, targetBytes.Length);
+                offset += targetBytes.Length;
+                payload[offset] = 0;
+            }
+
+            return payload;
+        }
+
+        /// <summary>Build a pre-v2 (legacy) STREAM_DATA payload: offset(4) + data, no envelope.</summary>
+        internal static byte[] BuildLegacyStreamDataPayload(uint byteOffset, byte[] audioData,
+            int dataOffset, int dataLength)
+        {
+            byte[] payload = new byte[4 + dataLength]; // offset(4) + data
+            WriteUInt32(payload, 0, byteOffset);
+            Buffer.BlockCopy(audioData, dataOffset, payload, 4, dataLength);
+            return payload;
+        }
+
+        /// <summary>
+        /// Build a pre-v2 (legacy) STREAM_DATA packet stamped protocol_version=1. Uses
+        /// the stream MTU limit instead of the command packet limit.
+        /// </summary>
+        internal static byte[] BuildLegacyStreamDataPacket(ushort seq, uint byteOffset, byte[] audioData,
+            int dataOffset, int dataLength)
+        {
+            byte[] payload = BuildLegacyStreamDataPayload(byteOffset, audioData, dataOffset, dataLength);
+            int totalSize = HEADER_SIZE + payload.Length;
+            if (totalSize > MAX_STREAM_PACKET_SIZE)
+                throw new ArgumentException(
+                    $"Stream packet size {totalSize} exceeds MTU limit {MAX_STREAM_PACKET_SIZE} bytes.");
+
+            byte[] packet = new byte[totalSize];
+            WriteUInt16(packet, 0, MAGIC);
+            packet[2] = PROTOCOL_VERSION;
+            packet[3] = CMD_STREAM_DATA;
+            WriteUInt16(packet, 4, seq);
+            WriteUInt16(packet, 6, (ushort)payload.Length);
+            Buffer.BlockCopy(payload, 0, packet, HEADER_SIZE, payload.Length);
+            return packet;
+        }
+
+        /// <summary>
         /// Build a STREAM_DATA packet. Uses larger size limit than command packets.
         /// </summary>
         internal static byte[] BuildStreamPacket(byte commandType, ushort seq, byte[] payload)
@@ -548,13 +644,19 @@ namespace Hapbeat
         private static StreamLeasePongTail ParseStreamLeasePongTail(byte[] payload, int offset)
         {
             const int tailSize = 32;
-            if (payload.Length - offset != tailSize ||
-                payload[offset] != (byte)'H' || payload[offset + 1] != (byte)'B' ||
-                payload[offset + 2] != (byte)'S' || payload[offset + 3] != (byte)'2' ||
+            int remaining = payload.Length - offset;
+            bool hasMarker = remaining >= 4 &&
+                payload[offset] == (byte)'H' && payload[offset + 1] == (byte)'B' &&
+                payload[offset + 2] == (byte)'S' && payload[offset + 3] == (byte)'2';
+            // No marker after the ordinary fields (nothing follows, or other bytes
+            // do) is how pre-v2 firmware answers an extended PING.
+            if (!hasMarker)
+                return default;
+            if (remaining != tailSize ||
                 payload[offset + 4] != 1 || (payload[offset + 5] & ~0x03) != 0 ||
                 ReadUInt16(payload, offset + 6) != 0)
             {
-                return default;
+                return StreamLeasePongTail.Malformed;
             }
 
             byte flags = payload[offset + 5];

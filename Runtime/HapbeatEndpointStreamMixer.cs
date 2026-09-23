@@ -36,6 +36,19 @@ namespace Hapbeat
     }
 
     /// <summary>
+    /// Pre-v2 stream packets for endpoints classified <see cref="StreamEndpointMode.Legacy"/>
+    /// (stream-session-v2.md "Legacy receiver fallback"). Separate from the v2 sink so
+    /// v2-only sinks keep compiling; a sink without it leaves legacy endpoints unresolved.
+    /// </summary>
+    internal interface IHapbeatLegacyEndpointStreamPacketSink
+    {
+        void LegacyBegin(IPEndPoint endpoint, ushort sampleRate, byte channels, byte format,
+            uint totalSamples, float gain, string target);
+        void LegacyData(IPEndPoint endpoint, uint byteOffset, byte[] audioData, int dataOffset, int dataLength);
+        void LegacyEnd(IPEndPoint endpoint);
+    }
+
+    /// <summary>
     /// Owns logical StreamClip sources and produces one PCM16 stream per resolved
     /// device endpoint. STREAM_DATA cannot carry a target, so every packet is sent
     /// to its explicit PONG-backed endpoint and never falls back to broadcast.
@@ -48,6 +61,9 @@ namespace Hapbeat
         private const byte OutputChannels = 2;
         private const float ChunkSeconds = 0.01f;
         private const double EmptySessionLingerSeconds = 0.3;
+        // Pre-v2 firmware cannot reject an old END, so a legacy endpoint keeps the
+        // pre-v2 END->BEGIN guard. v2 endpoints have no cooldown (identity protects).
+        private const double LegacyEndToBeginCooldownSeconds = 0.3;
 
         private sealed class Source
         {
@@ -87,6 +103,7 @@ namespace Hapbeat
             public string WireTarget;
             public readonly HapbeatProtocol.StreamLeaseIdentity Lease;
             public readonly HapbeatProtocol.StreamSessionIdentity Identity;
+            public readonly StreamEndpointMode Mode;
             public readonly Dictionary<Source, double> Positions = new Dictionary<Source, double>();
             public readonly HashSet<Source> MatchingSources = new HashSet<Source>();
             public uint ByteOffset;
@@ -96,7 +113,8 @@ namespace Hapbeat
             public long EmptySinceTicks;
 
             public Session(IPEndPoint endpoint, string key, string address, string wireTarget,
-                HapbeatProtocol.StreamLeaseIdentity lease, HapbeatProtocol.StreamSessionIdentity identity)
+                HapbeatProtocol.StreamLeaseIdentity lease, HapbeatProtocol.StreamSessionIdentity identity,
+                StreamEndpointMode mode = StreamEndpointMode.V2)
             {
                 Endpoint = endpoint;
                 Key = key;
@@ -104,11 +122,13 @@ namespace Hapbeat
                 WireTarget = wireTarget;
                 Lease = lease;
                 Identity = identity;
+                Mode = mode;
             }
         }
 
         private readonly object _lock = new object();
-        private sealed class ClientPacketSink : IHapbeatEndpointStreamPacketSink
+        private sealed class ClientPacketSink : IHapbeatEndpointStreamPacketSink,
+            IHapbeatLegacyEndpointStreamPacketSink
         {
             private readonly Func<HapbeatClient> _getClient;
             public ClientPacketSink(Func<HapbeatClient> getClient) { _getClient = getClient; }
@@ -120,9 +140,20 @@ namespace Hapbeat
                 _getClient()?.SendStreamDataTo(endpoint, identity, byteOffset, audioData, dataOffset, dataLength);
             public void End(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity) =>
                 _getClient()?.SendStreamEndTo(endpoint, identity);
+            public void LegacyBegin(IPEndPoint endpoint, ushort sampleRate, byte channels, byte format,
+                uint totalSamples, float gain, string target) =>
+                _getClient()?.SendLegacyStreamBeginTo(endpoint, sampleRate, channels, format, totalSamples, gain, target);
+            public void LegacyData(IPEndPoint endpoint, uint byteOffset, byte[] audioData,
+                int dataOffset, int dataLength) =>
+                _getClient()?.SendLegacyStreamDataTo(endpoint, byteOffset, audioData, dataOffset, dataLength);
+            public void LegacyEnd(IPEndPoint endpoint) => _getClient()?.SendLegacyStreamEndTo(endpoint);
         }
 
         private readonly IHapbeatEndpointStreamPacketSink _sink;
+        private readonly IHapbeatLegacyEndpointStreamPacketSink _legacySink;
+        // Legacy session key -> Stopwatch ticks of its last legacy END (guard only).
+        private readonly Dictionary<string, long> _lastLegacyEndTicksByKey = new Dictionary<string, long>();
+        private bool _loggedLegacySinkUnsupported;
         private readonly Func<string, List<HapbeatClient.StreamEndpoint>> _resolveEndpoints;
         private readonly Func<string, string> _resolveEffectiveTarget;
         private readonly Func<IPEndPoint, HapbeatProtocol.StreamLeaseIdentity,
@@ -152,7 +183,9 @@ namespace Hapbeat
             Func<string, string> resolveEffectiveTarget,
             Func<float> getSendAheadSeconds, Action<string> log)
         {
-            _sink = new ClientPacketSink(getClient);
+            var clientSink = new ClientPacketSink(getClient);
+            _sink = clientSink;
+            _legacySink = clientSink;
             _resolveEndpoints = resolveEndpoints;
             _resolveEffectiveTarget = resolveEffectiveTarget ?? throw new ArgumentNullException(nameof(resolveEffectiveTarget));
             _allocateSessionIdentity = (endpoint, lease) =>
@@ -176,6 +209,7 @@ namespace Hapbeat
             Func<string, string> resolveEffectiveTarget = null)
         {
             _sink = sink;
+            _legacySink = sink as IHapbeatLegacyEndpointStreamPacketSink;
             _resolveEndpoints = resolveEndpoints;
             _resolveEffectiveTarget = resolveEffectiveTarget ?? (target => target);
             _allocateSessionIdentity = null;
@@ -354,6 +388,15 @@ namespace Hapbeat
                 for (int e = 0; e < endpoints.Count; e++)
                 {
                     var endpoint = endpoints[e];
+                    if (endpoint.Mode == StreamEndpointMode.Legacy && _legacySink == null)
+                    {
+                        if (!_loggedLegacySinkUnsupported)
+                        {
+                            _loggedLegacySinkUnsupported = true;
+                            _log("Stream sink has no legacy (pre-v2) support; legacy endpoints stay unresolved.");
+                        }
+                        continue;
+                    }
                     string key = EndpointKey(endpoint);
                     wanted[key] = endpoint;
                 }
@@ -392,7 +435,10 @@ namespace Hapbeat
                     Session candidate = unassignedSessions[s];
                     bool stableLease = candidate.Lease.IsValid && endpoint.Lease.IsValid &&
                         candidate.Lease.Equals(endpoint.Lease);
+                    // Route/address migration for lease-less sessions of the SAME
+                    // wire format only; a mode change must END the old session.
                     bool mockRouteMigration = !candidate.Lease.IsValid && !endpoint.Lease.IsValid &&
+                        candidate.Mode == endpoint.Mode &&
                         (candidate.Endpoint.Equals(endpoint.EndPoint) ||
                          string.Equals(candidate.Address, endpoint.Address, StringComparison.Ordinal));
                     if (stableLease || mockRouteMigration)
@@ -418,15 +464,19 @@ namespace Hapbeat
 
             // A device reboot or lease renewal changes its transport identity. End
             // the retired session with the identity it began under before a new
-            // session starts; never migrate an old END onto the new token.
+            // session starts; never migrate an old END onto the new token. A class
+            // change (legacy<->v2 after a firmware update/rollback) likewise ENDs the
+            // retired session immediately in its OLD format, without the idle linger.
             for (int s = unassignedSessions.Count - 1; s >= 0; s--)
             {
                 Session retired = unassignedSessions[s];
-                if (!retired.Lease.IsValid) continue;
                 for (int w = 0; w < remainingWanted.Count; w++)
                 {
                     HapbeatClient.StreamEndpoint replacement = wanted[remainingWanted[w]];
-                    if (!replacement.Lease.IsValid || retired.Lease.Equals(replacement.Lease)) continue;
+                    bool modeChange = retired.Mode != replacement.Mode;
+                    bool leaseChange = retired.Lease.IsValid && replacement.Lease.IsValid &&
+                        !retired.Lease.Equals(replacement.Lease);
+                    if (!modeChange && !leaseChange) continue;
                     if (!retired.Endpoint.Equals(replacement.EndPoint) &&
                         !string.Equals(retired.Address, replacement.Address, StringComparison.Ordinal)) continue;
 
@@ -444,14 +494,17 @@ namespace Hapbeat
                 // STREAM_DATA has no target. Even though this is an explicit direct
                 // endpoint, BEGIN must carry the PONG-resolved address so firmware
                 // rejects it if that IP was reassigned before the next PONG refresh.
+                // Legacy sessions carry no identity: pre-v2 firmware has no lease.
                 HapbeatProtocol.StreamSessionIdentity identity =
-                    AllocateSessionIdentity(endpoint.EndPoint, endpoint.Lease);
+                    endpoint.Mode == StreamEndpointMode.Legacy
+                        ? default
+                        : AllocateSessionIdentity(endpoint.EndPoint, endpoint.Lease);
                 if (endpoint.Lease.IsValid && !identity.IsValid)
                 {
                     continue;
                 }
                 var session = new Session(endpoint.EndPoint, key, endpoint.Address, endpoint.Address,
-                    endpoint.Lease, identity);
+                    endpoint.Lease, identity, endpoint.Mode);
                 session.Resolved = true;
                 _sessions.Add(key, session);
             }
@@ -622,7 +675,10 @@ namespace Hapbeat
                 pcm[i * 2] = (byte)value;
                 pcm[i * 2 + 1] = (byte)(value >> 8);
             }
-            _sink.Data(session.Endpoint, session.Identity, session.ByteOffset, pcm, 0, pcm.Length);
+            if (session.Mode == StreamEndpointMode.Legacy)
+                _legacySink.LegacyData(session.Endpoint, session.ByteOffset, pcm, 0, pcm.Length);
+            else
+                _sink.Data(session.Endpoint, session.Identity, session.ByteOffset, pcm, 0, pcm.Length);
             Interlocked.Add(ref _sentPcmBytes, pcm.Length);
             session.ByteOffset += (uint)pcm.Length;
         }
@@ -755,8 +811,19 @@ namespace Hapbeat
                     session.EmptySinceTicks = 0;
                     if (!session.BeginSent)
                     {
-                        _sink.Begin(session.Endpoint, session.Identity, OutputSampleRate, OutputChannels,
-                            HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
+                        if (session.Mode == StreamEndpointMode.Legacy)
+                        {
+                            // Sources for this endpoint stay deferred until the guard
+                            // elapses; other endpoints are unaffected.
+                            if (!LegacyCooldownElapsedLocked(session.Key, now)) continue;
+                            _legacySink.LegacyBegin(session.Endpoint, OutputSampleRate, OutputChannels,
+                                HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
+                        }
+                        else
+                        {
+                            _sink.Begin(session.Endpoint, session.Identity, OutputSampleRate, OutputChannels,
+                                HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
+                        }
                         session.BeginSent = true;
                     }
                     continue;
@@ -772,6 +839,12 @@ namespace Hapbeat
 
             if (remove == null) return;
             for (int i = 0; i < remove.Count; i++) _sessions.Remove(remove[i]);
+        }
+
+        private bool LegacyCooldownElapsedLocked(string legacyKey, long now)
+        {
+            if (!_lastLegacyEndTicksByKey.TryGetValue(legacyKey, out long endedAt)) return true;
+            return (now - endedAt) / (double)Stopwatch.Frequency >= LegacyEndToBeginCooldownSeconds;
         }
 
         private static bool SessionMatchesSource(Session session, Source source)
@@ -790,6 +863,21 @@ namespace Hapbeat
             session.EndSent = true;
             if (!_suppressSchedulerTerminationPackets)
             {
+                SendEndPacket(session);
+            }
+        }
+
+        private void SendEndPacket(Session session)
+        {
+            if (session.Mode == StreamEndpointMode.Legacy)
+            {
+                _legacySink.LegacyEnd(session.Endpoint);
+                // The guard is recorded only on a legacy END and keyed by the legacy
+                // session key, so v2 endpoints never inherit it.
+                _lastLegacyEndTicksByKey[session.Key] = Stopwatch.GetTimestamp();
+            }
+            else
+            {
                 _sink.End(session.Endpoint, session.Identity);
             }
         }
@@ -799,12 +887,14 @@ namespace Hapbeat
             for (int i = 0; i < sessions.Count; i++)
             {
                 Session session = sessions[i];
-                if (session.BeginSent) _sink.End(session.Endpoint, session.Identity);
+                if (session.BeginSent) SendEndPacket(session);
             }
         }
 
         private static string EndpointKey(HapbeatClient.StreamEndpoint endpoint) =>
-            endpoint.Lease.IsValid
+            endpoint.Mode == StreamEndpointMode.Legacy
+                ? "legacy|" + endpoint.EndPoint + "|" + (endpoint.Address ?? string.Empty)
+                : endpoint.Lease.IsValid
                 ? "lease:" + endpoint.Lease.DeviceBootId.ToString("X16") + ":" + endpoint.Lease.LeaseTicket
                 : endpoint.EndPoint + "|" + (endpoint.Address ?? string.Empty);
 
