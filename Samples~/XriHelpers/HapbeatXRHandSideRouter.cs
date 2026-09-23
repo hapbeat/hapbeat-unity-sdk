@@ -3,12 +3,14 @@
 // Splits an interactable's UnityEvents by the hand that caused them. It belongs
 // in XR Helpers rather than Runtime so the core SDK remains XRI-independent.
 
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.EventSystems;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
+using UnityEngine.XR.Interaction.Toolkit.Filtering;
 using UnityEngine.XR.Interaction.Toolkit.UI;
 
 namespace Hapbeat.Samples.XriHelpers
@@ -39,6 +41,9 @@ namespace Hapbeat.Samples.XriHelpers
         public UnityEvent OnLeftLastHoverExited;
         public UnityEvent OnRightLastHoverExited;
 
+        [Tooltip("For a physical poke button, route hover feedback only to the hand driving its XRPokeFilter. Other hovering/highlighted hands stay silent. Does not change XRI interaction logic.")]
+        public bool RouteHoverToPokingHand;
+
         [Header("Last active hand")]
         public UnityEvent OnLeftRouted;
         public UnityEvent OnRightRouted;
@@ -49,18 +54,21 @@ namespace Hapbeat.Samples.XriHelpers
 
         private XRBaseInteractable _interactable;
         private InteractorHandedness _lastHandedness = InteractorHandedness.None;
+        private readonly HashSet<IXRInteractor> _hovering = new HashSet<IXRInteractor>();
+        private readonly HashSet<IXRInteractor> _selecting = new HashSet<IXRInteractor>();
+        private XRPokeFilter _pokeFilter;
+        private InteractorHandedness _pokingHand;
 
         private void OnEnable()
         {
             _interactable = GetComponent<XRBaseInteractable>();
             if (_interactable == null)
                 return; // uGUI controls receive TrackedDeviceEventData instead of XRI selection events.
+            _pokeFilter = GetComponent<XRPokeFilter>();
             _interactable.selectEntered.AddListener(OnSelectEntered);
             _interactable.selectExited.AddListener(OnSelectExited);
-            _interactable.firstSelectEntered.AddListener(OnFirstSelectEntered);
-            _interactable.lastSelectExited.AddListener(OnLastSelectExited);
-            _interactable.firstHoverEntered.AddListener(OnFirstHoverEntered);
-            _interactable.lastHoverExited.AddListener(OnLastHoverExited);
+            _interactable.hoverEntered.AddListener(OnHoverEntered);
+            _interactable.hoverExited.AddListener(OnHoverExited);
         }
 
         private void OnDisable()
@@ -68,10 +76,56 @@ namespace Hapbeat.Samples.XriHelpers
             if (_interactable == null) return;
             _interactable.selectEntered.RemoveListener(OnSelectEntered);
             _interactable.selectExited.RemoveListener(OnSelectExited);
-            _interactable.firstSelectEntered.RemoveListener(OnFirstSelectEntered);
-            _interactable.lastSelectExited.RemoveListener(OnLastSelectExited);
-            _interactable.firstHoverEntered.RemoveListener(OnFirstHoverEntered);
-            _interactable.lastHoverExited.RemoveListener(OnLastHoverExited);
+            _interactable.hoverEntered.RemoveListener(OnHoverEntered);
+            _interactable.hoverExited.RemoveListener(OnHoverExited);
+            if (RouteHoverToPokingHand) SetPokingHand(InteractorHandedness.None);
+            else
+            {
+                if (ContainsHand(_hovering, InteractorHandedness.Left)) OnLeftLastHoverExited?.Invoke();
+                if (ContainsHand(_hovering, InteractorHandedness.Right)) OnRightLastHoverExited?.Invoke();
+            }
+            if (ContainsHand(_selecting, InteractorHandedness.Left)) OnLeftLastSelectExited?.Invoke();
+            if (ContainsHand(_selecting, InteractorHandedness.Right)) OnRightLastSelectExited?.Invoke();
+            _hovering.Clear();
+            _selecting.Clear();
+        }
+
+        private void LateUpdate()
+        {
+            if (!RouteHoverToPokingHand) return;
+            var hand = InteractorHandedness.None;
+            if (_pokeFilter != null && _pokeFilter.enabled && _pokeFilter.pokeStateData != null)
+            {
+                var data = _pokeFilter.pokeStateData.Value;
+                // XRI's filter/interaction strength is shared by all hovering hands.
+                // Its pokeInteractionPoint is the *source fingertip* position, so
+                // match that point to a current poke interactor, not last hover.
+                if (data.target != null && data.interactionStrength > 0f)
+                {
+                    var bestDistance = 0.005f * 0.005f;
+                    foreach (var interactor in _interactable.interactorsHovering)
+                    {
+                        if (!(interactor is IPokeStateDataProvider) || interactor.handedness == InteractorHandedness.None)
+                            continue;
+                        var tip = interactor.GetAttachTransform(_interactable);
+                        var distance = (tip.position - data.pokeInteractionPoint).sqrMagnitude;
+                        if (distance >= bestDistance) continue;
+                        bestDistance = distance;
+                        hand = interactor.handedness;
+                    }
+                }
+            }
+            SetPokingHand(hand);
+        }
+
+        private void SetPokingHand(InteractorHandedness hand)
+        {
+            if (_pokingHand == hand) return;
+            if (_pokingHand == InteractorHandedness.Left) OnLeftLastHoverExited?.Invoke();
+            if (_pokingHand == InteractorHandedness.Right) OnRightLastHoverExited?.Invoke();
+            _pokingHand = hand;
+            if (hand == InteractorHandedness.Left) OnLeftFirstHoverEntered?.Invoke();
+            if (hand == InteractorHandedness.Right) OnRightFirstHoverEntered?.Invoke();
         }
 
         public void RouteVoid()
@@ -112,17 +166,54 @@ namespace Hapbeat.Samples.XriHelpers
                 _lastHandedness = interactor.handedness;
         }
 
-        private void OnSelectEntered(SelectEnterEventArgs args) => InvokeFor(args.interactorObject, OnLeftSelectEntered, OnRightSelectEntered);
-        private void OnSelectExited(SelectExitEventArgs args) => InvokeFor(args.interactorObject, OnLeftSelectExited, OnRightSelectExited);
-        private void OnFirstSelectEntered(SelectEnterEventArgs args) => InvokeFor(args.interactorObject, OnLeftFirstSelectEntered, OnRightFirstSelectEntered);
-        private void OnLastSelectExited(SelectExitEventArgs args) => InvokeFor(args.interactorObject, OnLeftLastSelectExited, OnRightLastSelectExited);
-        private void OnFirstHoverEntered(HoverEnterEventArgs args) => InvokeFor(args.interactorObject, OnLeftFirstHoverEntered, OnRightFirstHoverEntered);
-        private void OnLastHoverExited(HoverExitEventArgs args) => InvokeFor(args.interactorObject, OnLeftLastHoverExited, OnRightLastHoverExited);
+        private void OnSelectEntered(SelectEnterEventArgs args)
+        {
+            var hand = args.interactorObject;
+            bool first = !ContainsHand(_selecting, hand.handedness);
+            if (!_selecting.Add(hand)) return;
+            RememberHand(hand);
+            InvokeFor(hand, OnLeftSelectEntered, OnRightSelectEntered);
+            if (first) InvokeFor(hand, OnLeftFirstSelectEntered, OnRightFirstSelectEntered);
+        }
+
+        private void OnSelectExited(SelectExitEventArgs args)
+        {
+            var hand = args.interactorObject;
+            if (!_selecting.Remove(hand)) return;
+            RememberHand(hand);
+            InvokeFor(hand, OnLeftSelectExited, OnRightSelectExited);
+            if (!ContainsHand(_selecting, hand.handedness))
+                InvokeFor(hand, OnLeftLastSelectExited, OnRightLastSelectExited);
+        }
+
+        private void OnHoverEntered(HoverEnterEventArgs args)
+        {
+            var hand = args.interactorObject;
+            bool first = !ContainsHand(_hovering, hand.handedness);
+            if (_hovering.Add(hand) && first && !RouteHoverToPokingHand)
+                InvokeFor(hand, OnLeftFirstHoverEntered, OnRightFirstHoverEntered);
+        }
+
+        private void OnHoverExited(HoverExitEventArgs args)
+        {
+            var hand = args.interactorObject;
+            if (_hovering.Remove(hand) && !ContainsHand(_hovering, hand.handedness) && !RouteHoverToPokingHand)
+                InvokeFor(hand, OnLeftLastHoverExited, OnRightLastHoverExited);
+            if (RouteHoverToPokingHand && !ContainsHand(_hovering, _pokingHand))
+                SetPokingHand(InteractorHandedness.None);
+        }
+
+        private static bool ContainsHand(HashSet<IXRInteractor> interactors, InteractorHandedness hand)
+        {
+            foreach (var interactor in interactors)
+                if (interactor.handedness == hand) return true;
+            return false;
+        }
 
         private void InvokeFor(IXRInteractor interactor, UnityEvent leftEvent, UnityEvent rightEvent)
         {
             if (interactor == null) return;
-            RememberHand(interactor);
+            // Hover is not ownership. Snap/value routing remembers select or UI input only.
             if (interactor.handedness == InteractorHandedness.Left) leftEvent?.Invoke();
             if (interactor.handedness == InteractorHandedness.Right) rightEvent?.Invoke();
         }

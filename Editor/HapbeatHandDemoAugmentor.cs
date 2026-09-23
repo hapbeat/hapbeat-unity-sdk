@@ -716,7 +716,7 @@ namespace Hapbeat.Editor
                 WireRouterToSideTriggers<HapbeatUnityEventTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
             }
 
-            foreach (var path in new[] { Cube1Path, Cube2Path, Cube3Path })
+            foreach (var path in new[] { Cube1Path, Cube2Path, Cube3Path, ShapePath })
             {
                 WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectEntered", "OnRightSelectEntered", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
                 WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
@@ -730,6 +730,9 @@ namespace Hapbeat.Editor
                 WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
             }
 
+            var pokeRouter = new SerializedObject(FindHandSideRouter(PokePath));
+            SetProperty(pokeRouter, "RouteHoverToPokingHand", true, warnings);
+            pokeRouter.ApplyModifiedProperties();
             WireRouterToSideTriggers<HapbeatUnityEventTrigger>(PokePath, maps, "OnLeftFirstHoverEntered", "OnRightFirstHoverEntered", PokePath, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
             WireRouterToSideTriggers<HapbeatUnityEventTrigger>(PokePath, maps, "OnLeftLastHoverExited", "OnRightLastHoverExited", PokePath, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
 

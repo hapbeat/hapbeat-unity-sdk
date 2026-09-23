@@ -24,6 +24,8 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Fixed（修正）
 
+- XRI Hand Demo の手別 hover/select の開始・終了を手ごとに数えるよう修正し、反対の手が hover 中でも離した手の触覚を停止します。物理 Poke Button は XRPokeFilter の押し込み元を参照して出力先を限定し、hover の表示だけで別の手へ圧力を送らないようにしました。
+- Snap Socket の物体に左右の grab/release と保持用 SequenceTrigger の配線を追加しました。既存の波形・強度・スナップ触覚・XRI の物理挙動は変更していません。
 - XRI Hand Demo の uGUI 操作で左右判定が失われてクリック触覚が出ない問題を修正しました。TrackedDeviceEventData から操作した手を取得し、手のない Socket は直前の手を保持します。
 - 同じ entry / binding ID を持つ左右 EventMap を同じ GameObject で使う場合、ParameterBinding が他方の手へ適用されないよう、EventMap の一致も検証します。
 - PONG で device address または UDP route が変化した際、END / BEGIN を交差経路へ送らず、session の byte cursor と source cursor を維持したまま exact unicast の送信先を移行するよう修正しました。
