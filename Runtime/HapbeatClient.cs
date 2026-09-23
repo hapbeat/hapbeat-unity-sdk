@@ -52,6 +52,15 @@ namespace Hapbeat
         /// </summary>
         public event Action<IPEndPoint, long> OnPongFrom; // (sender, rttUs)
 
+        /// <summary>
+        /// Invoked on the main thread only when an endpoint's usable stream lease
+        /// changes. Periodic PONGs for the same lease intentionally do not emit it.
+        /// </summary>
+        internal event Action<IPEndPoint, HapbeatProtocol.StreamLeaseIdentity, bool, bool> OnStreamLeaseChanged;
+
+        /// <summary>Invoked on the main thread after a v2 STREAM_BEGIN is queued for an exact endpoint.</summary>
+        internal event Action<IPEndPoint, HapbeatProtocol.StreamSessionIdentity> OnStreamSessionBegan;
+
         /// <summary>Invoked on main thread when an ERROR response is received.</summary>
         public event Action<ushort, string> OnError; // (errorCode, message)
 
@@ -155,15 +164,102 @@ namespace Hapbeat
         // Queue for dispatching callbacks to the main thread
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
 
-        // Track ping timestamps for RTT calculation
-        private readonly ConcurrentDictionary<ushort, long> _pendingPings =
-            new ConcurrentDictionary<ushort, long>();
+        private readonly struct PendingPing
+        {
+            public readonly long TimestampUs;
+            public readonly ulong ClientIncarnation;
+
+            public PendingPing(long timestampUs, ulong clientIncarnation)
+            {
+                TimestampUs = timestampUs;
+                ClientIncarnation = clientIncarnation;
+            }
+        }
+
+        private readonly struct StreamLeaseState : IEquatable<StreamLeaseState>
+        {
+            public readonly HapbeatProtocol.StreamLeaseIdentity Identity;
+            public readonly long LastAcceptedTimestampUs;
+            public readonly long RouteOrder;
+            public readonly ulong ClientIncarnation;
+            public readonly bool IsLeaseValid;
+            public readonly bool IsSuperseded;
+
+            public StreamLeaseState(HapbeatProtocol.StreamLeaseIdentity identity,
+                long lastAcceptedTimestampUs, long routeOrder, ulong clientIncarnation,
+                bool isLeaseValid, bool isSuperseded)
+            {
+                Identity = identity;
+                LastAcceptedTimestampUs = lastAcceptedTimestampUs;
+                RouteOrder = routeOrder;
+                ClientIncarnation = clientIncarnation;
+                IsLeaseValid = isLeaseValid;
+                IsSuperseded = isSuperseded;
+            }
+
+            public bool IsUsableFor(ulong incarnation) =>
+                IsLeaseValid && !IsSuperseded && ClientIncarnation == incarnation && Identity.IsValid;
+
+            public bool Equals(StreamLeaseState other) =>
+                Identity.Equals(other.Identity) && IsLeaseValid == other.IsLeaseValid &&
+                IsSuperseded == other.IsSuperseded && ClientIncarnation == other.ClientIncarnation;
+
+            public override bool Equals(object obj) =>
+                obj is StreamLeaseState other && Equals(other);
+
+            public override int GetHashCode() => Identity.GetHashCode();
+        }
+
+        private readonly struct StreamLeaseRoute
+        {
+            public readonly IPAddress Address;
+            public readonly StreamLeaseState State;
+
+            public StreamLeaseRoute(IPAddress address, StreamLeaseState state)
+            {
+                Address = address;
+                State = state;
+            }
+        }
+
+        private readonly struct StreamLeaseUpdate
+        {
+            public readonly bool DiscardPong;
+            public readonly bool Changed;
+            public readonly StreamLeaseState State;
+
+            public StreamLeaseUpdate(bool discardPong, bool changed, StreamLeaseState state)
+            {
+                DiscardPong = discardPong;
+                Changed = changed;
+                State = state;
+            }
+        }
+
+        // A broadcast PING receives one PONG from every endpoint. Pending requests
+        // must therefore survive the first reply long enough for every device to
+        // correlate its HBS2 tail, and are pruned only by age / sequence replacement.
+        private readonly ConcurrentDictionary<ushort, PendingPing> _pendingPings =
+            new ConcurrentDictionary<ushort, PendingPing>();
+
+        // Endpoint stream eligibility is deliberately separate from ordinary PONG
+        // liveness/address discovery. A PONG without a valid correlated HBS2 tail
+        // never becomes a stream destination and never erases an established lease.
+        private readonly ConcurrentDictionary<IPAddress, StreamLeaseState> _streamLeases =
+            new ConcurrentDictionary<IPAddress, StreamLeaseState>();
+        private readonly Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint> _nextGenerationByLease =
+            new Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint>();
+        private readonly object _streamLeaseLock = new object();
+        private ulong _clientIncarnation;
+        private long _lastLeasePingTimestampUs;
+        private long _nextAcceptedStreamLeaseRouteOrder;
 
         private bool _disposed;
 
         public HapbeatClient()
         {
             _stopwatch = Stopwatch.StartNew();
+            _clientIncarnation = CreateClientIncarnation();
         }
 
         /// <summary>
@@ -178,6 +274,7 @@ namespace Hapbeat
             // false after a socket error) that would otherwise leak the old socket
             // and leave its receive thread polling a field we replace below.
             Disconnect();
+            RenewStreamLeaseIncarnation();
 
             try
             {
@@ -238,7 +335,11 @@ namespace Hapbeat
 
             _udpClient = null;
             _receiveThread = null;
-            _pendingPings.Clear();
+            lock (_streamLeaseLock)
+            {
+                _pendingPings.Clear();
+                _streamLeases.Clear();
+            }
 
             // Device knowledge is per-connection: after a reconnect (Wi-Fi change,
             // AP switch, network hand-off) the previous IPs may belong to a
@@ -297,11 +398,14 @@ namespace Hapbeat
         {
             public readonly IPEndPoint EndPoint;
             public readonly string Address;
+            public readonly HapbeatProtocol.StreamLeaseIdentity Lease;
 
-            public StreamEndpoint(IPEndPoint endPoint, string address)
+            public StreamEndpoint(IPEndPoint endPoint, string address,
+                HapbeatProtocol.StreamLeaseIdentity lease = default)
             {
                 EndPoint = endPoint;
                 Address = address;
+                Lease = lease;
             }
         }
 
@@ -316,15 +420,37 @@ namespace Hapbeat
             var result = new List<StreamEndpoint>();
             long nowUs = GetLocalTimestampUs();
             long ttlUs = (long)(Math.Max(1f, _knownDeviceTtlSeconds) * 1_000_000d);
-            foreach (var pair in _knownDeviceIps)
+            var currentRoutes = new Dictionary<HapbeatProtocol.StreamLeaseIdentity, StreamLeaseRoute>();
+            lock (_streamLeaseLock)
             {
-                if (nowUs - pair.Value > ttlUs) continue;
-                if (!_deviceAddresses.TryGetValue(pair.Key, out string address) ||
+                // A device may move IP addresses before the old PONG entry reaches
+                // its discovery TTL. Select exactly one route for each lease before
+                // applying the caller's address filter; otherwise a dictionary's
+                // arbitrary enumeration order can let a stale route join a mixer.
+                foreach (var pair in _streamLeases)
+                {
+                    if (!pair.Value.IsUsableFor(_clientIncarnation)) continue;
+                    var candidate = new StreamLeaseRoute(pair.Key, pair.Value);
+                    if (!currentRoutes.TryGetValue(pair.Value.Identity, out StreamLeaseRoute current) ||
+                        IsMoreRecentStreamLeaseRoute(candidate, current))
+                    {
+                        currentRoutes[pair.Value.Identity] = candidate;
+                    }
+                }
+            }
+
+            foreach (StreamLeaseRoute route in currentRoutes.Values)
+            {
+                IPAddress ipAddress = route.Address;
+                if (!_knownDeviceIps.TryGetValue(ipAddress, out long lastPongUs) ||
+                    nowUs - lastPongUs > ttlUs)
+                    continue;
+                if (!_deviceAddresses.TryGetValue(ipAddress, out string address) ||
                     string.IsNullOrEmpty(address) ||
                     !AddressMatches(target, address))
                     continue;
-                if (_knownDeviceEndpoints.TryGetValue(pair.Key, out IPEndPoint endpoint))
-                    result.Add(new StreamEndpoint(endpoint, address));
+                if (_knownDeviceEndpoints.TryGetValue(ipAddress, out IPEndPoint endpoint))
+                    result.Add(new StreamEndpoint(endpoint, address, route.State.Identity));
             }
             return result;
         }
@@ -554,27 +680,35 @@ namespace Hapbeat
             SendDiscoveryPacket(HapbeatProtocol.CMD_CONNECT_STATUS, payload);
         }
 
-        internal void SendStreamBeginTo(IPEndPoint endpoint, ushort sampleRate, byte channels,
-            byte format, uint totalSamples, float gain, string target = null)
+        internal void SendStreamBeginTo(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
+            ushort sampleRate, byte channels, byte format, uint totalSamples, float gain, string target = null)
         {
-            byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(
+            if (!IsCurrentStreamLease(endpoint, identity.Lease)) return;
+            byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(identity,
                 sampleRate, channels, format, totalSamples, gain, target);
             SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_BEGIN, payload);
+            var capturedEndpoint = new IPEndPoint(endpoint.Address, endpoint.Port);
+            EnqueueMainThread(() => OnStreamSessionBegan?.Invoke(capturedEndpoint, identity));
         }
 
-        internal void SendStreamDataTo(IPEndPoint endpoint, uint byteOffset, byte[] audioData,
+        internal void SendStreamDataTo(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
+            uint byteOffset, byte[] audioData,
             int dataOffset, int dataLength)
         {
             if (!IsConnected || _udpClient == null) return;
+            if (!IsCurrentStreamLease(endpoint, identity.Lease)) return;
             ushort seq = GetNextSequenceNumber();
-            byte[] packet = HapbeatProtocol.BuildStreamDataPacket(
-                seq, byteOffset, audioData, dataOffset, dataLength);
+            byte[] payload = HapbeatProtocol.BuildStreamDataPayload(
+                identity, byteOffset, audioData, dataOffset, dataLength);
+            byte[] packet = HapbeatProtocol.BuildStreamPacket(
+                HapbeatProtocol.CMD_STREAM_DATA, seq, payload);
             SendStreamRawTo(endpoint, packet);
         }
 
-        internal void SendStreamEndTo(IPEndPoint endpoint)
+        internal void SendStreamEndTo(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity)
         {
-            SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
+            SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_END,
+                HapbeatProtocol.BuildStreamEndPayload(identity));
         }
 
         /// <summary>
@@ -584,15 +718,85 @@ namespace Hapbeat
         public ushort SendPing()
         {
             long timestampUs = GetLocalTimestampUs();
-            byte[] payload = HapbeatProtocol.BuildPingPayload(timestampUs);
             ushort seq = GetNextSequenceNumber();
-            byte[] packet = HapbeatProtocol.BuildPacket(HapbeatProtocol.CMD_PING, seq, payload);
+            byte[] packet;
+            lock (_streamLeaseLock)
+            {
+                // Ordering of lease adoption is defined by the echoed PING
+                // timestamp. Stopwatch resolution can yield equal values for two
+                // immediate requests, so make locally-issued lease PING timestamps
+                // strictly increasing without adding a network round trip.
+                if (timestampUs <= _lastLeasePingTimestampUs)
+                    timestampUs = _lastLeasePingTimestampUs + 1;
+                _lastLeasePingTimestampUs = timestampUs;
+                byte[] payload = HapbeatProtocol.BuildPingPayload(timestampUs, _clientIncarnation);
+                packet = HapbeatProtocol.BuildPacket(HapbeatProtocol.CMD_PING, seq, payload);
+                PrunePendingPingsLocked(timestampUs);
+                _pendingPings[seq] = new PendingPing(timestampUs, _clientIncarnation);
+            }
 
-            _pendingPings[seq] = timestampUs;
             // Fans out until a device answers — this is what finds a Hapbeat the
             // limited broadcast cannot reach on a multi-homed host.
             SendDiscoveryRaw(packet);
             return seq;
+        }
+
+        /// <summary>
+        /// Explicitly relinquish this application's current stream leases and request
+        /// new ones. This is the only local automatic action after a device reports
+        /// a lease as superseded; periodic discovery deliberately does not seize it.
+        /// </summary>
+        internal void ReacquireStreamLeases()
+        {
+            RenewStreamLeaseIncarnation();
+        }
+
+        internal bool TryGetPendingPing(ushort seq, out long timestampUs, out ulong clientIncarnation)
+        {
+            lock (_streamLeaseLock)
+            {
+                if (_pendingPings.TryGetValue(seq, out PendingPing pending))
+                {
+                    timestampUs = pending.TimestampUs;
+                    clientIncarnation = pending.ClientIncarnation;
+                    return true;
+                }
+            }
+
+            timestampUs = 0;
+            clientIncarnation = 0;
+            return false;
+        }
+
+        /// <summary>
+        /// Allocate the next monotonic generation for this exact device-issued
+        /// lease. The counter belongs to the transport client, not a mixer, so a
+        /// mixer disposal/recreation cannot reuse a generation under a live lease.
+        /// </summary>
+        internal bool TryAllocateStreamSessionIdentity(IPEndPoint endpoint,
+            HapbeatProtocol.StreamLeaseIdentity lease,
+            out HapbeatProtocol.StreamSessionIdentity identity)
+        {
+            lock (_streamLeaseLock)
+            {
+                if (!IsCurrentStreamLeaseLocked(endpoint, lease))
+                {
+                    identity = default;
+                    return false;
+                }
+
+                _nextGenerationByLease.TryGetValue(lease, out uint previous);
+                if (previous == uint.MaxValue)
+                {
+                    identity = default;
+                    return false;
+                }
+
+                uint generation = previous + 1;
+                _nextGenerationByLease[lease] = generation;
+                identity = new HapbeatProtocol.StreamSessionIdentity(lease, generation);
+                return true;
+            }
         }
 
         /// <summary>
@@ -948,7 +1152,7 @@ namespace Hapbeat
         private void SendStreamPacketTo(IPEndPoint endpoint, byte commandType, byte[] payload)
         {
             ushort seq = GetNextSequenceNumber();
-            byte[] packet = HapbeatProtocol.BuildPacket(commandType, seq, payload);
+            byte[] packet = HapbeatProtocol.BuildStreamPacket(commandType, seq, payload);
             SendStreamRawTo(endpoint, packet);
         }
 
@@ -1242,7 +1446,18 @@ namespace Hapbeat
 
         private void HandlePong(ushort seq, byte[] payload, IPEndPoint sender)
         {
-            var (timestamp, serverTime, _, address, _, _, _) = HapbeatProtocol.ParsePongExtended(payload);
+            HapbeatProtocol.PongExtendedInfo pong = HapbeatProtocol.ParsePongExtendedInfo(payload);
+            long timestamp = pong.Timestamp;
+            long serverTime = pong.ServerTime;
+            string address = pong.Address;
+            StreamLeaseUpdate leaseUpdate = EvaluateStreamLeasePong(sender, seq, pong);
+            if (leaseUpdate.DiscardPong)
+            {
+                // This was a correctly correlated PONG for a retired request (or
+                // an earlier incarnation). Do not let it roll endpoint address,
+                // route, liveness, RTT, or main-thread callbacks backwards.
+                return;
+            }
             long nowUs = GetLocalTimestampUs();
 
             // sender.Address (IPAddress) is immutable, so caching it directly here
@@ -1279,9 +1494,9 @@ namespace Hapbeat
             if (!isUnsolicitedIdentityPong)
             {
                 // Calculate RTT using the original ping timestamp
-                if (_pendingPings.TryRemove(seq, out long sentTimeUs))
+                if (TryGetPendingPing(seq, out long pendingTimestamp, out _))
                 {
-                    rttUs = nowUs - sentTimeUs;
+                    rttUs = nowUs - pendingTimestamp;
                 }
                 else
                 {
@@ -1300,7 +1515,134 @@ namespace Hapbeat
                 if (!isUnsolicitedIdentityPong)
                     OnPong?.Invoke(rttUs, serverTime);
                 OnPongFrom?.Invoke(capturedSender, rttUs);
+                if (leaseUpdate.Changed)
+                    OnStreamLeaseChanged?.Invoke(capturedSender, leaseUpdate.State.Identity,
+                        leaseUpdate.State.IsLeaseValid, leaseUpdate.State.IsSuperseded);
             });
+        }
+
+        private StreamLeaseUpdate EvaluateStreamLeasePong(IPEndPoint sender, ushort seq,
+            HapbeatProtocol.PongExtendedInfo pong)
+        {
+            lock (_streamLeaseLock)
+            {
+                HapbeatProtocol.StreamLeasePongTail tail = pong.StreamLease;
+                if (!tail.IsPresent)
+                {
+                    // A normal unextended PONG, including an unsolicited identity
+                    // update, is still permitted to refresh endpoint discovery.
+                    return default;
+                }
+
+                // HBS2 is only valid on a direct reply to the active incarnation.
+                // A reply for a prior Connect/reacquire must not update even ordinary
+                // address/liveness state after that session was retired.
+                if (tail.EchoedClientIncarnation != _clientIncarnation)
+                    return new StreamLeaseUpdate(true, false, default);
+
+                if (pong.Timestamp == 0 ||
+                    !_pendingPings.TryGetValue(seq, out PendingPing pending) ||
+                    pending.TimestampUs != pong.Timestamp ||
+                    pending.ClientIncarnation != tail.EchoedClientIncarnation)
+                {
+                    // HBS2 is a correlation-bearing direct reply. If any part of
+                    // that correlation is absent or mismatched (including a reply
+                    // delayed past pending-PING pruning), it cannot be allowed to
+                    // rewrite endpoint identity as an ordinary discovery PONG.
+                    return new StreamLeaseUpdate(true, false, default);
+                }
+
+                bool hadExisting = _streamLeases.TryGetValue(sender.Address, out StreamLeaseState existing);
+                if (hadExisting && pong.Timestamp <= existing.LastAcceptedTimestampUs)
+                {
+                    // A delayed PONG can be structurally valid but must never roll an
+                    // endpoint back to an older boot/ticket identity or route.
+                    return new StreamLeaseUpdate(true, false, default);
+                }
+
+                // A superseded writer must not turn a later periodic discovery
+                // reply into an implicit takeover. Only RenewStreamLeaseIncarnation
+                // (Connect/reconnect/foreground resume/explicit reacquire) clears
+                // this latch and permits a new lease to become usable.
+                bool keepSuperseded = hadExisting && existing.IsSuperseded &&
+                    existing.ClientIncarnation == pending.ClientIncarnation;
+                long routeOrder = ++_nextAcceptedStreamLeaseRouteOrder;
+                var next = keepSuperseded
+                    ? new StreamLeaseState(existing.Identity, pong.Timestamp,
+                        routeOrder, pending.ClientIncarnation, false, true)
+                    : new StreamLeaseState(tail.Lease, pong.Timestamp,
+                        routeOrder, pending.ClientIncarnation, tail.IsLeaseValid, tail.IsLeaseSuperseded);
+                bool changed = !hadExisting || !next.Equals(existing);
+                _streamLeases[sender.Address] = next;
+                return new StreamLeaseUpdate(false, changed, next);
+            }
+        }
+
+        private void RenewStreamLeaseIncarnation()
+        {
+            lock (_streamLeaseLock)
+            {
+                _clientIncarnation = CreateClientIncarnation();
+                _pendingPings.Clear();
+                _streamLeases.Clear();
+            }
+        }
+
+        private void PrunePendingPingsLocked(long nowUs)
+        {
+            const long maxPendingAgeUs = 15_000_000;
+            foreach (var pair in _pendingPings)
+            {
+                if (nowUs - pair.Value.TimestampUs > maxPendingAgeUs)
+                    _pendingPings.TryRemove(pair.Key, out _);
+            }
+        }
+
+        private bool IsCurrentStreamLease(IPEndPoint endpoint,
+            HapbeatProtocol.StreamLeaseIdentity identity)
+        {
+            lock (_streamLeaseLock)
+                return IsCurrentStreamLeaseLocked(endpoint, identity);
+        }
+
+        private bool IsCurrentStreamLeaseLocked(IPEndPoint endpoint,
+            HapbeatProtocol.StreamLeaseIdentity identity)
+        {
+            if (endpoint == null || !identity.IsValid ||
+                !_streamLeases.TryGetValue(endpoint.Address, out StreamLeaseState current) ||
+                !current.IsUsableFor(_clientIncarnation) || !current.Identity.Equals(identity))
+                return false;
+
+            // A new IP reporting this same lease retires the old route immediately
+            // for BEGIN/DATA eligibility. END deliberately bypasses this check so
+            // it can still stamp the original session identity on its old route.
+            foreach (var pair in _streamLeases)
+            {
+                if (pair.Key.Equals(endpoint.Address) ||
+                    !pair.Value.IsUsableFor(_clientIncarnation) ||
+                    !pair.Value.Identity.Equals(identity))
+                    continue;
+                if (IsMoreRecentStreamLeaseRoute(
+                    new StreamLeaseRoute(pair.Key, pair.Value),
+                    new StreamLeaseRoute(endpoint.Address, current)))
+                    return false;
+            }
+            return true;
+        }
+
+        private static bool IsMoreRecentStreamLeaseRoute(StreamLeaseRoute candidate,
+            StreamLeaseRoute current)
+        {
+            return candidate.State.LastAcceptedTimestampUs > current.State.LastAcceptedTimestampUs ||
+                (candidate.State.LastAcceptedTimestampUs == current.State.LastAcceptedTimestampUs &&
+                 candidate.State.RouteOrder > current.State.RouteOrder);
+        }
+
+        private static ulong CreateClientIncarnation()
+        {
+            byte[] bytes = Guid.NewGuid().ToByteArray();
+            ulong incarnation = BitConverter.ToUInt64(bytes, 0);
+            return incarnation == 0 ? 1UL : incarnation;
         }
 
         private void HandleError(byte[] payload)

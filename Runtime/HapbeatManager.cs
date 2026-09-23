@@ -570,6 +570,32 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Explicitly request fresh stream-lease ownership. This is required after
+        /// another writer supersedes this SDK instance; normal periodic discovery
+        /// never attempts to seize that ownership automatically.
+        /// </summary>
+        public void ReacquireStreamOwnership()
+        {
+            if (!EnsureConnected())
+                return;
+
+            _client.ReacquireStreamLeases();
+            // Reconcile before the fresh PING: revoking the old lease removes all
+            // old membership immediately, so the mixer cannot send another DATA
+            // chunk under an identity the caller just relinquished.
+            _endpointStreamMixer?.ReconcileEndpoints();
+            _client.SendPing();
+            _lastPingTime = Time.realtimeSinceStartup;
+            Log("Stream lease reacquisition requested.");
+        }
+
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (hasFocus && _client != null && _client.IsConnected)
+                ReacquireStreamOwnership();
+        }
+
+        /// <summary>
         /// Connect using WifiUdp. Opens broadcast discovery and command fallback.
         /// </summary>
         public void Connect()
@@ -671,8 +697,8 @@ namespace Hapbeat
         /// <para>
         /// <b>Multi-source mixing:</b> overlapping <c>StreamAudioClip</c> calls
         /// are float-mixed inside the SDK and sent as a single wire stream. The
-        /// existing wire protocol (STREAM_BEGIN/DATA/END) and device firmware
-        /// don't change. Each returned <see cref="HapbeatStreamPlayback"/> is
+        /// endpoint's v2 wire session carries a device-issued lease and generation.
+        /// Each returned <see cref="HapbeatStreamPlayback"/> is
         /// independent; <c>.Stop()</c> ends just that source.
         /// </para>
         /// <para>
@@ -877,6 +903,30 @@ namespace Hapbeat
                 // main-thread callback. Join newly discovered devices and replace
                 // sessions whose PONG address changed immediately.
                 _endpointStreamMixer?.ReconcileEndpoints();
+            };
+
+            client.OnStreamLeaseChanged += (sender, identity, isValid, isSuperseded) =>
+            {
+                if (isSuperseded)
+                {
+                    Debug.LogWarning($"[Hapbeat] Stream lease at {sender} was superseded. " +
+                                     "Call ReacquireStreamOwnership after the other writer has stopped.");
+                }
+                else if (isValid)
+                {
+                    Log($"Stream lease ready at {sender} ({identity}).");
+                }
+                else
+                {
+                    Debug.LogWarning($"[Hapbeat] Stream lease unavailable at {sender}; stream sources remain deferred.");
+                }
+
+                _endpointStreamMixer?.ReconcileEndpoints();
+            };
+
+            client.OnStreamSessionBegan += (sender, identity) =>
+            {
+                Log($"Stream BEGIN {sender} ({identity}).");
             };
 
             client.OnError += (errorCode, message) =>

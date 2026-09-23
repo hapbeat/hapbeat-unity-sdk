@@ -15,6 +15,12 @@ namespace Hapbeat
         /// <summary>Current protocol version.</summary>
         public const byte PROTOCOL_VERSION = 0x01;
 
+        /// <summary>
+        /// Protocol version used exclusively by STREAM_BEGIN/DATA/END. All other
+        /// commands, including PING/PONG, remain on <see cref="PROTOCOL_VERSION"/>.
+        /// </summary>
+        public const byte STREAM_PROTOCOL_VERSION = 0x02;
+
         /// <summary>Size of the common packet header in bytes.</summary>
         public const int HEADER_SIZE = 8;
 
@@ -42,6 +48,103 @@ namespace Hapbeat
 
         /// <summary>Max payload for STREAM_DATA to stay within typical MTU (1500 - IP/UDP headers - protocol header).</summary>
         public const int STREAM_DATA_MAX_PAYLOAD = 1400;
+
+        /// <summary>Size of the v2 identity envelope at the head of every stream payload.</summary>
+        public const int STREAM_SESSION_ENVELOPE_SIZE = 16;
+
+        /// <summary>
+        /// Device-issued stream lease. It is intentionally separate from a logical
+        /// source or Event ID: one endpoint mixer session owns one lease identity.
+        /// </summary>
+        internal readonly struct StreamLeaseIdentity : IEquatable<StreamLeaseIdentity>
+        {
+            public readonly ulong DeviceBootId;
+            public readonly uint LeaseTicket;
+
+            public StreamLeaseIdentity(ulong deviceBootId, uint leaseTicket)
+            {
+                DeviceBootId = deviceBootId;
+                LeaseTicket = leaseTicket;
+            }
+
+            public bool IsValid => DeviceBootId != 0 && LeaseTicket != 0;
+
+            public bool Equals(StreamLeaseIdentity other) =>
+                DeviceBootId == other.DeviceBootId && LeaseTicket == other.LeaseTicket;
+
+            public override bool Equals(object obj) =>
+                obj is StreamLeaseIdentity other && Equals(other);
+
+            public override int GetHashCode() =>
+                DeviceBootId.GetHashCode() * 397 ^ (int)LeaseTicket;
+
+            public override string ToString() => $"boot={DeviceBootId:X16}, ticket={LeaseTicket}";
+        }
+
+        /// <summary>Exact v2 identity stamped on a BEGIN/DATA/END packet.</summary>
+        internal readonly struct StreamSessionIdentity
+        {
+            public readonly StreamLeaseIdentity Lease;
+            public readonly uint Generation;
+
+            public StreamSessionIdentity(StreamLeaseIdentity lease, uint generation)
+            {
+                Lease = lease;
+                Generation = generation;
+            }
+
+            public bool IsValid => Lease.IsValid && Generation != 0;
+
+            public override string ToString() => $"{Lease}, generation={Generation}";
+        }
+
+        /// <summary>Validated HBS2 tail from a PONG, or <c>IsPresent=false</c>.</summary>
+        internal readonly struct StreamLeasePongTail
+        {
+            public readonly bool IsPresent;
+            public readonly bool IsLeaseValid;
+            public readonly bool IsLeaseSuperseded;
+            public readonly ulong EchoedClientIncarnation;
+            public readonly StreamLeaseIdentity Lease;
+            public readonly uint HighWaterTicket;
+
+            public StreamLeasePongTail(bool isPresent, bool isLeaseValid, bool isLeaseSuperseded,
+                ulong echoedClientIncarnation, StreamLeaseIdentity lease, uint highWaterTicket)
+            {
+                IsPresent = isPresent;
+                IsLeaseValid = isLeaseValid;
+                IsLeaseSuperseded = isLeaseSuperseded;
+                EchoedClientIncarnation = echoedClientIncarnation;
+                Lease = lease;
+                HighWaterTicket = highWaterTicket;
+            }
+        }
+
+        /// <summary>Parsed PONG fields plus its optional HBS2 lease tail.</summary>
+        internal readonly struct PongExtendedInfo
+        {
+            public readonly long Timestamp;
+            public readonly long ServerTime;
+            public readonly string DeviceName;
+            public readonly string Address;
+            public readonly string FirmwareVersion;
+            public readonly int VolumeLevel;
+            public readonly int VolumeWiper;
+            public readonly StreamLeasePongTail StreamLease;
+
+            public PongExtendedInfo(long timestamp, long serverTime, string deviceName, string address,
+                string firmwareVersion, int volumeLevel, int volumeWiper, StreamLeasePongTail streamLease)
+            {
+                Timestamp = timestamp;
+                ServerTime = serverTime;
+                DeviceName = deviceName;
+                Address = address;
+                FirmwareVersion = firmwareVersion;
+                VolumeLevel = volumeLevel;
+                VolumeWiper = volumeWiper;
+                StreamLease = streamLease;
+            }
+        }
 
         // Response types (Device → SDK)
         public const byte CMD_PONG = 0x11;
@@ -193,6 +296,22 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Build an extended PING that asks a receiver for a stream lease. This is
+        /// still a version-1 PING; a zero incarnation is invalid and never emitted.
+        /// </summary>
+        public static byte[] BuildPingPayload(long timestampUs, ulong clientIncarnation)
+        {
+            if (clientIncarnation == 0)
+                throw new ArgumentOutOfRangeException(nameof(clientIncarnation),
+                    "A stream lease request requires a nonzero client incarnation.");
+
+            byte[] payload = new byte[16];
+            WriteInt64(payload, 0, timestampUs);
+            WriteUInt64(payload, 8, clientIncarnation);
+            return payload;
+        }
+
+        /// <summary>
         /// Build payload for CONNECT_STATUS command.
         /// Sent periodically so the device can show connection state on its display/LED.
         /// Payload: connected(1) + group(1) + appName(null-term) + deviceName(null-term)
@@ -237,15 +356,16 @@ namespace Hapbeat
         /// <summary>
         /// Build payload for STREAM_BEGIN command.
         /// </summary>
-        public static byte[] BuildStreamBeginPayload(ushort sampleRate, byte channels, byte format,
-            uint totalSamples, float gain, string target = null)
+        internal static byte[] BuildStreamBeginPayload(StreamSessionIdentity identity,
+            ushort sampleRate, byte channels, byte format, uint totalSamples, float gain, string target = null)
         {
+            ValidateStreamIdentity(identity);
             // Base: sample_rate(2) + channels(1) + format(1) + total_samples(4) + gain(4) = 12
             byte[] targetBytes = string.IsNullOrEmpty(target) ? null : Encoding.UTF8.GetBytes(target);
-            int size = 12 + (targetBytes != null ? targetBytes.Length + 1 : 0);
+            int size = STREAM_SESSION_ENVELOPE_SIZE + 12 + (targetBytes != null ? targetBytes.Length + 1 : 0);
             byte[] payload = new byte[size];
 
-            int offset = 0;
+            int offset = WriteStreamIdentity(payload, identity);
             WriteUInt16(payload, offset, sampleRate); offset += 2;
             payload[offset] = channels; offset += 1;
             payload[offset] = format; offset += 1;
@@ -266,20 +386,38 @@ namespace Hapbeat
         /// <summary>
         /// Build payload for STREAM_DATA command.
         /// </summary>
-        public static byte[] BuildStreamDataPayload(uint byteOffset, byte[] audioData, int dataOffset, int dataLength)
+        internal static byte[] BuildStreamDataPayload(StreamSessionIdentity identity,
+            uint byteOffset, byte[] audioData, int dataOffset, int dataLength)
         {
-            byte[] payload = new byte[4 + dataLength]; // offset(4) + data
-            WriteUInt32(payload, 0, byteOffset);
-            Buffer.BlockCopy(audioData, dataOffset, payload, 4, dataLength);
+            ValidateStreamIdentity(identity);
+            if (audioData == null) throw new ArgumentNullException(nameof(audioData));
+            if (dataOffset < 0 || dataLength < 0 || dataOffset > audioData.Length - dataLength)
+                throw new ArgumentOutOfRangeException(nameof(dataLength));
+
+            byte[] payload = new byte[STREAM_SESSION_ENVELOPE_SIZE + 4 + dataLength];
+            int offset = WriteStreamIdentity(payload, identity);
+            WriteUInt32(payload, offset, byteOffset);
+            Buffer.BlockCopy(audioData, dataOffset, payload, offset + 4, dataLength);
+            return payload;
+        }
+
+        /// <summary>Build the v2 END payload, which is precisely its identity envelope.</summary>
+        internal static byte[] BuildStreamEndPayload(StreamSessionIdentity identity)
+        {
+            ValidateStreamIdentity(identity);
+            byte[] payload = new byte[STREAM_SESSION_ENVELOPE_SIZE];
+            WriteStreamIdentity(payload, identity);
             return payload;
         }
 
         /// <summary>
         /// Build a STREAM_DATA packet. Uses larger size limit than command packets.
         /// </summary>
-        public static byte[] BuildStreamDataPacket(ushort seq, uint byteOffset, byte[] audioData, int dataOffset, int dataLength)
+        internal static byte[] BuildStreamPacket(byte commandType, ushort seq, byte[] payload)
         {
-            byte[] payload = BuildStreamDataPayload(byteOffset, audioData, dataOffset, dataLength);
+            if (commandType != CMD_STREAM_BEGIN && commandType != CMD_STREAM_DATA && commandType != CMD_STREAM_END)
+                throw new ArgumentOutOfRangeException(nameof(commandType), "Only stream commands use protocol version 2.");
+            if (payload == null) throw new ArgumentNullException(nameof(payload));
             int totalSize = HEADER_SIZE + payload.Length;
             if (totalSize > MAX_STREAM_PACKET_SIZE)
                 throw new ArgumentException(
@@ -287,8 +425,8 @@ namespace Hapbeat
 
             byte[] packet = new byte[totalSize];
             WriteUInt16(packet, 0, MAGIC);
-            packet[2] = PROTOCOL_VERSION;
-            packet[3] = CMD_STREAM_DATA;
+            packet[2] = STREAM_PROTOCOL_VERSION;
+            packet[3] = commandType;
             WriteUInt16(packet, 4, seq);
             WriteUInt16(packet, 6, (ushort)payload.Length);
             Buffer.BlockCopy(payload, 0, packet, HEADER_SIZE, payload.Length);
@@ -316,9 +454,11 @@ namespace Hapbeat
                     $"Invalid magic bytes: 0x{magic:X4}, expected 0x{MAGIC:X4}.");
 
             byte version = data[2];
-            if (version != PROTOCOL_VERSION)
+            bool isV2Stream = version == STREAM_PROTOCOL_VERSION &&
+                (data[3] == CMD_STREAM_BEGIN || data[3] == CMD_STREAM_DATA || data[3] == CMD_STREAM_END);
+            if (version != PROTOCOL_VERSION && !isV2Stream)
                 throw new ArgumentException(
-                    $"Unsupported protocol version: {version}, expected {PROTOCOL_VERSION}.");
+                    $"Unsupported protocol version: {version}.");
 
             byte commandType = data[3];
             ushort seq = ReadUInt16(data, 4);
@@ -369,7 +509,18 @@ namespace Hapbeat
         public static (long timestamp, long serverTime, string deviceName, string address,
             string firmwareVersion, int volumeLevel, int volumeWiper) ParsePongExtended(byte[] payload)
         {
-            var (timestamp, serverTime) = ParsePong(payload); // throws if < 16 bytes, same as before
+            PongExtendedInfo parsed = ParsePongExtendedInfo(payload);
+            return (parsed.Timestamp, parsed.ServerTime, parsed.DeviceName, parsed.Address,
+                parsed.FirmwareVersion, parsed.VolumeLevel, parsed.VolumeWiper);
+        }
+
+        /// <summary>
+        /// Parse the ordinary PONG fields and, when present, the exact 32-byte HBS2
+        /// stream-lease tail. A malformed or absent tail is not a lease response.
+        /// </summary>
+        internal static PongExtendedInfo ParsePongExtendedInfo(byte[] payload)
+        {
+            var (timestamp, serverTime) = ParsePong(payload);
 
             string deviceName = null;
             string address = null;
@@ -389,7 +540,32 @@ namespace Hapbeat
             if (offset < payload.Length) volumeLevel = payload[offset++];
             if (offset < payload.Length) volumeWiper = payload[offset++];
 
-            return (timestamp, serverTime, deviceName, address, firmwareVersion, volumeLevel, volumeWiper);
+            StreamLeasePongTail leaseTail = ParseStreamLeasePongTail(payload, offset);
+            return new PongExtendedInfo(timestamp, serverTime, deviceName, address,
+                firmwareVersion, volumeLevel, volumeWiper, leaseTail);
+        }
+
+        private static StreamLeasePongTail ParseStreamLeasePongTail(byte[] payload, int offset)
+        {
+            const int tailSize = 32;
+            if (payload.Length - offset != tailSize ||
+                payload[offset] != (byte)'H' || payload[offset + 1] != (byte)'B' ||
+                payload[offset + 2] != (byte)'S' || payload[offset + 3] != (byte)'2' ||
+                payload[offset + 4] != 1 || (payload[offset + 5] & ~0x03) != 0 ||
+                ReadUInt16(payload, offset + 6) != 0)
+            {
+                return default;
+            }
+
+            byte flags = payload[offset + 5];
+            ulong incarnation = ReadUInt64(payload, offset + 8);
+            var lease = new StreamLeaseIdentity(ReadUInt64(payload, offset + 16),
+                ReadUInt32(payload, offset + 24));
+            uint highWaterTicket = ReadUInt32(payload, offset + 28);
+            bool leaseValid = (flags & 0x01) != 0 && lease.IsValid;
+            bool superseded = (flags & 0x02) != 0;
+            return new StreamLeasePongTail(true, leaseValid, superseded,
+                incarnation, lease, highWaterTicket);
         }
 
         /// <summary>
@@ -462,6 +638,14 @@ namespace Hapbeat
             Buffer.BlockCopy(bytes, 0, buffer, offset, 4);
         }
 
+        private static void WriteUInt64(byte[] buffer, int offset, ulong value)
+        {
+            byte[] bytes = BitConverter.GetBytes(value);
+            if (!BitConverter.IsLittleEndian)
+                Array.Reverse(bytes);
+            Buffer.BlockCopy(bytes, 0, buffer, offset, 8);
+        }
+
         private static void WriteInt64(byte[] buffer, int offset, long value)
         {
             byte[] bytes = BitConverter.GetBytes(value);
@@ -491,6 +675,41 @@ namespace Hapbeat
                 Array.Reverse(temp);
                 return BitConverter.ToUInt16(temp, 0);
             }
+        }
+
+        private static uint ReadUInt32(byte[] buffer, int offset)
+        {
+            if (BitConverter.IsLittleEndian)
+                return BitConverter.ToUInt32(buffer, offset);
+            byte[] temp = new byte[4];
+            Buffer.BlockCopy(buffer, offset, temp, 0, 4);
+            Array.Reverse(temp);
+            return BitConverter.ToUInt32(temp, 0);
+        }
+
+        private static ulong ReadUInt64(byte[] buffer, int offset)
+        {
+            if (BitConverter.IsLittleEndian)
+                return BitConverter.ToUInt64(buffer, offset);
+            byte[] temp = new byte[8];
+            Buffer.BlockCopy(buffer, offset, temp, 0, 8);
+            Array.Reverse(temp);
+            return BitConverter.ToUInt64(temp, 0);
+        }
+
+        private static int WriteStreamIdentity(byte[] payload, StreamSessionIdentity identity)
+        {
+            WriteUInt64(payload, 0, identity.Lease.DeviceBootId);
+            WriteUInt32(payload, 8, identity.Lease.LeaseTicket);
+            WriteUInt32(payload, 12, identity.Generation);
+            return STREAM_SESSION_ENVELOPE_SIZE;
+        }
+
+        private static void ValidateStreamIdentity(StreamSessionIdentity identity)
+        {
+            if (!identity.IsValid)
+                throw new ArgumentException("A v2 stream packet requires a valid boot ID, lease ticket, and generation.",
+                    nameof(identity));
         }
 
         private static long ReadInt64(byte[] buffer, int offset)

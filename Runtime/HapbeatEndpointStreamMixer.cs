@@ -28,9 +28,11 @@ namespace Hapbeat
 
     internal interface IHapbeatEndpointStreamPacketSink
     {
-        void Begin(IPEndPoint endpoint, ushort sampleRate, byte channels, byte format, uint totalSamples, float gain, string target);
-        void Data(IPEndPoint endpoint, uint byteOffset, byte[] audioData, int dataOffset, int dataLength);
-        void End(IPEndPoint endpoint);
+        void Begin(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
+            ushort sampleRate, byte channels, byte format, uint totalSamples, float gain, string target);
+        void Data(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
+            uint byteOffset, byte[] audioData, int dataOffset, int dataLength);
+        void End(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity);
     }
 
     /// <summary>
@@ -46,7 +48,6 @@ namespace Hapbeat
         private const byte OutputChannels = 2;
         private const float ChunkSeconds = 0.01f;
         private const double EmptySessionLingerSeconds = 0.3;
-        private const double EndToBeginCooldownSeconds = 0.3;
 
         private sealed class Source
         {
@@ -84,6 +85,8 @@ namespace Hapbeat
             public string Key;
             public string Address;
             public string WireTarget;
+            public readonly HapbeatProtocol.StreamLeaseIdentity Lease;
+            public readonly HapbeatProtocol.StreamSessionIdentity Identity;
             public readonly Dictionary<Source, double> Positions = new Dictionary<Source, double>();
             public readonly HashSet<Source> MatchingSources = new HashSet<Source>();
             public uint ByteOffset;
@@ -92,12 +95,15 @@ namespace Hapbeat
             public bool EndSent;
             public long EmptySinceTicks;
 
-            public Session(IPEndPoint endpoint, string key, string address, string wireTarget)
+            public Session(IPEndPoint endpoint, string key, string address, string wireTarget,
+                HapbeatProtocol.StreamLeaseIdentity lease, HapbeatProtocol.StreamSessionIdentity identity)
             {
                 Endpoint = endpoint;
                 Key = key;
                 Address = address;
                 WireTarget = wireTarget;
+                Lease = lease;
+                Identity = identity;
             }
         }
 
@@ -106,23 +112,30 @@ namespace Hapbeat
         {
             private readonly Func<HapbeatClient> _getClient;
             public ClientPacketSink(Func<HapbeatClient> getClient) { _getClient = getClient; }
-            public void Begin(IPEndPoint endpoint, ushort sampleRate, byte channels, byte format, uint totalSamples, float gain, string target) =>
-                _getClient()?.SendStreamBeginTo(endpoint, sampleRate, channels, format, totalSamples, gain, target);
-            public void Data(IPEndPoint endpoint, uint byteOffset, byte[] audioData, int dataOffset, int dataLength) =>
-                _getClient()?.SendStreamDataTo(endpoint, byteOffset, audioData, dataOffset, dataLength);
-            public void End(IPEndPoint endpoint) => _getClient()?.SendStreamEndTo(endpoint);
+            public void Begin(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
+                ushort sampleRate, byte channels, byte format, uint totalSamples, float gain, string target) =>
+                _getClient()?.SendStreamBeginTo(endpoint, identity, sampleRate, channels, format, totalSamples, gain, target);
+            public void Data(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
+                uint byteOffset, byte[] audioData, int dataOffset, int dataLength) =>
+                _getClient()?.SendStreamDataTo(endpoint, identity, byteOffset, audioData, dataOffset, dataLength);
+            public void End(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity) =>
+                _getClient()?.SendStreamEndTo(endpoint, identity);
         }
 
         private readonly IHapbeatEndpointStreamPacketSink _sink;
         private readonly Func<string, List<HapbeatClient.StreamEndpoint>> _resolveEndpoints;
         private readonly Func<string, string> _resolveEffectiveTarget;
+        private readonly Func<IPEndPoint, HapbeatProtocol.StreamLeaseIdentity,
+            HapbeatProtocol.StreamSessionIdentity> _allocateSessionIdentity;
         private readonly Func<float> _getSendAheadSeconds;
         private readonly Action<string> _log;
         private readonly Action _beforeNaturalFinalize;
         private readonly Action _beforeStopFinalize;
         private readonly List<Source> _sources = new List<Source>();
         private readonly Dictionary<string, Session> _sessions = new Dictionary<string, Session>();
-        private readonly Dictionary<string, long> _lastEndTicksByEndpoint = new Dictionary<string, long>();
+        private readonly Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint> _nextGenerationByLease =
+            new Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint>();
+        private uint _nextSyntheticGeneration;
         private Thread _thread;
         private volatile bool _stopRequested;
         private volatile bool _suppressSchedulerTerminationPackets;
@@ -142,6 +155,13 @@ namespace Hapbeat
             _sink = new ClientPacketSink(getClient);
             _resolveEndpoints = resolveEndpoints;
             _resolveEffectiveTarget = resolveEffectiveTarget ?? throw new ArgumentNullException(nameof(resolveEffectiveTarget));
+            _allocateSessionIdentity = (endpoint, lease) =>
+            {
+                HapbeatClient client = getClient();
+                return client != null && client.TryAllocateStreamSessionIdentity(endpoint, lease, out var identity)
+                    ? identity
+                    : default;
+            };
             _getSendAheadSeconds = getSendAheadSeconds;
             _sendAheadSeconds = Math.Max(0.01f, getSendAheadSeconds());
             _log = log;
@@ -158,6 +178,7 @@ namespace Hapbeat
             _sink = sink;
             _resolveEndpoints = resolveEndpoints;
             _resolveEffectiveTarget = resolveEffectiveTarget ?? (target => target);
+            _allocateSessionIdentity = null;
             _getSendAheadSeconds = getSendAheadSeconds;
             _sendAheadSeconds = Math.Max(0.01f, getSendAheadSeconds());
             _log = log;
@@ -333,7 +354,7 @@ namespace Hapbeat
                 for (int e = 0; e < endpoints.Count; e++)
                 {
                     var endpoint = endpoints[e];
-                    string key = EndpointKey(endpoint.EndPoint, endpoint.Address);
+                    string key = EndpointKey(endpoint);
                     wanted[key] = endpoint;
                 }
             }
@@ -350,6 +371,8 @@ namespace Hapbeat
                 if (_sessions.TryGetValue(key, out Session exact))
                 {
                     exact.Resolved = true;
+                    exact.Endpoint = wanted[key].EndPoint;
+                    exact.Address = wanted[key].Address;
                     unassignedSessions.Remove(exact);
                 }
                 else remainingWanted.Add(key);
@@ -367,8 +390,12 @@ namespace Hapbeat
                 for (int s = 0; s < unassignedSessions.Count; s++)
                 {
                     Session candidate = unassignedSessions[s];
-                    if (candidate.Endpoint.Equals(endpoint.EndPoint) ||
-                        string.Equals(candidate.Address, endpoint.Address, StringComparison.Ordinal))
+                    bool stableLease = candidate.Lease.IsValid && endpoint.Lease.IsValid &&
+                        candidate.Lease.Equals(endpoint.Lease);
+                    bool mockRouteMigration = !candidate.Lease.IsValid && !endpoint.Lease.IsValid &&
+                        (candidate.Endpoint.Equals(endpoint.EndPoint) ||
+                         string.Equals(candidate.Address, endpoint.Address, StringComparison.Ordinal));
+                    if (stableLease || mockRouteMigration)
                     {
                         migration = candidate;
                         break;
@@ -380,12 +407,34 @@ namespace Hapbeat
                 migration.Endpoint = endpoint.EndPoint;
                 migration.Key = key;
                 migration.Address = endpoint.Address;
-                migration.WireTarget = endpoint.Address;
                 migration.Resolved = true;
                 migration.EmptySinceTicks = 0;
                 _sessions.Add(key, migration);
                 unassignedSessions.Remove(migration);
                 remainingWanted.RemoveAt(i);
+            }
+
+            long now = Stopwatch.GetTimestamp();
+
+            // A device reboot or lease renewal changes its transport identity. End
+            // the retired session with the identity it began under before a new
+            // session starts; never migrate an old END onto the new token.
+            for (int s = unassignedSessions.Count - 1; s >= 0; s--)
+            {
+                Session retired = unassignedSessions[s];
+                if (!retired.Lease.IsValid) continue;
+                for (int w = 0; w < remainingWanted.Count; w++)
+                {
+                    HapbeatClient.StreamEndpoint replacement = wanted[remainingWanted[w]];
+                    if (!replacement.Lease.IsValid || retired.Lease.Equals(replacement.Lease)) continue;
+                    if (!retired.Endpoint.Equals(replacement.EndPoint) &&
+                        !string.Equals(retired.Address, replacement.Address, StringComparison.Ordinal)) continue;
+
+                    EndSessionLocked(retired);
+                    _sessions.Remove(retired.Key);
+                    unassignedSessions.RemoveAt(s);
+                    break;
+                }
             }
 
             for (int i = 0; i < remainingWanted.Count; i++)
@@ -395,12 +444,18 @@ namespace Hapbeat
                 // STREAM_DATA has no target. Even though this is an explicit direct
                 // endpoint, BEGIN must carry the PONG-resolved address so firmware
                 // rejects it if that IP was reassigned before the next PONG refresh.
-                var session = new Session(endpoint.EndPoint, key, endpoint.Address, endpoint.Address);
+                HapbeatProtocol.StreamSessionIdentity identity =
+                    AllocateSessionIdentity(endpoint.EndPoint, endpoint.Lease);
+                if (endpoint.Lease.IsValid && !identity.IsValid)
+                {
+                    continue;
+                }
+                var session = new Session(endpoint.EndPoint, key, endpoint.Address, endpoint.Address,
+                    endpoint.Lease, identity);
                 session.Resolved = true;
                 _sessions.Add(key, session);
             }
 
-            long now = Stopwatch.GetTimestamp();
             RebuildSessionMembershipLocked(now);
             ProcessSessionLifecycleLocked(now);
         }
@@ -567,7 +622,7 @@ namespace Hapbeat
                 pcm[i * 2] = (byte)value;
                 pcm[i * 2 + 1] = (byte)(value >> 8);
             }
-            _sink.Data(session.Endpoint, session.ByteOffset, pcm, 0, pcm.Length);
+            _sink.Data(session.Endpoint, session.Identity, session.ByteOffset, pcm, 0, pcm.Length);
             Interlocked.Add(ref _sentPcmBytes, pcm.Length);
             session.ByteOffset += (uint)pcm.Length;
         }
@@ -698,9 +753,9 @@ namespace Hapbeat
                 if (session.MatchingSources.Count > 0)
                 {
                     session.EmptySinceTicks = 0;
-                    if (!session.BeginSent && CooldownElapsedLocked(session.Key, now))
+                    if (!session.BeginSent)
                     {
-                        _sink.Begin(session.Endpoint, OutputSampleRate, OutputChannels,
+                        _sink.Begin(session.Endpoint, session.Identity, OutputSampleRate, OutputChannels,
                             HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
                         session.BeginSent = true;
                     }
@@ -710,19 +765,13 @@ namespace Hapbeat
                 if (session.EmptySinceTicks == 0) session.EmptySinceTicks = now;
                 double emptySeconds = (now - session.EmptySinceTicks) / (double)Stopwatch.Frequency;
                 if (emptySeconds < EmptySessionLingerSeconds) continue;
-                if (session.BeginSent) EndSessionLocked(session, now);
+                if (session.BeginSent) EndSessionLocked(session);
                 if (remove == null) remove = new List<string>();
                 remove.Add(pair.Key);
             }
 
             if (remove == null) return;
             for (int i = 0; i < remove.Count; i++) _sessions.Remove(remove[i]);
-        }
-
-        private bool CooldownElapsedLocked(string endpointKey, long now)
-        {
-            if (!_lastEndTicksByEndpoint.TryGetValue(endpointKey, out long endedAt)) return true;
-            return (now - endedAt) / (double)Stopwatch.Frequency >= EndToBeginCooldownSeconds;
         }
 
         private static bool SessionMatchesSource(Session session, Source source)
@@ -732,18 +781,16 @@ namespace Hapbeat
 
         private void EndAllSessionsLocked()
         {
-            long now = Stopwatch.GetTimestamp();
-            foreach (var session in _sessions.Values) EndSessionLocked(session, now);
+            foreach (var session in _sessions.Values) EndSessionLocked(session);
         }
 
-        private void EndSessionLocked(Session session, long now)
+        private void EndSessionLocked(Session session)
         {
             if (!session.BeginSent || session.EndSent) return;
             session.EndSent = true;
             if (!_suppressSchedulerTerminationPackets)
             {
-                _sink.End(session.Endpoint);
-                _lastEndTicksByEndpoint[session.Key] = now;
+                _sink.End(session.Endpoint, session.Identity);
             }
         }
 
@@ -752,12 +799,30 @@ namespace Hapbeat
             for (int i = 0; i < sessions.Count; i++)
             {
                 Session session = sessions[i];
-                if (session.BeginSent) _sink.End(session.Endpoint);
+                if (session.BeginSent) _sink.End(session.Endpoint, session.Identity);
             }
         }
 
-        private static string EndpointKey(IPEndPoint endpoint, string address) =>
-            endpoint + "|" + (address ?? string.Empty);
+        private static string EndpointKey(HapbeatClient.StreamEndpoint endpoint) =>
+            endpoint.Lease.IsValid
+                ? "lease:" + endpoint.Lease.DeviceBootId.ToString("X16") + ":" + endpoint.Lease.LeaseTicket
+                : endpoint.EndPoint + "|" + (endpoint.Address ?? string.Empty);
+
+        private HapbeatProtocol.StreamSessionIdentity AllocateSessionIdentity(IPEndPoint endpoint,
+            HapbeatProtocol.StreamLeaseIdentity lease)
+        {
+            if (_allocateSessionIdentity != null)
+                return _allocateSessionIdentity(endpoint, lease);
+            if (!lease.IsValid)
+                return new HapbeatProtocol.StreamSessionIdentity(lease, ++_nextSyntheticGeneration);
+
+            _nextGenerationByLease.TryGetValue(lease, out uint previous);
+            if (previous == uint.MaxValue)
+                throw new InvalidOperationException("Stream generation is exhausted; renew the device lease before starting another session.");
+            uint generation = previous + 1;
+            _nextGenerationByLease[lease] = generation;
+            return new HapbeatProtocol.StreamSessionIdentity(lease, generation);
+        }
 
         private void SleepPrecisely(double seconds)
         {

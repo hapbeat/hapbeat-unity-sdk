@@ -79,6 +79,17 @@ namespace Hapbeat.Editor
                 _overridePlayer = HapbeatClient.NormalizeOverride(savedPlayer);
                 _overrideGroup = HapbeatClient.NormalizeOverride(savedGroup);
                 _client.SetAddressOverride(_overridePlayer, _overrideGroup);
+                _client.OnStreamLeaseChanged += (sender, identity, isValid, isSuperseded) =>
+                {
+                    if (isSuperseded)
+                        Debug.LogWarning($"[Hapbeat:Editor] Stream lease at {sender} was superseded; reopen the editor transport to reacquire it.");
+                    else if (isValid)
+                        Debug.Log($"[Hapbeat:Editor] Stream lease ready at {sender} ({identity}).");
+                    else
+                        Debug.LogWarning($"[Hapbeat:Editor] Stream lease unavailable at {sender}; StreamClip stays deferred.");
+                };
+                _client.OnStreamSessionBegan += (sender, identity) =>
+                    Debug.Log($"[Hapbeat:Editor] Stream BEGIN {sender} ({identity}).");
                 EditorApplication.update -= Tick;
                 EditorApplication.update += Tick;
 

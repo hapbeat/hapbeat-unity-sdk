@@ -26,7 +26,8 @@ namespace Hapbeat.Tests
                 new List<(string endpoint, ushort rate, byte channels)>();
             private readonly object _lock = new object();
 
-            public void Begin(IPEndPoint endpoint, ushort rate, byte channels, byte _, uint __, float ___, string ____)
+            public void Begin(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity _____,
+                ushort rate, byte channels, byte _, uint __, float ___, string ____)
             {
                 lock (_lock)
                 {
@@ -36,7 +37,8 @@ namespace Hapbeat.Tests
                     BeginFormats.Add((endpoint.ToString(), rate, channels));
                 }
             }
-            public void Data(IPEndPoint endpoint, uint _, byte[] audioData, int offset, int length)
+            public void Data(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity _____,
+                uint _, byte[] audioData, int offset, int length)
             {
                 var copy = new byte[length];
                 Buffer.BlockCopy(audioData, offset, copy, 0, length);
@@ -47,7 +49,7 @@ namespace Hapbeat.Tests
                     Packets.Add((endpoint.ToString(), copy));
                 }
             }
-            public void End(IPEndPoint endpoint)
+            public void End(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity _____)
             {
                 lock (_lock)
                 {
@@ -65,13 +67,15 @@ namespace Hapbeat.Tests
             private int _dataPackets;
             public int DataPackets => Volatile.Read(ref _dataPackets);
 
-            public void Begin(IPEndPoint endpoint, ushort sampleRate, byte channels, byte format,
+            public void Begin(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
+                ushort sampleRate, byte channels, byte format,
                 uint totalSamples, float gain, string target) { }
 
-            public void Data(IPEndPoint endpoint, uint byteOffset, byte[] audioData, int dataOffset, int dataLength) =>
+            public void Data(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
+                uint byteOffset, byte[] audioData, int dataOffset, int dataLength) =>
                 Interlocked.Increment(ref _dataPackets);
 
-            public void End(IPEndPoint endpoint) { }
+            public void End(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity) { }
         }
 
         private static readonly HapbeatClient.StreamEndpoint[] Endpoints =
@@ -686,7 +690,7 @@ namespace Hapbeat.Tests
         }
 
         [Test]
-        public void EndedEndpoint_DelaysNextBeginForAtLeastThreeHundredMilliseconds()
+        public void EndedEndpoint_BeginsNewGenerationWithoutCooldown()
         {
             using var mixer = Create(out var sink);
             var first = mixer.AddSamples(LoopSamples(), 16000, 1, 1f, 1f, "*/pos_l_arm", true);
@@ -701,7 +705,7 @@ namespace Hapbeat.Tests
             long end = sink.EndTimes.Find(x => x.endpoint == "192.0.2.10:7700").timestamp;
             long begin = sink.BeginTimes.FindLast(x => x.endpoint == "192.0.2.10:7700").timestamp;
             double elapsedMilliseconds = (begin - end) * 1000.0 / Stopwatch.Frequency;
-            Assert.GreaterOrEqual(elapsedMilliseconds, 300.0);
+            Assert.Less(elapsedMilliseconds, 100.0);
             Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, restarted.Status);
         }
 
