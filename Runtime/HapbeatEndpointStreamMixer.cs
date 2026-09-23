@@ -152,7 +152,7 @@ namespace Hapbeat
         private readonly IHapbeatEndpointStreamPacketSink _sink;
         private readonly IHapbeatLegacyEndpointStreamPacketSink _legacySink;
         // Legacy session key -> Stopwatch ticks of its last legacy END (guard only).
-        private readonly Dictionary<string, long> _lastLegacyEndTicksByKey = new Dictionary<string, long>();
+        private readonly Dictionary<string, long> _lastLegacyEndTicksByEndpoint = new Dictionary<string, long>();
         private bool _loggedLegacySinkUnsupported;
         private readonly Func<string, List<HapbeatClient.StreamEndpoint>> _resolveEndpoints;
         private readonly Func<string, string> _resolveEffectiveTarget;
@@ -416,6 +416,7 @@ namespace Hapbeat
                     exact.Resolved = true;
                     exact.Endpoint = wanted[key].EndPoint;
                     exact.Address = wanted[key].Address;
+                    if (!exact.BeginSent) exact.WireTarget = exact.Address;
                     unassignedSessions.Remove(exact);
                 }
                 else remainingWanted.Add(key);
@@ -453,6 +454,9 @@ namespace Hapbeat
                 migration.Endpoint = endpoint.EndPoint;
                 migration.Key = key;
                 migration.Address = endpoint.Address;
+                // An unbegun session (e.g. held by the legacy guard) must BEGIN with
+                // the address the device reports now, or firmware rejects the BEGIN.
+                if (!migration.BeginSent) migration.WireTarget = endpoint.Address;
                 migration.Resolved = true;
                 migration.EmptySinceTicks = 0;
                 _sessions.Add(key, migration);
@@ -815,7 +819,7 @@ namespace Hapbeat
                         {
                             // Sources for this endpoint stay deferred until the guard
                             // elapses; other endpoints are unaffected.
-                            if (!LegacyCooldownElapsedLocked(session.Key, now)) continue;
+                            if (!LegacyCooldownElapsedLocked(session.Endpoint, now)) continue;
                             _legacySink.LegacyBegin(session.Endpoint, OutputSampleRate, OutputChannels,
                                 HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
                         }
@@ -841,9 +845,11 @@ namespace Hapbeat
             for (int i = 0; i < remove.Count; i++) _sessions.Remove(remove[i]);
         }
 
-        private bool LegacyCooldownElapsedLocked(string legacyKey, long now)
+        // Keyed by device endpoint, not session key: an address change on the same
+        // device must not skip the guard, since pre-v2 firmware ignores END payloads.
+        private bool LegacyCooldownElapsedLocked(IPEndPoint endpoint, long now)
         {
-            if (!_lastLegacyEndTicksByKey.TryGetValue(legacyKey, out long endedAt)) return true;
+            if (!_lastLegacyEndTicksByEndpoint.TryGetValue(endpoint.ToString(), out long endedAt)) return true;
             return (now - endedAt) / (double)Stopwatch.Frequency >= LegacyEndToBeginCooldownSeconds;
         }
 
@@ -872,9 +878,9 @@ namespace Hapbeat
             if (session.Mode == StreamEndpointMode.Legacy)
             {
                 _legacySink.LegacyEnd(session.Endpoint);
-                // The guard is recorded only on a legacy END and keyed by the legacy
-                // session key, so v2 endpoints never inherit it.
-                _lastLegacyEndTicksByKey[session.Key] = Stopwatch.GetTimestamp();
+                // The guard is recorded only on a legacy END and read only for legacy
+                // sessions, so v2 endpoints never inherit it.
+                _lastLegacyEndTicksByEndpoint[session.Endpoint.ToString()] = Stopwatch.GetTimestamp();
             }
             else
             {

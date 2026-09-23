@@ -92,8 +92,17 @@ namespace Hapbeat.Tests
 
         private sealed class DualSink : V2OnlySink, IHapbeatLegacyEndpointStreamPacketSink
         {
+            private readonly List<string> _legacyTargets = new List<string>();
             public void LegacyBegin(IPEndPoint ep, ushort rate, byte channels, byte format,
-                uint samples, float gain, string target) => Record(Kind.LegacyBegin, ep);
+                uint samples, float gain, string target)
+            {
+                lock (Gate) _legacyTargets.Add(target);
+                Record(Kind.LegacyBegin, ep);
+            }
+            public string LastLegacyTarget()
+            {
+                lock (Gate) return _legacyTargets.Count == 0 ? null : _legacyTargets[_legacyTargets.Count - 1];
+            }
             public void LegacyData(IPEndPoint ep, uint offset, byte[] pcm, int start, int length) =>
                 Record(Kind.LegacyData, ep);
             public void LegacyEnd(IPEndPoint ep) => Record(Kind.LegacyEnd, ep);
@@ -196,6 +205,59 @@ namespace Hapbeat.Tests
                 Ms(sink.TicksOf(Kind.LegacyBegin, Left, 1) - sink.TicksOf(Kind.LegacyEnd, Left, 0)), 299);
             WaitFor(() => sink.Count(Kind.LegacyData, Left) > 1);
             playback.Stop();
+        }
+
+        [Test]
+        public void LegacyGuard_FollowsTheEndpointAcrossAnAddressChange()
+        {
+            var sink = new DualSink();
+            var current = new List<HapbeatClient.StreamEndpoint> { LegacyLeft() };
+            using var mixer = new HapbeatEndpointStreamMixer(sink, _ => current, () => 0.01f, _ => { });
+            var first = mixer.AddSamples(new float[160], 16000, 1, 1f, 0f, "", true);
+            WaitFor(() => sink.Count(Kind.LegacyBegin, Left) == 1);
+            first.Stop();
+            WaitFor(() => sink.Count(Kind.LegacyEnd, Left) == 1);
+
+            // Same device, new address (set_address): pre-v2 firmware cannot reject the
+            // earlier END, so the guard must still hold for this endpoint.
+            current = new List<HapbeatClient.StreamEndpoint>
+            {
+                new HapbeatClient.StreamEndpoint(LeftEp, "player_2/pos_l_arm/group_1", default, StreamEndpointMode.Legacy),
+            };
+            mixer.ReconcileEndpoints();
+            var second = mixer.AddSamples(new float[160], 16000, 1, 1f, 0f, "", true);
+            WaitFor(() => sink.Count(Kind.LegacyBegin, Left) == 2);
+            Assert.GreaterOrEqual(
+                Ms(sink.TicksOf(Kind.LegacyBegin, Left, 1) - sink.TicksOf(Kind.LegacyEnd, Left, 0)), 299);
+            Assert.AreEqual("player_2/pos_l_arm/group_1", sink.LastLegacyTarget());
+            second.Stop();
+        }
+
+        [Test]
+        public void GuardHeldLegacySession_BeginsWithTheAddressReportedAtBegin()
+        {
+            var sink = new DualSink();
+            var current = new List<HapbeatClient.StreamEndpoint> { LegacyLeft() };
+            using var mixer = new HapbeatEndpointStreamMixer(sink, _ => current, () => 0.01f, _ => { });
+            var first = mixer.AddSamples(new float[160], 16000, 1, 1f, 0f, "", true);
+            WaitFor(() => sink.Count(Kind.LegacyBegin, Left) == 1);
+            first.Stop();
+            WaitFor(() => sink.Count(Kind.LegacyEnd, Left) == 1);
+
+            // A new session is created while the guard holds it (no BEGIN yet), then
+            // the device reports a new address before the guard elapses.
+            var second = mixer.AddSamples(new float[160], 16000, 1, 1f, 0f, "", true);
+            mixer.ReconcileEndpoints();
+            Assert.AreEqual(1, sink.Count(Kind.LegacyBegin, Left), "guard still holds the new session");
+            current = new List<HapbeatClient.StreamEndpoint>
+            {
+                new HapbeatClient.StreamEndpoint(LeftEp, "player_3/pos_l_arm/group_1", default, StreamEndpointMode.Legacy),
+            };
+            mixer.ReconcileEndpoints();
+            WaitFor(() => sink.Count(Kind.LegacyBegin, Left) == 2);
+            Assert.AreEqual("player_3/pos_l_arm/group_1", sink.LastLegacyTarget(),
+                "pre-v2 firmware rejects a BEGIN whose target no longer matches its address");
+            second.Stop();
         }
 
         [Test]
