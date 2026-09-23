@@ -24,6 +24,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Fixed（修正）
 
+- XRI Hand Demo の保持触覚を手ごとの first-select / last-select に統一し、同じ手の複数 interactor 間の切替で途中停止しないよう修正しました。Snap Socket の単発触覚は保持ループに重ね、スナップだけでは保持を停止しません。波形・強度・物理挙動は変更していません。
 - XRI Hand Demo の手別 hover/select の開始・終了を手ごとに数えるよう修正し、反対の手が hover 中でも離した手の触覚を停止します。物理 Poke Button は XRPokeFilter の押し込み元を参照して出力先を限定し、hover の表示だけで別の手へ圧力を送らないようにしました。
 - Snap Socket の物体に左右の grab/release と保持用 SequenceTrigger の配線を追加しました。既存の波形・強度・スナップ触覚・XRI の物理挙動は変更していません。
 - XRI Hand Demo の uGUI 操作で左右判定が失われてクリック触覚が出ない問題を修正しました。TrackedDeviceEventData から操作した手を取得し、手のない Socket は直前の手を保持します。

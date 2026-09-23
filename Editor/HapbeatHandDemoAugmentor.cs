@@ -553,6 +553,37 @@ namespace Hapbeat.Editor
             WireToComponent(router, routerPath, rightEvent, rightTarget, method, mode, null, stats, warnings, dirty);
         }
 
+        // Remove only obsolete hold listeners owned by this recipe. Reapplying
+        // augmentation must not retain per-interactor stops or snap-to-stop wires.
+        private static void RemoveObsoleteHoldWires(string path, SideMaps maps, HashSet<Scene> dirty)
+        {
+            var router = FindHandSideRouter(path);
+            if (router == null) return;
+            var so = new SerializedObject(router);
+            bool changed = false;
+            foreach (var field in new[] { "OnLeftSelectEntered", "OnRightSelectEntered",
+                "OnLeftSelectExited", "OnRightSelectExited", "OnLeftRouted", "OnRightRouted" })
+            {
+                var calls = so.FindProperty(field)?.FindPropertyRelative("m_PersistentCalls.m_Calls");
+                if (calls == null) continue;
+                for (int i = calls.arraySize - 1; i >= 0; i--)
+                {
+                    var call = calls.GetArrayElementAtIndex(i);
+                    var sequence = call.FindPropertyRelative("m_Target").objectReferenceValue as HapbeatSequenceTrigger;
+                    var method = call.FindPropertyRelative("m_MethodName").stringValue;
+                    if (sequence == null || sequence.gameObject != router.gameObject ||
+                        (sequence.EventMap != maps.Left && sequence.EventMap != maps.Right)) continue;
+                    if (method != (field.EndsWith("Entered", StringComparison.Ordinal) ? "Fire" : "Stop")) continue;
+                    calls.DeleteArrayElementAtIndex(i);
+                    changed = true;
+                }
+            }
+            if (!changed) return;
+            Undo.RecordObject(router, "Update Hand Demo hold lifetime wiring");
+            so.ApplyModifiedProperties();
+            dirty.Add(router.gameObject.scene);
+        }
+
         private static void AddTrigger<T>(string path, HapbeatEventMap map, string entryId,
                                           Stats stats, List<string> warnings, HashSet<Scene> dirty)
             where T : Component
@@ -716,18 +747,13 @@ namespace Hapbeat.Editor
                 WireRouterToSideTriggers<HapbeatUnityEventTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
             }
 
-            foreach (var path in new[] { Cube1Path, Cube2Path, Cube3Path, ShapePath })
+            // A hand can have overlapping near/far/direct selectors. Per-interactor
+            // exit must not stop the hold while another selector of that hand remains.
+            foreach (var path in new[] { Cube1Path, Cube2Path, Cube3Path, ShapePath, PawnPath, SpherePath })
             {
-                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectEntered", "OnRightSelectEntered", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
-                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
-            }
-
-            foreach (var path in new[] { PawnPath, SpherePath })
-            {
+                RemoveObsoleteHoldWires(path, maps, dirty);
                 WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftFirstSelectEntered", "OnRightFirstSelectEntered", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
-                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectEntered", "OnRightSelectEntered", path, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
                 WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftLastSelectExited", "OnRightLastSelectExited", path, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
-                WireRouterToSideTriggers<HapbeatSequenceTrigger>(path, maps, "OnLeftSelectExited", "OnRightSelectExited", path, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
             }
 
             var pokeRouter = new SerializedObject(FindHandSideRouter(PokePath));
@@ -740,7 +766,7 @@ namespace Hapbeat.Editor
             var socketFilter = socketFilterType != null ? FindByPath(SocketPath)?.GetComponent(socketFilterType) : null;
             WireToComponent(socketFilter, SocketPath, "OnInitialHoverEntered", FindHandSideRouter(ShapePath), "RouteVoid", PersistentListenerMode.Void, null, stats, warnings, dirty);
             WireRouterToSideTriggers<HapbeatUnityEventTrigger>(ShapePath, maps, "OnLeftRouted", "OnRightRouted", SocketPath, "Fire", PersistentListenerMode.Void, stats, warnings, dirty);
-            WireRouterToSideTriggers<HapbeatSequenceTrigger>(ShapePath, maps, "OnLeftRouted", "OnRightRouted", ShapePath, "Stop", PersistentListenerMode.Void, stats, warnings, dirty);
+            // Snap is an independent one-shot. Keep the hand's hold loop alive.
 
             if (!includeDiagnostics) return;
             foreach (var field in DiagnosticEventFields)
@@ -826,17 +852,12 @@ namespace Hapbeat.Editor
                              typeof(HapbeatSequenceTrigger), "Fire", PersistentListenerMode.Void, null, stats, warnings, dirty);
                 WireFromType(ShapePath, grabFilterType, "OnHandReleased", ShapePath,
                              typeof(HapbeatSequenceTrigger), "Stop", PersistentListenerMode.Void, null, stats, warnings, dirty);
-                WireFromType(ShapePath, grabFilterType, "OnSocketSelected", ShapePath,
-                             typeof(HapbeatSequenceTrigger), "Stop", PersistentListenerMode.Void, null, stats, warnings, dirty);
             }
 
             if (socketFilterType != null)
             {
                 WireFromType(SocketPath, socketFilterType, "OnInitialHoverEntered", SocketPath,
                              typeof(HapbeatUnityEventTrigger), "Fire", PersistentListenerMode.Void, null, stats, warnings, dirty);
-                // Snapping into the socket also ends the shape's hold loop.
-                WireFromType(SocketPath, socketFilterType, "OnInitialHoverEntered", ShapePath,
-                             typeof(HapbeatSequenceTrigger), "Stop", PersistentListenerMode.Void, null, stats, warnings, dirty);
             }
 
             if (!includeDiagnostics) return;
