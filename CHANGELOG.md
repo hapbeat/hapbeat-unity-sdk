@@ -24,6 +24,8 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ### Fixed（修正）
 
+- XRI Hand Demo の uGUI 操作で左右判定が失われてクリック触覚が出ない問題を修正しました。TrackedDeviceEventData から操作した手を取得し、手のない Socket は直前の手を保持します。
+- 同じ entry / binding ID を持つ左右 EventMap を同じ GameObject で使う場合、ParameterBinding が他方の手へ適用されないよう、EventMap の一致も検証します。
 - PONG で device address または UDP route が変化した際、END / BEGIN を交差経路へ送らず、session の byte cursor と source cursor を維持したまま exact unicast の送信先を移行するよう修正しました。
 - 遅れて解決した endpoint は、他 endpoint 上の進行位置を共有せず source の frame 0 から開始します。
 

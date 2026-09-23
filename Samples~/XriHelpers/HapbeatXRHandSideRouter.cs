@@ -5,9 +5,11 @@
 
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.EventSystems;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
+using UnityEngine.XR.Interaction.Toolkit.UI;
 
 namespace Hapbeat.Samples.XriHelpers
 {
@@ -18,7 +20,8 @@ namespace Hapbeat.Samples.XriHelpers
     /// lets uGUI value-change events retain their hand association.
     /// </summary>
     [AddComponentMenu("Hapbeat/Samples/Hapbeat XR Hand Side Router")]
-    public sealed class HapbeatXRHandSideRouter : MonoBehaviour
+    public sealed class HapbeatXRHandSideRouter : MonoBehaviour,
+        IPointerEnterHandler, IPointerDownHandler, IBeginDragHandler, IDragHandler, IScrollHandler
     {
         [Header("Select")]
         public UnityEvent OnLeftSelectEntered;
@@ -51,11 +54,7 @@ namespace Hapbeat.Samples.XriHelpers
         {
             _interactable = GetComponent<XRBaseInteractable>();
             if (_interactable == null)
-            {
-                Debug.LogWarning("[Hapbeat] Hand Side Router needs an XRBaseInteractable on the same GameObject.", this);
-                enabled = false;
-                return;
-            }
+                return; // uGUI controls receive TrackedDeviceEventData instead of XRI selection events.
             _interactable.selectEntered.AddListener(OnSelectEntered);
             _interactable.selectExited.AddListener(OnSelectExited);
             _interactable.firstSelectEntered.AddListener(OnFirstSelectEntered);
@@ -93,6 +92,26 @@ namespace Hapbeat.Samples.XriHelpers
             if (_lastHandedness == InteractorHandedness.Right) OnRightRoutedVector2?.Invoke(value);
         }
 
+        public void OnPointerEnter(PointerEventData eventData) => RememberPointer(eventData);
+        public void OnPointerDown(PointerEventData eventData) => RememberPointer(eventData);
+        public void OnBeginDrag(PointerEventData eventData) => RememberPointer(eventData);
+        public void OnDrag(PointerEventData eventData) => RememberPointer(eventData);
+        public void OnScroll(PointerEventData eventData) => RememberPointer(eventData);
+
+        private void RememberPointer(PointerEventData eventData)
+        {
+            if (eventData is TrackedDeviceEventData tracked && tracked.interactor is IXRInteractor interactor)
+                RememberHand(interactor);
+        }
+
+        private void RememberHand(IXRInteractor interactor)
+        {
+            // Sockets have no hand. Preserve the hand that placed the object so
+            // the socket's snap callback still reaches that hand's EventMap.
+            if (interactor != null && interactor.handedness != InteractorHandedness.None)
+                _lastHandedness = interactor.handedness;
+        }
+
         private void OnSelectEntered(SelectEnterEventArgs args) => InvokeFor(args.interactorObject, OnLeftSelectEntered, OnRightSelectEntered);
         private void OnSelectExited(SelectExitEventArgs args) => InvokeFor(args.interactorObject, OnLeftSelectExited, OnRightSelectExited);
         private void OnFirstSelectEntered(SelectEnterEventArgs args) => InvokeFor(args.interactorObject, OnLeftFirstSelectEntered, OnRightFirstSelectEntered);
@@ -103,9 +122,9 @@ namespace Hapbeat.Samples.XriHelpers
         private void InvokeFor(IXRInteractor interactor, UnityEvent leftEvent, UnityEvent rightEvent)
         {
             if (interactor == null) return;
-            _lastHandedness = interactor.handedness;
-            if (_lastHandedness == InteractorHandedness.Left) leftEvent?.Invoke();
-            if (_lastHandedness == InteractorHandedness.Right) rightEvent?.Invoke();
+            RememberHand(interactor);
+            if (interactor.handedness == InteractorHandedness.Left) leftEvent?.Invoke();
+            if (interactor.handedness == InteractorHandedness.Right) rightEvent?.Invoke();
         }
     }
 }

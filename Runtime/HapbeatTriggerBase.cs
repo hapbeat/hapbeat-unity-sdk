@@ -283,9 +283,10 @@ namespace Hapbeat
             return null;
         }
 
-        private static bool BindingMatches(HapbeatParameterBinding b, string entryId, bool wantStreamGain)
+        private bool BindingMatches(HapbeatParameterBinding b, string entryId, bool wantStreamGain)
         {
             if (b == null) return false;
+            if (b.LinkedEventMap != _eventMap) return false;
             if (b.LinkedOwnerEntryId != entryId) return false;
             return wantStreamGain ? b.IsStreamGainOutput : b.IsStreamPanOutput;
         }

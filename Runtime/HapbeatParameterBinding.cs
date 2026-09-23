@@ -311,7 +311,7 @@ namespace Hapbeat
                 foreach (var t in _candidateTriggers)
                 {
                     if (t == null) continue;
-                    if (t.EntryId == ownerId) { anyMatch = true; break; }
+                    if (t.EventMap == _linkedEventMap && t.EntryId == ownerId) { anyMatch = true; break; }
                 }
                 if (!anyMatch)
                 {
@@ -413,6 +413,7 @@ namespace Hapbeat
                 foreach (var t in _candidateTriggers)
                 {
                     if (t == null) continue;
+                    if (t.EventMap != _linkedEventMap) continue;
                     if (t.EntryId != ownerId) continue;
                     var pb = t.ActivePlayback;
                     if (pb != null && !pb.IsStopped) { playback = pb; break; }
