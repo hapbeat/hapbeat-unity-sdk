@@ -9,6 +9,12 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-29
+
+### Fixed（修正）
+
+- Editor で clip manifest を探す際、`Assets` 直下を起点にすると `ArgumentOutOfRangeException` になる問題を修正しました。
+
 ## [0.5.0] - 2026-08-27
 
 ### Breaking changes（破壊的変更）
