@@ -5,7 +5,7 @@ Hapbeat デバイスを Unity から制御する公式 SDK。2D / 3D / XR 対応
 > **📚 公式ドキュメント**: [https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/](https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/)
 > Getting Started / Trigger コンポーネント / EventMap / Parameter Binding / ターゲティング等の解説はポータルに集約しています。本 README は概要と入口です。
 
-要件: **Unity 6 (6000.0) 以上**（推奨: Unity 6000.3.12f1。動作確認済み: 6000.3.12f1、6000.3.15f1、6000.0.59f2）
+要件: **Unity 6 (6000.0) 以上**（動作確認済み: 6000.3.12f1、6000.3.15f1、6000.0.59f2。特にこだわりがなければ、デモ制作で使っている 6000.3.12f1 がおすすめ）
 
 ## インストール
 
