@@ -64,6 +64,26 @@ namespace Hapbeat
         // Pre-v2 firmware cannot reject an old END, so a legacy endpoint keeps the
         // pre-v2 END->BEGIN guard. v2 endpoints have no cooldown (identity protects).
         private const double LegacyEndToBeginCooldownSeconds = 0.3;
+        // Mix bus (sdk-multi-stream.md §5.8): a block whose summed peak is within full
+        // scale passes unchanged; one past it is scaled down to LimitTarget (attack
+        // ramped within the block, release by LimitReleasePerBlock per block), and a
+        // tanh soft knee above LimitKnee replaces a hard clamp for what is left over.
+        private const float FullScale = 32767f;
+        private const float LimitTarget = 0.9f * FullScale;
+        private const float LimitKnee = 0.95f * FullScale;
+        private const float LimitReleasePerBlock = 0.05f;
+
+        private readonly struct ChannelGains
+        {
+            public readonly float Left;
+            public readonly float Right;
+
+            public ChannelGains(float left, float right)
+            {
+                Left = left;
+                Right = right;
+            }
+        }
 
         private sealed class Source
         {
@@ -105,6 +125,10 @@ namespace Hapbeat
             public readonly HapbeatProtocol.StreamSessionIdentity Identity;
             public readonly StreamEndpointMode Mode;
             public readonly Dictionary<Source, double> Positions = new Dictionary<Source, double>();
+            // Channel gains each source was mixed with at the end of the previous block (§5.7).
+            public readonly Dictionary<Source, ChannelGains> Gains = new Dictionary<Source, ChannelGains>();
+            // Limiter gain at the end of the previous block (§5.8); 1 = no reduction.
+            public float Limit = 1f;
             public readonly HashSet<Source> MatchingSources = new HashSet<Source>();
             public uint ByteOffset;
             public bool Resolved;
@@ -671,9 +695,12 @@ namespace Hapbeat
                 MixSource(source, session, frames, mix);
             }
 
+            for (int i = 0; i < mix.Length; i++) mix[i] *= FullScale;
+            session.Limit = LimitBlock(session.Limit, mix, frames);
+            // The single final saturation to the PCM16 range (§5.3).
             for (int i = 0; i < mix.Length; i++)
             {
-                int value = (int)(mix[i] * 32767f);
+                int value = (int)mix[i];
                 if (value > short.MaxValue) value = short.MaxValue;
                 else if (value < short.MinValue) value = short.MinValue;
                 pcm[i * 2] = (byte)value;
@@ -692,7 +719,18 @@ namespace Hapbeat
             if (!session.Positions.TryGetValue(source, out double position)) position = 0;
             double step = source.SampleRate / (double)OutputSampleRate;
             float gain = source.Playback.Gain;
-            source.Playback.GetStereoChannelGains(out float gainL, out float gainR);
+            source.Playback.GetStereoChannelGains(out float panL, out float panR);
+            float gainL = gain * panL;
+            float gainR = gain * panR;
+            // A new source starts at its own gains (its PCM carries the onset); a changed
+            // gain / pan ramps linearly across this block instead of stepping at its edge.
+            ChannelGains start = session.Gains.TryGetValue(source, out ChannelGains previous)
+                ? previous
+                : new ChannelGains(gainL, gainR);
+            session.Gains[source] = new ChannelGains(gainL, gainR);
+            float stepL = (gainL - start.Left) / frames;
+            float stepR = (gainR - start.Right) / frames;
+            bool ramp = stepL != 0f || stepR != 0f;
             int sourceFrames = source.Samples.Length / source.Channels;
             for (int frame = 0; frame < frames; frame++)
             {
@@ -707,11 +745,52 @@ namespace Hapbeat
                 float left = LerpSample(source, index, next, 0, fraction);
                 float right = source.Channels == 1 ? left : LerpSample(source, index, next, 1, fraction);
                 int output = frame * OutputChannels;
-                mix[output] += left * gain * gainL;
-                mix[output + 1] += right * gain * gainR;
+                float frameGainL = ramp ? start.Left + stepL * (frame + 1) : gainL;
+                float frameGainR = ramp ? start.Right + stepR * (frame + 1) : gainR;
+                mix[output] += left * frameGainL;
+                mix[output + 1] += right * frameGainR;
                 position += step;
             }
             session.Positions[source] = position;
+        }
+
+        /// <summary>
+        /// Applies the §5.8 limiter in place to one block of full-scale samples and
+        /// returns the limiter gain the block ended at (the next block's start).
+        /// </summary>
+        private static float LimitBlock(float limit, float[] mix, int frames)
+        {
+            float peak = 0f;
+            for (int i = 0; i < mix.Length; i++)
+            {
+                float magnitude = Math.Abs(mix[i]);
+                if (magnitude > peak) peak = magnitude;
+            }
+            float want = peak > FullScale ? LimitTarget / peak : 1f;
+            float start = limit;
+            float end = want < start ? want : Math.Min(want, start + LimitReleasePerBlock);
+            // A block within full scale at unity limiter gain stays bit-identical.
+            if (start == 1f && end == 1f) return end;
+
+            float step = (end - start) / frames;
+            const float span = FullScale - LimitKnee;
+            for (int frame = 0; frame < frames; frame++)
+            {
+                float gain = start + step * (frame + 1);
+                for (int channel = 0; channel < OutputChannels; channel++)
+                {
+                    int i = frame * OutputChannels + channel;
+                    float value = mix[i] * gain;
+                    float magnitude = Math.Abs(value);
+                    if (magnitude > LimitKnee)
+                    {
+                        float knee = LimitKnee + span * (float)Math.Tanh((magnitude - LimitKnee) / span);
+                        value = value < 0f ? -knee : knee;
+                    }
+                    mix[i] = value;
+                }
+            }
+            return end;
         }
 
         private static float LerpSample(Source source, int index, int next, int channel, float fraction)
@@ -773,6 +852,7 @@ namespace Hapbeat
             foreach (var session in _sessions.Values)
             {
                 session.Positions.Remove(source);
+                session.Gains.Remove(source);
                 session.MatchingSources.Remove(source);
             }
         }
@@ -800,7 +880,10 @@ namespace Hapbeat
                 else if (session.EmptySinceTicks == 0) session.EmptySinceTicks = now;
                 if (stalePositions == null) continue;
                 for (int i = 0; i < stalePositions.Count; i++)
+                {
                     session.Positions.Remove(stalePositions[i]);
+                    session.Gains.Remove(stalePositions[i]);
+                }
             }
         }
 
