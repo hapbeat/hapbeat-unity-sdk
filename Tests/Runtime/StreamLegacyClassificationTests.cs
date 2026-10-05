@@ -290,11 +290,11 @@ namespace Hapbeat.Tests
         }
 
         internal static byte[] V2Pong(long timestamp, ulong incarnation,
-            HapbeatProtocol.StreamLeaseIdentity lease, bool leaseValid = true)
+            HapbeatProtocol.StreamLeaseIdentity lease, bool leaseValid = true, bool superseded = false)
         {
             var payload = OrdinaryFields(timestamp, true);
             payload.AddRange(new byte[] { (byte)'H', (byte)'B', (byte)'S', (byte)'2', 1,
-                (byte)(leaseValid ? 1 : 0), 0, 0 });
+                (byte)((leaseValid ? 1 : 0) | (superseded ? 2 : 0)), 0, 0 });
             AppendUInt64(payload, incarnation);
             AppendUInt64(payload, lease.DeviceBootId);
             AppendUInt32(payload, lease.LeaseTicket);

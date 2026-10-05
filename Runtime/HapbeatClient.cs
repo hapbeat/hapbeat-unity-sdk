@@ -874,6 +874,30 @@ namespace Hapbeat
             RenewStreamLeaseIncarnation();
         }
 
+        /// <summary>
+        /// Reacquire only when a device reported this incarnation's lease superseded.
+        /// For an explicit user stream start (Editor Test Play); returns true when the
+        /// incarnation was renewed, so the caller sends a fresh PING.
+        /// </summary>
+        internal bool ReacquireStreamLeasesIfSuperseded()
+        {
+            lock (_streamLeaseLock)
+            {
+                bool superseded = false;
+                foreach (var pair in _streamLeases)
+                {
+                    if (pair.Value.IsSuperseded && pair.Value.ClientIncarnation == _clientIncarnation)
+                    {
+                        superseded = true;
+                        break;
+                    }
+                }
+                if (!superseded) return false;
+                RenewStreamLeaseIncarnation();
+                return true;
+            }
+        }
+
         internal bool TryGetPendingPing(ushort seq, out long timestampUs, out ulong clientIncarnation)
         {
             lock (_streamLeaseLock)

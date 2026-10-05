@@ -82,7 +82,7 @@ namespace Hapbeat.Editor
                 _client.OnStreamLeaseChanged += (sender, identity, isValid, isSuperseded) =>
                 {
                     if (isSuperseded)
-                        Debug.LogWarning($"[Hapbeat:Editor] Stream lease at {sender} was superseded; reopen the editor transport to reacquire it.");
+                        Debug.LogWarning($"[Hapbeat:Editor] Stream lease at {sender} was superseded; the next StreamClip Test Play reacquires it.");
                     else if (isValid)
                         Debug.Log($"[Hapbeat:Editor] Stream lease ready at {sender} ({identity}).");
                     else
@@ -166,6 +166,17 @@ namespace Hapbeat.Editor
                 return;
             }
 
+            // An explicit Test Play is the user's request to take the device back from
+            // a writer that superseded this transport (stream-session-v2.md allows an
+            // explicit reacquisition, never an automatic one).
+            bool reacquired = _client.ReacquireStreamLeasesIfSuperseded();
+            if (reacquired)
+            {
+                _streamMixer?.ReconcileEndpoints();
+                _client.SendPing();
+                _lastPingTime = EditorApplication.timeSinceStartup;
+            }
+
             if (_streamMixer != null)
                 StopStream();
 
@@ -175,6 +186,11 @@ namespace Hapbeat.Editor
                 Debug.Log($"[Hapbeat:Editor] \u266a StreamClip \"{clip.name}\" " +
                           $"{clip.frequency}Hz/{clip.channels}ch gain={gain:F2} loop={loop} unicast" +
                           (string.IsNullOrEmpty(target) ? "" : $" target={target}"));
+            }
+            else if (reacquired)
+            {
+                Debug.Log($"[Hapbeat:Editor] Stream lease was superseded; reacquiring it. StreamClip " +
+                          $"\"{clip.name}\" starts when the device confirms the new lease.");
             }
             else
             {

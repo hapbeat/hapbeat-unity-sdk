@@ -587,7 +587,11 @@ namespace Hapbeat
         /// <summary>
         /// Explicitly request fresh stream-lease ownership. This is required after
         /// another writer supersedes this SDK instance; normal periodic discovery
-        /// never attempts to seize that ownership automatically.
+        /// never attempts to seize that ownership automatically. Call it from an
+        /// explicit user action (e.g. a "take over haptics" button) once the other
+        /// application has stopped streaming. The SDK itself calls it only when the
+        /// application regains focus. Active stream sources continue from their
+        /// current position once the renewed lease resolves.
         /// </summary>
         public void ReacquireStreamOwnership()
         {
