@@ -13,9 +13,14 @@ namespace Hapbeat.Tests
             public int Begins;
             public int Ends;
             public long LastBegin;
+            // The mixer repeats an identical v2 BEGIN for loss protection (StreamBeginRepeatTests);
+            // this sink records each session's BEGIN once.
+            private readonly HashSet<uint> _begunGenerations = new HashSet<uint>();
             public void Begin(IPEndPoint ep, HapbeatProtocol.StreamSessionIdentity identity,
                 ushort rate, byte channels, byte format, uint samples, float gain, string target)
             {
+                lock (_begunGenerations)
+                    if (!_begunGenerations.Add(identity.Generation)) return;
                 Interlocked.Exchange(ref LastBegin, Stopwatch.GetTimestamp());
                 Interlocked.Increment(ref Begins);
             }

@@ -71,7 +71,11 @@ namespace Hapbeat
         /// </summary>
         internal event Action<IPEndPoint, HapbeatProtocol.StreamLeaseIdentity, bool, bool> OnStreamLeaseChanged;
 
-        /// <summary>Invoked on the main thread after a v2 STREAM_BEGIN is queued for an exact endpoint.</summary>
+        /// <summary>
+        /// Invoked on the main thread after a v2 STREAM_BEGIN is queued for an exact
+        /// endpoint, once per session identity (the mixer re-sends an identical BEGIN
+        /// to survive packet loss; repeats are not announced).
+        /// </summary>
         internal event Action<IPEndPoint, HapbeatProtocol.StreamSessionIdentity> OnStreamSessionBegan;
 
         /// <summary>Invoked on main thread when an ERROR response is received.</summary>
@@ -173,6 +177,11 @@ namespace Hapbeat
         // session; reusing the mutable per-session broadcast target list is unsafe.
         private readonly ConcurrentDictionary<IPAddress, IPEndPoint> _knownDeviceEndpoints =
             new ConcurrentDictionary<IPAddress, IPEndPoint>();
+
+        // Last v2 session identity announced through OnStreamSessionBegan per device IP.
+        // Written only from the stream mixer thread (SendStreamBeginTo).
+        private readonly ConcurrentDictionary<IPAddress, HapbeatProtocol.StreamSessionIdentity> _announcedStreamBegins =
+            new ConcurrentDictionary<IPAddress, HapbeatProtocol.StreamSessionIdentity>();
 
         // Queue for dispatching callbacks to the main thread
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
@@ -385,6 +394,7 @@ namespace Hapbeat
             _knownDeviceIps.Clear();
             _deviceAddresses.Clear();
             _knownDeviceEndpoints.Clear();
+            _announcedStreamBegins.Clear();
             // Routes belong to the network we were on: after a reconnect the host
             // may well have different interfaces (docking, VPN up, Wi-Fi switch).
             _broadcastRoutes = new List<BroadcastRoute>();
@@ -760,6 +770,10 @@ namespace Hapbeat
             byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(identity,
                 sampleRate, channels, format, totalSamples, gain, target);
             SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_BEGIN, payload);
+            if (_announcedStreamBegins.TryGetValue(endpoint.Address, out var announced) &&
+                announced.Lease.Equals(identity.Lease) && announced.Generation == identity.Generation)
+                return;
+            _announcedStreamBegins[endpoint.Address] = identity;
             var capturedEndpoint = new IPEndPoint(endpoint.Address, endpoint.Port);
             EnqueueMainThread(() => OnStreamSessionBegan?.Invoke(capturedEndpoint, identity));
         }

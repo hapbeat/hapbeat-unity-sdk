@@ -44,9 +44,19 @@ namespace Hapbeat.Tests
                 lock (Gate) Packets.Add(new Packet(kind, ep, id));
             }
 
+            // The mixer repeats an identical v2 BEGIN for loss protection (StreamBeginRepeatTests);
+            // this sink records each session's BEGIN once.
+            private readonly HashSet<(string, ulong, uint, uint)> _begunSessions =
+                new HashSet<(string, ulong, uint, uint)>();
+
             public void Begin(IPEndPoint ep, HapbeatProtocol.StreamSessionIdentity identity,
-                ushort rate, byte channels, byte format, uint samples, float gain, string target) =>
+                ushort rate, byte channels, byte format, uint samples, float gain, string target)
+            {
+                lock (Gate)
+                    if (!_begunSessions.Add((ep.ToString(), identity.Lease.DeviceBootId,
+                            identity.Lease.LeaseTicket, identity.Generation))) return;
                 Record(Kind.Begin, ep, identity);
+            }
             public void Data(IPEndPoint ep, HapbeatProtocol.StreamSessionIdentity identity,
                 uint offset, byte[] pcm, int start, int length) => Record(Kind.Data, ep, identity);
             public void End(IPEndPoint ep, HapbeatProtocol.StreamSessionIdentity identity) =>

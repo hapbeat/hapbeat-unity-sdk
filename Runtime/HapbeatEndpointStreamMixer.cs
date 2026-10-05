@@ -64,6 +64,13 @@ namespace Hapbeat
         // Pre-v2 firmware cannot reject an old END, so a legacy endpoint keeps the
         // pre-v2 END->BEGIN guard. v2 endpoints have no cooldown (identity protects).
         private const double LegacyEndToBeginCooldownSeconds = 0.3;
+        // A lost v2 BEGIN silences its whole session: firmware accepts DATA only for
+        // the active tuple. An identical BEGIN is idempotent on the receiver (equal
+        // tuple is ignored without a decoder/buffer reset, stream-session-v2.md
+        // "Receiver ordering"), so v2 sessions repeat it before the first DATA blocks
+        // and then periodically. Legacy firmware restarts on every BEGIN: no repeat.
+        private const int BeginRepeatInitialBlocks = 3;
+        private const int BeginRepeatIntervalBlocks = 50; // 500 ms of 10 ms blocks
         // Mix bus (sdk-multi-stream.md §5.8): a block whose summed peak is within full
         // scale passes unchanged; one past it is scaled down to LimitTarget (attack
         // ramped within the block, release by LimitReleasePerBlock per block), and a
@@ -131,6 +138,7 @@ namespace Hapbeat
             public float Limit = 1f;
             public readonly HashSet<Source> MatchingSources = new HashSet<Source>();
             public uint ByteOffset;
+            public int DataBlocksSent;
             public bool Resolved;
             public bool BeginSent;
             public bool EndSent;
@@ -721,11 +729,17 @@ namespace Hapbeat
                 pcm[i * 2 + 1] = (byte)(value >> 8);
             }
             if (session.Mode == StreamEndpointMode.Legacy)
+            {
                 _legacySink.LegacyData(session.Endpoint, session.ByteOffset, pcm, 0, pcm.Length);
+            }
             else
+            {
+                if (ShouldRepeatBegin(session.DataBlocksSent)) SendBegin(session);
                 _sink.Data(session.Endpoint, session.Identity, session.ByteOffset, pcm, 0, pcm.Length);
+            }
             Interlocked.Add(ref _sentPcmBytes, pcm.Length);
             session.ByteOffset += (uint)pcm.Length;
+            session.DataBlocksSent++;
         }
 
         private static void MixSource(Source source, Session session, int frames, float[] mix)
@@ -972,8 +986,7 @@ namespace Hapbeat
                         }
                         else
                         {
-                            _sink.Begin(session.Endpoint, session.Identity, OutputSampleRate, OutputChannels,
-                                HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
+                            SendBegin(session);
                         }
                         session.BeginSent = true;
                     }
@@ -992,6 +1005,22 @@ namespace Hapbeat
             if (remove == null) return;
             for (int i = 0; i < remove.Count; i++) _sessions.Remove(remove[i]);
         }
+
+        private void SendBegin(Session session)
+        {
+            _sink.Begin(session.Endpoint, session.Identity, OutputSampleRate, OutputChannels,
+                HapbeatProtocol.AUDIO_FORMAT_PCM16, 0, 1f, session.WireTarget);
+        }
+
+        /// <summary>
+        /// Whether the identical v2 BEGIN is re-sent before DATA block
+        /// <paramref name="dataBlocksSent"/> (0-based). Block 0 follows the original
+        /// BEGIN; blocks 1..<see cref="BeginRepeatInitialBlocks"/>-1 and every
+        /// <see cref="BeginRepeatIntervalBlocks"/>-th block are preceded by a repeat.
+        /// </summary>
+        internal static bool ShouldRepeatBegin(int dataBlocksSent) =>
+            dataBlocksSent > 0 &&
+            (dataBlocksSent < BeginRepeatInitialBlocks || dataBlocksSent % BeginRepeatIntervalBlocks == 0);
 
         // Keyed by device endpoint, not session key: an address change on the same
         // device must not skip the guard, since pre-v2 firmware ignores END payloads.

@@ -25,12 +25,18 @@ namespace Hapbeat.Tests
             public readonly List<(string endpoint, ushort rate, byte channels)> BeginFormats =
                 new List<(string endpoint, ushort rate, byte channels)>();
             private readonly object _lock = new object();
+            // The mixer repeats an identical v2 BEGIN for loss protection (StreamBeginRepeatTests);
+            // this sink records each session's BEGIN once.
+            private readonly HashSet<(string, ulong, uint, uint)> _begunSessions =
+                new HashSet<(string, ulong, uint, uint)>();
 
             public void Begin(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity _____,
                 ushort rate, byte channels, byte _, uint __, float ___, string ____)
             {
                 lock (_lock)
                 {
+                    if (!_begunSessions.Add((endpoint.ToString(), _____.Lease.DeviceBootId,
+                            _____.Lease.LeaseTicket, _____.Generation))) return;
                     Begins.Add(endpoint.ToString());
                     BeginTimes.Add((endpoint.ToString(), Stopwatch.GetTimestamp()));
                     BeginTargets.Add(____);

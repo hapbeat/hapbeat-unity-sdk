@@ -16,10 +16,17 @@ namespace Hapbeat.Tests
                 new List<HapbeatProtocol.StreamSessionIdentity>();
             private readonly object _lock = new object();
 
+            // The mixer repeats an identical v2 BEGIN for loss protection (StreamBeginRepeatTests);
+            // this sink records each session's BEGIN once.
             public void Begin(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
                 ushort sampleRate, byte channels, byte format, uint totalSamples, float gain, string target)
             {
-                lock (_lock) Begins.Add(identity);
+                lock (_lock)
+                {
+                    if (Begins.Exists(x => x.Lease.Equals(identity.Lease) && x.Generation == identity.Generation))
+                        return;
+                    Begins.Add(identity);
+                }
             }
 
             public void Data(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
