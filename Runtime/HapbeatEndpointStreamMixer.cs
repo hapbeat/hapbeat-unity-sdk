@@ -722,9 +722,13 @@ namespace Hapbeat
             // The single final saturation to the PCM16 range (§5.3).
             for (int i = 0; i < mix.Length; i++)
             {
-                int value = (int)mix[i];
-                if (value > short.MaxValue) value = short.MaxValue;
-                else if (value < short.MinValue) value = short.MinValue;
+                float sample = mix[i];
+                // Compare before the cast: (int)NaN is int.MinValue (full-scale
+                // negative) and (int)+-Infinity is undefined. A NaN sample is silence.
+                int value = float.IsNaN(sample) ? 0
+                    : sample >= short.MaxValue ? short.MaxValue
+                    : sample <= short.MinValue ? short.MinValue
+                    : (int)sample;
                 pcm[i * 2] = (byte)value;
                 pcm[i * 2 + 1] = (byte)(value >> 8);
             }
@@ -764,7 +768,8 @@ namespace Hapbeat
             {
                 if (position >= sourceFrames)
                 {
-                    if (!source.Playback.Loop) break;
+                    // A zero-length loop has no frame to wrap to (position % 0 is NaN).
+                    if (!source.Playback.Loop || sourceFrames == 0) break;
                     position %= sourceFrames;
                 }
                 int index = (int)position;

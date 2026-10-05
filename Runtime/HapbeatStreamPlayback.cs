@@ -74,7 +74,7 @@ namespace Hapbeat
             Id = Guid.NewGuid().ToString("N");
             BaselineGain = baselineGain;
             _onStopRequested = onStopRequested;
-            Volatile.Write(ref _gain, initialGain);
+            Volatile.Write(ref _gain, FiniteOrZero(initialGain));
             Volatile.Write(ref _pan, 0f);
             Volatile.Write(ref _loop, loop ? 1 : 0);
             Volatile.Write(ref _stopped, 0);
@@ -83,13 +83,19 @@ namespace Hapbeat
         /// <summary>
         /// Overall gain multiplier applied to every sample before sending.
         /// Thread-safe; the streaming scheduler reads this per chunk.
-        /// Clamped to <c>[0, 2]</c> on write.
+        /// Clamped to <c>[0, 2]</c> on write; NaN / infinity is written as 0.
         /// </summary>
         public float Gain
         {
             get => Volatile.Read(ref _gain);
-            set => Volatile.Write(ref _gain, Mathf.Clamp(value, 0f, 2f));
+            set => Volatile.Write(ref _gain, Mathf.Clamp(FiniteOrZero(value), 0f, 2f));
         }
+
+        // Mathf.Clamp passes NaN through, and a NaN gain turns every mixed sample of
+        // the endpoint into NaN. A non-finite value (e.g. a bound parameter divided
+        // by zero) is treated as silence.
+        private static float FiniteOrZero(float value) =>
+            float.IsNaN(value) || float.IsInfinity(value) ? 0f : value;
 
         /// <summary>
         /// Apply an external gain modulator as <c>Gain = BaselineGain × modulator</c>.
@@ -110,7 +116,7 @@ namespace Hapbeat
         public float Pan
         {
             get => Volatile.Read(ref _pan);
-            set => Volatile.Write(ref _pan, Mathf.Clamp(value, -1f, 1f));
+            set => Volatile.Write(ref _pan, Mathf.Clamp(FiniteOrZero(value), -1f, 1f));
         }
 
         /// <summary>
