@@ -188,6 +188,12 @@ namespace Hapbeat
         private readonly Action _beforeStopFinalize;
         private readonly List<Source> _sources = new List<Source>();
         private readonly Dictionary<string, Session> _sessions = new Dictionary<string, Session>();
+        // Sessions that ended while their device was unresolved, kept only for their
+        // source cursors / gains / limiter state. A lease renewal (focus regain,
+        // ReacquireStreamOwnership) leaves the device unresolved for one PING round
+        // trip; the replacement session on the same device resumes from these instead
+        // of frame 0. Entries drop with their sources (RemoveSourceLocked / StopAll).
+        private readonly List<Session> _parkedSessions = new List<Session>();
         private readonly Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint> _nextGenerationByLease =
             new Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint>();
         private uint _nextSyntheticGeneration;
@@ -368,6 +374,7 @@ namespace Hapbeat
                 if (_disposed) return;
                 for (int i = 0; i < _sources.Count; i++) _sources[i].Playback.MarkStopped();
                 _sources.Clear();
+                _parkedSessions.Clear();
                 RebuildSessionMembershipLocked(Stopwatch.GetTimestamp());
                 StartThreadLocked();
             }
@@ -384,6 +391,7 @@ namespace Hapbeat
                 _disposed = true;
                 for (int i = 0; i < _sources.Count; i++) _sources[i].Playback.MarkStopped();
                 _sources.Clear();
+                _parkedSessions.Clear();
                 terminationSessions = new List<Session>(_sessions.Values);
                 _suppressSchedulerTerminationPackets = true;
                 _stopRequested = true;
@@ -489,6 +497,7 @@ namespace Hapbeat
             }
 
             long now = Stopwatch.GetTimestamp();
+            List<Session> retiredSessions = null;
 
             // A device reboot or lease renewal changes its transport identity. End
             // the retired session with the identity it began under before a new
@@ -511,6 +520,8 @@ namespace Hapbeat
                     EndSessionLocked(retired);
                     _sessions.Remove(retired.Key);
                     unassignedSessions.RemoveAt(s);
+                    if (retiredSessions == null) retiredSessions = new List<Session>();
+                    retiredSessions.Add(retired);
                     break;
                 }
             }
@@ -534,6 +545,9 @@ namespace Hapbeat
                 var session = new Session(endpoint.EndPoint, key, endpoint.Address, endpoint.Address,
                     endpoint.Lease, identity, endpoint.Mode);
                 session.Resolved = true;
+                // Only the identity is new: the same device continues every source
+                // from where its previous session left it (no restart from frame 0).
+                CarryCursorsLocked(session, retiredSessions);
                 _sessions.Add(key, session);
             }
 
@@ -855,7 +869,53 @@ namespace Hapbeat
                 session.Gains.Remove(source);
                 session.MatchingSources.Remove(source);
             }
+            for (int i = _parkedSessions.Count - 1; i >= 0; i--)
+            {
+                Session parked = _parkedSessions[i];
+                parked.Positions.Remove(source);
+                parked.Gains.Remove(source);
+                if (parked.Positions.Count == 0) _parkedSessions.RemoveAt(i);
+            }
         }
+
+        private void ParkSessionLocked(Session session)
+        {
+            for (int i = _parkedSessions.Count - 1; i >= 0; i--)
+                if (IsSameDevice(_parkedSessions[i], session.Endpoint, session.Address))
+                    _parkedSessions.RemoveAt(i);
+            _parkedSessions.Add(session);
+        }
+
+        /// <summary>
+        /// Copies source cursors, per-source gains and limiter state into a new session
+        /// from the session it replaces on the same device: one retired in this
+        /// reconcile pass, else one parked after ending while unresolved.
+        /// </summary>
+        private void CarryCursorsLocked(Session session, List<Session> retiredSessions)
+        {
+            Session previous = null;
+            if (retiredSessions != null)
+            {
+                for (int i = 0; i < retiredSessions.Count && previous == null; i++)
+                    if (IsSameDevice(retiredSessions[i], session.Endpoint, session.Address))
+                        previous = retiredSessions[i];
+            }
+            for (int i = 0; i < _parkedSessions.Count; i++)
+            {
+                if (!IsSameDevice(_parkedSessions[i], session.Endpoint, session.Address)) continue;
+                if (previous == null) previous = _parkedSessions[i];
+                _parkedSessions.RemoveAt(i);
+                break;
+            }
+            if (previous == null) return;
+            foreach (var pair in previous.Positions) session.Positions[pair.Key] = pair.Value;
+            foreach (var pair in previous.Gains) session.Gains[pair.Key] = pair.Value;
+            session.Limit = previous.Limit;
+        }
+
+        private static bool IsSameDevice(Session session, IPEndPoint endpoint, string address) =>
+            session.Endpoint.Equals(endpoint) ||
+            string.Equals(session.Address, address, StringComparison.Ordinal);
 
         private void RebuildSessionMembershipLocked(long now)
         {
@@ -873,6 +933,10 @@ namespace Hapbeat
                 foreach (Source source in session.Positions.Keys)
                 {
                     if (session.MatchingSources.Contains(source)) continue;
+                    // An unresolved session keeps the cursor of a source that still
+                    // targets its device, so a replacement session can resume it.
+                    if (!session.Resolved && !source.Playback.IsStopped &&
+                        SessionMatchesSource(session, source)) continue;
                     if (stalePositions == null) stalePositions = new List<Source>();
                     stalePositions.Add(source);
                 }
@@ -920,6 +984,7 @@ namespace Hapbeat
                 double emptySeconds = (now - session.EmptySinceTicks) / (double)Stopwatch.Frequency;
                 if (emptySeconds < EmptySessionLingerSeconds) continue;
                 if (session.BeginSent) EndSessionLocked(session);
+                if (!session.Resolved && session.Positions.Count > 0) ParkSessionLocked(session);
                 if (remove == null) remove = new List<string>();
                 remove.Add(pair.Key);
             }
