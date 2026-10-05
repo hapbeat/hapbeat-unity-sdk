@@ -60,6 +60,12 @@ namespace Hapbeat.Tests
             public int CountData(string endpoint) { lock (_lock) return DataEndpoints.FindAll(x => x == endpoint).Count; }
             public int CountEnds(string endpoint) { lock (_lock) return Ends.FindAll(x => x == endpoint).Count; }
             public int CountBegins(string endpoint) { lock (_lock) return Begins.FindAll(x => x == endpoint).Count; }
+            public int CountNonzeroPackets(string endpoint)
+            {
+                lock (_lock)
+                    return Packets.FindAll(packet => packet.endpoint == endpoint &&
+                        Array.Exists(packet.pcm, value => value != 0)).Count;
+            }
         }
 
         private sealed class CountingSink : IHapbeatEndpointStreamPacketSink
@@ -707,6 +713,38 @@ namespace Hapbeat.Tests
             double elapsedMilliseconds = (begin - end) * 1000.0 / Stopwatch.Frequency;
             Assert.Less(elapsedMilliseconds, 100.0);
             Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, restarted.Status);
+        }
+
+        [Test]
+        public void SilentBeds_KeepDualShotEndpointsReadyAcrossIdleGaps_WithoutMutingShots()
+        {
+            // FPS keeps zero-amplitude sources alongside gun cues. Record packets only;
+            // this test must never instantiate a network client or contact hardware.
+            using var mixer = Create(out var sink);
+            var leftBed = mixer.AddSamples(LoopSamples(), 16000, 1, 0f, 0f, "*/pos_l_arm", true);
+            var rightBed = mixer.AddSamples(LoopSamples(), 16000, 1, 0f, 0f, "*/pos_r_arm", true);
+            WaitFor(() => sink.CountData("192.0.2.10:7700") > 2 && sink.CountData("192.0.2.11:7700") > 2);
+            Assert.Zero(sink.CountNonzeroPackets("192.0.2.10:7700"));
+            Assert.Zero(sink.CountNonzeroPackets("192.0.2.11:7700"));
+            for (int shot = 0; shot < 3; shot++)
+            {
+                // Cross the unmodified SDK's 300 ms idle-session timeout.
+                Thread.Sleep(350);
+                int leftBefore = sink.CountNonzeroPackets("192.0.2.10:7700");
+                int rightBefore = sink.CountNonzeroPackets("192.0.2.11:7700");
+                var clock = Stopwatch.StartNew();
+                mixer.AddSamples(ConstantSamples(0.5f), 16000, 1, 1f, 1f, "*/pos_l_arm", false);
+                mixer.AddSamples(ConstantSamples(0.5f), 16000, 1, 1f, 1f, "*/pos_r_arm", false);
+                WaitFor(() => sink.CountNonzeroPackets("192.0.2.10:7700") > leftBefore &&
+                              sink.CountNonzeroPackets("192.0.2.11:7700") > rightBefore, 100);
+                TestContext.WriteLine($"Dual shot {shot}: both endpoints emitted within {clock.ElapsedMilliseconds} ms.");
+            }
+            Assert.AreEqual(1, sink.CountBegins("192.0.2.10:7700"));
+            Assert.AreEqual(1, sink.CountBegins("192.0.2.11:7700"));
+            Assert.IsEmpty(sink.Ends);
+            leftBed.Stop();
+            rightBed.Stop();
+            WaitFor(() => sink.CountEnds("192.0.2.10:7700") == 1 && sink.CountEnds("192.0.2.11:7700") == 1);
         }
 
         [Test]
