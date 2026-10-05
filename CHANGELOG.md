@@ -9,21 +9,45 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
-### Added（追加）
+## [0.6.0] - Unreleased
 
-- XRI Hand Demo を左右の手ごとに独立した EventMap で出力できるようにしました。`HandsDemoLeftEventMap.asset` は `player_1/pos_l_wrist`、`HandsDemoRightEventMap.asset` は `player_1/pos_r_wrist` を対象にし、既存と同一の clip / gain / entry ID を使います。`HapbeatXRHandSideRouter` が XRI interactor の handedness から grab / poke / UI / snap を対応する Map へ振り分けます。
+StreamClip を **stream session v2**（lease / generation 付きの wire format）へ移行しました。デバイスファームウェア 0.5.0 以降は v2 の stream だけを受け付けるため、**ファーム 0.5.0 以降で StreamClip を使うには SDK 0.6.0 以降が必要**です。SDK 0.6.0 は古いファームに対しては従来形式で送るため、SDK だけを先に更新しても動作します。
+
+### 互換性
+
+| デバイスファームウェア | SDK 0.5.x 以前 | SDK 0.6.0 |
+|---|---|---|
+| 0.4.x 以前（pre-v2） | StreamClip / FIRE とも可 | StreamClip（従来形式へ自動フォールバック）/ FIRE とも可 |
+| 0.5.0 以降（v2） | **StreamClip は無音**（FIRE / PLAY は可） | StreamClip / FIRE とも可 |
 
 ### Breaking changes（破壊的変更）
 
 - endpoint session を再 BEGIN して device buffer を flush していた `HapbeatManager.StopStreamWithFlush()` を削除しました。stream source は返された `HapbeatStreamPlayback.Stop()` で個別停止し、全 source の停止には `StopStream()` を使います。
+- `HapbeatProtocol.BuildStreamBeginPayload` / `BuildStreamDataPayload` を internal にし、session identity を受け取るシグネチャに変更しました。`HapbeatProtocol.BuildStreamDataPacket` は削除しました。
+- `HapbeatClient.SendPing()` は client incarnation を付けた 16 byte の PING を送るようになりました（従来は 8 byte）。古いファームは追加の 8 byte を無視します。
+
+### Added（追加）
+
+- **stream session v2 の wire format** に対応しました。PING/PONG で device から stream lease を取得し、STREAM_BEGIN / DATA / END に lease と generation を付けます。古い END や DATA が新しい session を止めたり混入したりしないため、END 直後の再 BEGIN に固定の待ち時間が要りません。
+- **古いファーム向けの endpoint ごとのフォールバック**（DEC-075）。自分の PING への応答に v2 の拡張が無い device だけを pre-v2 と判定し、その device へは従来形式で送ります。v2 と pre-v2 の device を同じ target に混在させられます。
+- `HapbeatManager.ReacquireStreamOwnership()` を追加しました。別のアプリが同じ device へ stream を始めると、このアプリの lease は superseded になり stream は保留されます（自動では奪い返しません）。ユーザー操作など明示的な契機でこのメソッドを呼ぶと、新しい lease を取得して再開します。アプリがフォーカスを取り戻したときは SDK が自動で呼びます。
+- XRI Hand Demo を左右の手ごとに独立した EventMap で出力できるようにしました。`HandsDemoLeftEventMap.asset` は `player_1/pos_l_wrist`、`HandsDemoRightEventMap.asset` は `player_1/pos_r_wrist` を対象にし、既存と同一の clip / gain / entry ID を使います。`HapbeatXRHandSideRouter` が XRI interactor の handedness から grab / poke / UI / snap を対応する Map へ振り分けます。
+- `HapbeatStreamPlayback` に playback lifetime 内で安定した `Id` と、実行中に読み書きできる `Loop` を追加しました。`Loop` の変更は既存 endpoint の全 source cursor と、後から解決した endpoint の frame 0 cursor の両方へ反映されます。
 
 ### Changed（変更）
 
-- StreamClip の endpoint session は最後の source が抜けた後も最低 300 ms 維持し、その間に追加された source を BEGIN / END なしで同じ session へ合流させます。END 後に同じ exact endpoint へ再 BEGIN する場合も最低 300 ms 待機します。
-- `HapbeatStreamPlayback` に playback lifetime 内で安定した `Id` と、実行中に読み書きできる `Loop` を追加しました。`Loop` の変更は既存 endpoint の全 source cursor と、後から解決した endpoint の frame 0 cursor の両方へ反映されます。
+- StreamClip の multi-stream session lifecycle を contracts（sdk-multi-stream.md）に揃えました。endpoint session は最後の source が抜けた後も最低 300 ms 維持し、その間に追加された source は BEGIN / END なしで同じ session に合流します。END 後に同じ endpoint へ再 BEGIN する際の 300 ms 待機は **pre-v2（ファーム 0.5.0 未満）の device に対してだけ**行います。v2 の device は待たずに再開します。
+- source ごとの gain / pan の変化を block 境界で段差にせず sample 単位で ramp するようにし、mix bus のクリップを soft-knee limiter で抑えるようにしました。
+- Address Override の変更を再生中の stream source にも即時反映するようにしました（再生し直す必要はありません）。
+- device が要求に応答しない unsolicited PONG を時刻同期（RTT / offset）の計算から除外しました。
+- v2 の device が知られている間は、`pingInterval` が 10 秒を超えていても PING を最低 10 秒ごとに送ります。device は最後の PING から 15 秒で待機中の stream lease を破棄するため、それより長い間隔では無操作の後の最初の stream が無音になっていました。設定項目の tooltip にも記載しています。
+- v2 の STREAM_BEGIN を最初の DATA 数 block と以後 500 ms ごとに同一内容で再送します。BEGIN が 1 パケット失われると session 全体が無音になっていたためです。同一の BEGIN は device 側で無視され、buffer はリセットされません。pre-v2 の device には再送しません。
 
 ### Fixed（修正）
 
+- アプリのフォーカス復帰（`ReacquireStreamOwnership()`）のたびに、再生中の one-shot / loop が先頭から再生し直されていた問題を修正しました。同じ device で lease だけが更新された場合は、各 source の再生位置・gain・limiter 状態を新しい session に引き継ぎます。
+- Editor の StreamClip Test Play で、別のアプリに lease を奪われた（superseded）状態から復帰できなかった問題を修正しました。明示的な Test Play の操作で lease を取り直します。
+- gain / pan に NaN や無限大を与えると最大振幅のノイズが出力されたり、長さ 0 の clip を loop 再生すると送信スレッドが例外で止まったりする問題を修正しました。NaN / 無限大は 0 として扱います。
 - XRI Hand Demo の保持触覚を手ごとの first-select / last-select に統一し、同じ手の複数 interactor 間の切替で途中停止しないよう修正しました。Snap Socket の単発触覚は保持ループに重ね、スナップだけでは保持を停止しません。波形・強度・物理挙動は変更していません。
 - XRI Hand Demo の手別 hover/select の開始・終了を手ごとに数えるよう修正し、反対の手が hover 中でも離した手の触覚を停止します。物理 Poke Button は XRPokeFilter の押し込み元を参照して出力先を限定し、hover の表示だけで別の手へ圧力を送らないようにしました。
 - Snap Socket の物体に左右の grab/release と保持用 SequenceTrigger の配線を追加しました。既存の波形・強度・スナップ触覚・XRI の物理挙動は変更していません。

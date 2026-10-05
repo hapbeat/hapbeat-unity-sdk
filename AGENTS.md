@@ -3,7 +3,7 @@
 Single self-contained reference so an AI coding agent can use this SDK correctly
 from one file. Unity package id: `com.hapbeat.sdk`. C# namespace: `Hapbeat`.
 
-- last-verified-against: package 0.5.0 (requires Unity `6000.0`+)
+- last-verified-against: package 0.6.0 (requires Unity `6000.0`+)
 - Source of truth is the code: public runtime API in `Runtime/HapbeatManager.cs`,
   the EventMap model in `Runtime/HapbeatEventMap.cs` + `Runtime/HapbeatEventEntry.cs`,
   WifiUdp routing / addressing in `Runtime/HapbeatClient.cs`, settings in
@@ -79,6 +79,7 @@ public void Ping()
 public void Connect()
 public void Disconnect()
 public void Discover(int timeoutMs = 3000)
+public void ReacquireStreamOwnership()   // explicit takeover after another app superseded this one
 
 public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float gain = 1.0f, string target = null, bool loop = false)
 public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop)
@@ -221,7 +222,19 @@ target the EventMap supplies.
   `Deferred` state and sends no stream packet until that endpoint is discovered.
 - An endpoint session stays armed for at least 300 ms after its last source leaves.
   A source added during that linger joins the same session without another BEGIN.
-  After END, a new BEGIN to the same exact endpoint is delayed by at least 300 ms.
+  Only for legacy (pre-v2, firmware below 0.5.0) devices, a new BEGIN after END to the
+  same endpoint is delayed by at least 300 ms; v2 devices restart immediately.
+- Streams use the v2 session format (lease + generation) on firmware 0.5.0+ and fall
+  back per device to the pre-v2 format on older firmware. Firmware 0.5.0+ needs this
+  SDK 0.6.0+ for streams (FIRE/PLAY work with any version).
+- Stream ownership: if another application starts streaming to the same device, this
+  app's lease is superseded and its streams stay deferred (a warning is logged). The
+  SDK never takes the device back on its own except when the app regains focus; call
+  `HapbeatManager.Instance.ReacquireStreamOwnership()` from an explicit user action.
+  In the Editor, a StreamClip Test Play reacquires automatically. Active sources
+  continue from their current position after a reacquisition.
+- `pingInterval` above 10 s is capped at 10 s while a v2 device is known (the device
+  drops an idle stream lease 15 s after the last PING).
 - `IsConnected` only means the socket is open; use `AliveDeviceCount` / `OnPong` to
   know a device actually answered. StreamClip requires a matching PONG; one-shot
   commands can still use their broadcast fallback.
