@@ -61,7 +61,11 @@ namespace Hapbeat
                  "error silences the SDK until the application is restarted.")]
         public bool autoReconnect = true;
 
-        [Tooltip("Interval in seconds between keep-alive ping messages.")]
+        [Tooltip("Interval in seconds between keep-alive ping messages. While any device " +
+                 "uses the v2 stream format (firmware 0.5.0 and later), the SDK pings at " +
+                 "least every 10 s regardless of this value: the device expires an idle " +
+                 "stream lease 15 s after the last ping, and the first stream after a " +
+                 "longer idle gap would otherwise be silent.")]
         [Range(1f, 60f)]
         public float pingInterval = 5.0f;
 

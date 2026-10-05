@@ -67,6 +67,20 @@ namespace Hapbeat
         /// <summary>True if at least one device is responsive.</summary>
         public bool IsAlive => AliveDeviceCount > 0;
 
+        // v2 firmware expires a non-active stream lease 15 s after its last PING
+        // (stream-session-v2.md "Discovery lease", kLeaseTtlMs). A longer configured
+        // interval would leave the first BEGIN after an idle gap under a dead lease, so
+        // the effective interval is capped while any v2 device is known. 10 s leaves
+        // room for one late PONG round trip.
+        internal const float MaxV2LeasePingIntervalSeconds = 10f;
+
+        /// <summary>
+        /// The keep-alive PING interval actually used: <paramref name="configured"/>,
+        /// capped at <see cref="MaxV2LeasePingIntervalSeconds"/> while a v2 device exists.
+        /// </summary>
+        internal static float EffectivePingInterval(float configured, bool hasV2StreamEndpoints) =>
+            hasV2StreamEndpoints ? Mathf.Min(configured, MaxV2LeasePingIntervalSeconds) : configured;
+
         private float AliveTimeoutSeconds =>
             Mathf.Max(5f, (_config != null ? _config.pingInterval : 5f) * 3f);
 
@@ -334,7 +348,8 @@ namespace Hapbeat
             // Periodic ping + connect status for keep-alive and device display
             if (IsConnected && _config != null && _config.pingInterval > 0)
             {
-                if (Time.realtimeSinceStartup - _lastPingTime >= _config.pingInterval)
+                float pingInterval = EffectivePingInterval(_config.pingInterval, _client.HasV2StreamEndpoints);
+                if (Time.realtimeSinceStartup - _lastPingTime >= pingInterval)
                 {
                     Ping();
                     _client.SendConnectStatus(true, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);

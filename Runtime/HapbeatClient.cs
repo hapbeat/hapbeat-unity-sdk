@@ -512,6 +512,15 @@ namespace Hapbeat
             return _knownDeviceEndpoints.TryGetValue(ipAddress, out endpoint);
         }
 
+        /// <summary>
+        /// Whether a matched reply classified any device as v2 (it holds, or is
+        /// waiting for, a stream lease that only periodic PING keeps alive).
+        /// </summary>
+        internal bool HasV2StreamEndpoints
+        {
+            get { lock (_streamLeaseLock) return !_streamLeases.IsEmpty; }
+        }
+
         /// <summary>Whether a matched reply classified this device IP as pre-v2 firmware.</summary>
         internal bool IsLegacyStreamEndpoint(IPAddress address)
         {
