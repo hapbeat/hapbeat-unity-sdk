@@ -32,6 +32,12 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - PONG で device address または UDP route が変化した際、END / BEGIN を交差経路へ送らず、session の byte cursor と source cursor を維持したまま exact unicast の送信先を移行するよう修正しました。
 - 遅れて解決した endpoint は、他 endpoint 上の進行位置を共有せず source の frame 0 から開始します。
 
+## [0.5.1] - 2026-09-29
+
+### Fixed（修正）
+
+- Editor で clip manifest を探す際、`Assets` 直下を起点にすると `ArgumentOutOfRangeException` になる問題を修正しました。
+
 ## [0.5.0] - 2026-08-27
 
 ### Breaking changes（破壊的変更）
