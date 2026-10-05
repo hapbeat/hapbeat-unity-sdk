@@ -25,17 +25,23 @@ namespace Hapbeat.Tests
             public readonly List<(string endpoint, ushort rate, byte channels)> BeginFormats =
                 new List<(string endpoint, ushort rate, byte channels)>();
             private readonly object _lock = new object();
+            // Every BEGIN packet, repeats included: (endpoint, boot id, ticket, generation).
+            private readonly List<(string endpoint, ulong bootId, uint ticket, uint generation)> _beginPackets =
+                new List<(string endpoint, ulong bootId, uint ticket, uint generation)>();
             // The mixer repeats an identical v2 BEGIN for loss protection (StreamBeginRepeatTests);
-            // this sink records each session's BEGIN once.
-            private readonly HashSet<(string, ulong, uint, uint)> _begunSessions =
-                new HashSet<(string, ulong, uint, uint)>();
+            // this sink records each session's BEGIN once. A session is its identity tuple,
+            // not its route: a repeat sent after a route migration is the same session.
+            private readonly HashSet<(ulong, uint, uint)> _begunSessions =
+                new HashSet<(ulong, uint, uint)>();
 
             public void Begin(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity _____,
                 ushort rate, byte channels, byte _, uint __, float ___, string ____)
             {
                 lock (_lock)
                 {
-                    if (!_begunSessions.Add((endpoint.ToString(), _____.Lease.DeviceBootId,
+                    _beginPackets.Add((endpoint.ToString(), _____.Lease.DeviceBootId,
+                        _____.Lease.LeaseTicket, _____.Generation));
+                    if (!_begunSessions.Add((_____.Lease.DeviceBootId,
                             _____.Lease.LeaseTicket, _____.Generation))) return;
                     Begins.Add(endpoint.ToString());
                     BeginTimes.Add((endpoint.ToString(), Stopwatch.GetTimestamp()));
@@ -62,6 +68,10 @@ namespace Hapbeat.Tests
                     Ends.Add(endpoint.ToString());
                     EndTimes.Add((endpoint.ToString(), Stopwatch.GetTimestamp()));
                 }
+            }
+            public List<(string endpoint, ulong bootId, uint ticket, uint generation)> SnapshotBeginPackets()
+            {
+                lock (_lock) return new List<(string endpoint, ulong bootId, uint ticket, uint generation)>(_beginPackets);
             }
             public int CountData(string endpoint) { lock (_lock) return DataEndpoints.FindAll(x => x == endpoint).Count; }
             public int CountEnds(string endpoint) { lock (_lock) return Ends.FindAll(x => x == endpoint).Count; }
@@ -654,11 +664,21 @@ namespace Hapbeat.Tests
             endpoint = new IPEndPoint(IPAddress.Parse("192.0.2.12"), 7700);
             mixer.ReconcileEndpoints();
 
-            WaitFor(() => sink.CountData("192.0.2.12:7700") > 0);
+            // Run past a BEGIN repeat on the new route: 51 consecutive blocks always
+            // include a periodic repeat (every BeginRepeatIntervalBlocks = 50), so the
+            // repeat-after-migration path is exercised on every run, not by timing.
+            WaitFor(() => sink.CountData("192.0.2.12:7700") > 50, 2000);
             Assert.AreEqual(1, sink.Begins.Count, "route migration must not restart the wire session");
             Assert.IsEmpty(sink.Ends, "route migration must not end the wire session");
             Assert.Greater(sink.DataOffsets.Find(x => x.endpoint == "192.0.2.12:7700").byteOffset, 0,
                 "route migration must preserve the session byte cursor");
+            var beginPackets = sink.SnapshotBeginPackets();
+            var original = beginPackets[0];
+            Assert.IsTrue(beginPackets.TrueForAll(x => x.bootId == original.bootId &&
+                    x.ticket == original.ticket && x.generation == original.generation),
+                "every BEGIN, including repeats after the migration, must carry the original identity");
+            Assert.IsTrue(beginPackets.Exists(x => x.endpoint == "192.0.2.12:7700"),
+                "BEGIN repeats must follow the session to its new route");
         }
 
         [Test]
