@@ -9,9 +9,11 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
-## [0.6.0] - Unreleased
+## [0.6.0] - 2026-10-13
 
 StreamClip を **stream session v2**（lease / generation 付きの wire format）へ移行しました。デバイスファームウェア 0.5.0 以降は v2 の stream だけを受け付けるため、**ファーム 0.5.0 以降で StreamClip を使うには SDK 0.6.0 以降が必要**です。SDK 0.6.0 は古いファームに対しては従来形式で送るため、SDK だけを先に更新しても動作します。
+
+**デバイスファームウェアは最新の公開版への更新を推奨します**（Hapbeat Studio から更新できます）。
 
 ### 互換性
 

@@ -7,6 +7,8 @@ Hapbeat デバイスを Unity から制御する公式 SDK。2D / 3D / XR 対応
 
 要件: **Unity 6 (6000.0) 以上**（動作確認済み: 6000.3.12f1、6000.3.15f1、6000.0.59f2。特にこだわりがなければ、デモ制作で使っている 6000.3.12f1 がおすすめ）
 
+> **デバイスファームウェアは最新の公開版への更新を推奨します。** SDK 0.6.0 は古いファーム（0.4.x 以前）にも従来形式で送れますが、ファーム 0.5.0 以降で StreamClip を使うには SDK 0.6.0 以降が必要です。更新は [Hapbeat Studio](https://studio.hapbeat.com/) から行えます。
+
 ## インストール
 
 Unity Package Manager → `+` → **`Add package from git URL...`** → 以下の URL を入力:
