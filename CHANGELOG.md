@@ -9,6 +9,17 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
+### 追加
+- `HapbeatAvSync`（DEC-093）: この端末の音と触覚の時間差の補正（ms、正 = 触覚を遅らせる、負 = アプリの音を遅らせる）。端末に保存し（PlayerPrefs）、実行時に変えられる。`Split(soundSyncMs, hapticSyncMs, ...)` は、cue 表の素材の同期点（`syncMs`）とこの補正から、音と触覚それぞれの遅らせ量を返す。
+- `HapbeatUnityEventTrigger.FireAfter(delaySeconds)` と `StreamAudioClip(..., startDelaySeconds)`: StreamClip を指定した時間だけ後に、ストリームの時間軸上で正確に開始する（コルーチン待ちのフレーム単位の揺れがない）。
+
+### 変更
+- StreamClip の遅延を一定にした: 別のクリップがストリーム中の端末に新しいクリップを足すと、これまでは先送り分（既定 50 ms）だけ遅れて鳴っていた。先送り済みのブロックに重なるときは、そのセッションを新しい generation で開始し直し、端末に溜まったデータを捨てさせて、新しいクリップの頭から混ぜ直して送る。
+- Trigger の遅延待ちで、StreamClip はコルーチンではなくストリームの時間軸に置く（Command は従来どおりコルーチン）。
+
+### 削除
+- `HapbeatConfig.hapticDelaySeconds`: 音の出力遅延は端末ごとに違うため、プロジェクト共通の設定から `HapbeatAvSync.OffsetMs`（端末ごと）へ移した。
+
 ## [0.6.0] - 2026-10-13
 
 StreamClip を **stream session v2**（lease / generation 付きの wire format）へ移行しました。デバイスファームウェア 0.5.0 以降は v2 の stream だけを受け付けるため、**ファーム 0.5.0 以降で StreamClip を使うには SDK 0.6.0 以降が必要**です。SDK 0.6.0 は古いファームに対しては従来形式で送るため、SDK だけを先に更新しても動作します。
