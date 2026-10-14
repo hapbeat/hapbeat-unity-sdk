@@ -193,8 +193,10 @@ XRI のサンプルシーンは Unity Companion License のため改変版を再
 | Ping Interval (s) | 5 | キープアライブ間隔 |
 | Stream Buffer (s) | 0.05 | ストリームの先行送信バッファ（10–200 ms） |
 | Command Unicast | ON | PLAY / STOP / STOP_ALL を既知デバイスへユニキャスト送信（OFF でブロードキャスト） |
-| Haptic Delay (ms) | 0 | 音声出力遅延に合わせた触覚の遅延補正（0–500 ms） |
+| Auto Reconnect | ON | ソケットエラーで切れた接続を自動で開き直す（2 s から倍々、最大 30 s） |
 | Enable Logging / Verbose Log | ON / OFF | Console へのログ出力 |
+
+音と触覚の時間差の補正はこの設定に含まれません。音声出力の遅延は端末ごとに違うため、`HapbeatAvSync.OffsetMs`（ms、+ = 触覚を遅らせる、− = アプリの音を遅らせる）として端末に保存します（PlayerPrefs）。Editor では Play 中に `Hapbeat > Open Settings` の **Sound / Haptics Offset** で変えられます。アプリではプレイヤーが合わせられるよう、メニュー等にスライダーを置いてください。
 
 ## Edit モード操作
 
