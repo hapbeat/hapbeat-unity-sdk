@@ -3,11 +3,11 @@
 Single self-contained reference so an AI coding agent can use this SDK correctly
 from one file. Unity package id: `com.hapbeat.sdk`. C# namespace: `Hapbeat`.
 
-- last-verified-against: package 0.6.0 (requires Unity `6000.0`+)
+- last-verified-against: package 0.7.0-d1 (development build; latest release 0.6.0; requires Unity `6000.0`+)
 - Source of truth is the code: public runtime API in `Runtime/HapbeatManager.cs`,
   the EventMap model in `Runtime/HapbeatEventMap.cs` + `Runtime/HapbeatEventEntry.cs`,
   WifiUdp routing / addressing in `Runtime/HapbeatClient.cs`, settings in
-  `Runtime/HapbeatConfig.cs`. If this file
+  `Runtime/HapbeatConfig.cs`, sound / haptics timing in `Runtime/HapbeatAvSync.cs`. If this file
   disagrees with the code, the code wins.
 - Canonical docs: https://devtools.hapbeat.com/docs/sdk-integration/unity-sdk/
 - Event id and wire format are defined by **hapbeat-contracts** (e.g.
@@ -63,7 +63,8 @@ breaks wiring. Direct `Play(id, gain)` bypasses the EventMap (gain hardcoded).
 `HapbeatEventEntry` fields: `mode` (`HapticMode.Command` | `HapticMode.StreamClip`),
 `displayName`, `category`, `eventName` (=> `eventId` is `category.eventName`, i.e.
 `<kit-name>.<clip-name>`), `streamClip`, `loop`, `gain` (0..2), `target`,
-`delayOffsetSeconds`, `notes`, `bindings`, `manifestOverride`. Effective wire gain =
+`delayOffsetSeconds` (per-entry, added to this device's `HapbeatAvSync` offset by
+Triggers), `notes`, `bindings`, `manifestOverride`. Effective wire gain =
 `gain × manifest intensity` (`GetEffectiveGain()`).
 
 ## Public runtime API (`HapbeatManager.Instance`, verbatim)
@@ -71,8 +72,8 @@ breaks wiring. Direct `Play(id, gain)` bypasses the EventMap (gain hardcoded).
 ```csharp
 public static HapbeatManager Instance { get; }
 
-public void Play(string eventId, float gain = 1.0f, string displayName = null, string target = null)
-public void PlayScheduled(string eventId, long targetTimeUs, float gain = 1.0f, string target = null)
+public void Play(string eventId, float gain = 1.0f, string displayName = null, string target = null, float pan = 0f)
+public void PlayScheduled(string eventId, long targetTimeUs, float gain = 1.0f, string target = null, float pan = 0f)
 public void Stop(string eventId, string displayName = null, string target = null)
 public void StopAll(string target = null)
 public void Ping()
@@ -83,6 +84,8 @@ public void ReacquireStreamOwnership()   // explicit takeover after another app 
 
 public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float gain = 1.0f, string target = null, bool loop = false)
 public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop)
+public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop,
+    double startDelaySeconds)   // starts that much later on the stream timeline (sample-accurate)
 public void StopStream()
 ```
 Useful state / events:
@@ -94,7 +97,7 @@ public bool IsStreaming { get; }
 public HapbeatStreamPlayback ActivePlayback { get; }
 public IReadOnlyList<HapbeatDevice> DiscoveredDevices { get; }
 public string AppName { get; }     // before <p>/<g> placeholder substitution
-public float  HapticDelaySeconds { get; }
+public float  HapticDelaySeconds { get; }   // = HapbeatAvSync.HapticDelaySeconds (Triggers only)
 public long   TimeOffsetUs { get; }
 public event Action OnConnected, OnDisconnected;
 public event Action<string> OnError;
@@ -104,8 +107,38 @@ public event Action<long> OnPong;  // round-trip time (us)
 `HapbeatStreamPlayback` (returned by `StreamAudioClip`) — write per frame to
 modulate one source: `string Id { get; }`, `float Gain { get; set; }`,
 `float Pan { get; set; }`, `bool Loop { get; set; }`, `float BaselineGain { get; }`,
-`void ApplyGainModulation(float)`,
+`void ApplyGainModulation(float)`, `HapbeatStreamPlaybackStatus Status { get; }`
+(`Deferred` / `Active` / `Stopped`), `HapbeatStreamPlaybackDeferReason DeferReason { get; }`,
 `bool IsStopped { get; }`, `bool IsActive { get; }`, `void Stop()`.
+
+## Sound / haptics timing (`HapbeatAvSync`, static, 0.7.0-d1)
+
+Audio output latency differs per device, so the correction is per device (saved in
+`PlayerPrefs`), not in the project-wide `HapbeatConfig`.
+
+```csharp
+public static float OffsetMs { get; set; }        // this device's offset E, ms, -300..300; + = haptic later, - = the app's sound later. Setting saves it
+public static float DefaultOffsetMs { get; set; } // used while this device has no saved offset (e.g. a per-model value)
+public static bool  HasSavedOffset { get; }
+public static void  ClearSavedOffset()
+public static event Action<float> Changed;        // main thread, value in ms
+public static float HapticDelaySeconds { get; }   // max(0, OffsetMs) / 1000 — what Triggers wait before sending
+public static void  Split(double soundSyncMs, double hapticSyncMs,
+    out double soundDelaySeconds, out double hapticDelaySeconds, bool includeOffset = true)
+public const string PrefsKey = "Hapbeat.AvOffsetMs";
+```
+
+- Triggers apply the positive part of `OffsetMs` (plus the entry's `delayOffsetSeconds`,
+  clamped at 0) by themselves. Direct `Play` / `StreamAudioClip` / `Stop` calls do not.
+- A negative offset means the app's own sound must wait; the SDK never delays audio.
+  An app that plays its own sound calls `Split` (the materials' sync points from the
+  cue table + `OffsetMs`) and fires the sound with `AudioSource.PlayScheduled` after
+  `soundDelaySeconds` and the haptic with `HapbeatUnityEventTrigger.FireAfter(hapticDelaySeconds)`.
+- A StreamClip delayed by a Trigger (or by `startDelaySeconds` / `FireAfter`) is placed
+  on the stream timeline, sample-accurate; Command waits in a coroutine.
+- Editor: `Hapbeat > Open Settings` → **Sound / Haptics Offset** → `Offset (ms)` sets this
+  machine's value in Play mode. Apps let the player match it by ear and body with an
+  in-app slider (e.g. a pause menu).
 
 ## Address Override (0.3.0) — one build, many headsets
 
@@ -162,7 +195,9 @@ Add via `Add Component > Hapbeat/...`. All reference an `HapbeatEventMap` + an e
 - **Hapbeat Collision Trigger** (`HapbeatCollisionTrigger`) — physics On/TriggerEnter,
   2D/3D auto-detected; supports velocity-scaled gain. Attach to the colliding GO.
 - **Hapbeat UnityEvent Trigger** (`HapbeatUnityEventTrigger`) — exposes
-  `public void Fire()`, `public void FireWithGain(float gain)`, `public void Stop()`.
+  `public void Fire()`, `public void FireAfter(float delaySeconds)` (the caller's own
+  haptic delay instead of this device's offset, e.g. from `HapbeatAvSync.Split`),
+  `public void FireWithGain(float gain)`, `public void Stop()`.
   Wire `Fire()` to UI Button `OnClick`, XR Interaction Toolkit events, Animation
   Events, or any UnityEvent.
 - **Hapbeat Sequence Trigger** (`HapbeatSequenceTrigger`) — grab/hold/release phases.
@@ -185,10 +220,10 @@ Add via `Add Component > Hapbeat/...`. All reference an `HapbeatEventMap` + an e
 `port` (UDP, default `7700`) · `appName` (max 16 chars, shown on the device OLED;
 empty = `Application.productName`; supports `<p>` / `<g>`) · `buildOverridePlayer` /
 `buildOverrideGroup` (default `-1`, clamped to `-1..99`; `1-99` pins that axis for the
-whole build) · `pingInterval` (5 s) · `streamSendAheadSeconds` (0.05) · `commandUnicast` (default
-`true`) · `hapticDelaySeconds` (0..0.5,
-audio-latency compensation) · `enableLogging` / `verboseLogging`. Settings window:
-`Hapbeat > Open Settings`.
+whole build) · `autoReconnect` (default `true`; exponential backoff 2 s → 30 s) ·
+`pingInterval` (5 s) · `streamSendAheadSeconds` (0.05) · `commandUnicast` (default
+`true`) · `enableLogging` / `verboseLogging`. Settings window: `Hapbeat > Open Settings`.
+The sound / haptics offset is not here; it is per device (`HapbeatAvSync`, above).
 
 ## Command vs StreamClip (same EventMap, branches on `mode`)
 
