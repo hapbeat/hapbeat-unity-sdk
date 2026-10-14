@@ -7,22 +7,22 @@ No XR device required.
 
 | Zone | What you do | SDK feature on display |
 |---|---|---|
-| **Z1 Bowling** | Left-click to launch a ball into pins | `HapbeatCollisionTrigger` (VelocityScaled), Batch Setup |
-| **Z2 Door** | Press F to open / close the door | `HapbeatStateBehaviour` on Animator states (Open / Closed / Locked) |
-| **Z3 Fishing** | Left-click to grab / hold / release the hook | `HapbeatSequenceTrigger` (Fire → Loop → Stop) + `HapbeatParameterBinding` (velocity → gain modulation) |
-| **Z4 Stream Console** | Drag the slider, press Space to start the stream | `HapbeatTickEmitter` on a UI Slider + dynamic `HapbeatStreamPlayback.Gain` / `Pan` |
-| **Z5 Target Range** | Hold left mouse to charge, release to fire | `ChargeShooter` (script directly calling `HapbeatManager.StreamAudioClip` with loop / shot delays) + `HapbeatUnityEventTrigger` on target hits |
+| **Z1 Bowling** | Left-click to launch a ball into the pins (Space resets them) | `HapbeatCollisionTrigger` (VelocityScaled) on `BowlingPin.prefab`, shared by all 6 pins |
+| **Z2 Door** | F opens / closes the door, G slams it, L locks / unlocks it | `HapbeatStateBehaviour` on the Animator states `Open` / `Closed` / `Slam` / `LockEngage` / `LockRelease` / `LockedRattle` |
+| **Z3 Fishing** | Hold the left mouse button to hang an object on the line, release to drop it | `HapbeatSequenceTrigger` (Start → Loop → Stop) called from `FishingController` + `HapbeatParameterBinding` (object velocity → loop gain) |
+| **Z4 Stream Console** | Space starts / stops the stream; drag the Gain / Pan sliders | `HapbeatUnityEventTrigger` (looping StreamClip) + `HapbeatParameterBinding` on each slider (slider value → stream gain / pan) + `HapbeatTickEmitter` (slider ticks). `AddressOverridePanel` sets the player / group override at runtime |
+| **Z5 Charge & Shoot** | Hold the left mouse button to charge, release to fire | `ChargeShooter` calls `HapbeatManager.StreamAudioClip` directly (no Trigger component) and scales the charge loop with `ApplyGainModulation`; `TargetReceiver` → `HapbeatUnityEventTrigger` on target hits |
 
-Scene-wide hotkeys (`GlobalHotkeys.cs`):
+Scene-wide controls:
 
-- **Q** — fire `manual_fire`
-- **1–5** — fire `burst` with scaled gain
-- **P** — `HapbeatManager.Ping()` (shows round-trip)
+- **WASD** / mouse — move / look
+- **Tab** — lock / unlock the cursor (unlock it to use UI)
+- **1–5** — switch zones (`ZoneSwitcher` deactivates every zone except the current one)
+- **Q** — fire `Z5_tar_hit_light` once (`HapbeatKeyDispatcher` → `HapbeatUnityEventTrigger`)
+- **P** — `HapbeatManager.Ping()`; the HUD shows the round-trip time (`GlobalHotkeys`)
 
-The **Target Picker** UI at the top of the scene (Both / Neck / Arm) switches
-the runtime target for Z4 / Z5 / hotkey events. Z1–Z3 keep their target fixed
-on the EventMap entry — a side-by-side comparison of "design-time target" vs
-"runtime-overridden target".
+Q and P are wired as UnityEvents on `[Hapbeat Event Router]`; `GlobalHotkeys`
+only updates the HUD when a Pong arrives.
 
 ## Getting started
 
@@ -32,7 +32,7 @@ In Package Manager, open the Hapbeat SDK package and import **Showcase**.
 Files land at `Assets/Samples/Hapbeat SDK/<version>/Showcase/`:
 
 - `Showcase.unity` (the scene)
-- `EventMaps/ShowcaseEventMap.asset` (~18 entries)
+- `EventMaps/ShowcaseEventMap.asset` (18 entries) + `ShowcaseEventMap.md` (a readable summary)
 - `Animation/DoorAnimator.controller` + per-state `.anim` clips
 - `Kit/showcase-kit/` (manifest + clips, schema 2.0.0)
 - `Audio/`, `Scripts/`, `Models/`, `Textures/`, `Materials/`, `Prefabs/`
@@ -41,7 +41,7 @@ Files land at `Assets/Samples/Hapbeat SDK/<version>/Showcase/`:
 
 Open `Assets/Samples/Hapbeat SDK/<version>/Showcase/Showcase.unity` and press
 Play. Make sure your Hapbeat device is online (via Studio or the Helper).
-WASD to move, mouse to look, then visit each Zone.
+Press 1–5 to switch zones; WASD to move, mouse to look.
 
 > **Note** — if you intend to edit the sample (scene, EventMap, scripts, etc.),
 > copy the Showcase folder somewhere under `Assets/` first. Re-importing the
@@ -53,25 +53,23 @@ Studio or the Helper and deploy the `showcase-kit` to the device.
 
 ## EventMap layout
 
-The Showcase uses **schema 2.0.0** Kit manifests (Studio's current format).
-Each `event_id` has the form `showcase-kit.<name>`. All entries are
-**StreamClip** by default so the device only needs Wi-Fi connectivity — no
-firmware-side Kit install required.
+`EventMaps/ShowcaseEventMap.asset` has 18 entries, all **StreamClip**, so the
+device only needs Wi-Fi connectivity — no Kit install on the device.
+`EventMaps/ShowcaseEventMap.md` lists every entry (clip, gain, bindings); it is
+generated from the `.asset` by **Hapbeat → Export Event Map**.
 
-Key entries:
-
-| Zone | Entry | Loop | Notes |
+| Zone | Entry | Loop | Used by |
 |---|---|:---:|---|
-| Z1 | `z1_pin_hit` | – | Fired per-pin via `HapbeatCollisionTrigger` |
-| Z2 | `z2_door_{open, close, lock, unlock, rattle, slam}` | – | Per-state via `HapbeatStateBehaviour` |
-| Z3 | `z3_hook_start` / `z3_hook_loop` / `z3_hook_release` | loop | `HapbeatSequenceTrigger` Fire / Loop / Stop |
-| Z4 | `z4_slider_click` | – | `HapbeatTickEmitter` detent ticks |
-| Z4 | `z4_stream_loop` | loop | Long-form stream demo |
-| Z5 | `z5_charge_loop` | loop | Charge rumble while LMB held |
-| Z5 | `z5_charge_thd` | – | Fires once at threshold cross |
-| Z5 | `z5_shot_{light, heavy}` | – | Release shot (variant chosen by charge level) |
-| Z5 | `z5_tar_hit_{light, heavy}` | – | Target receiver impact via `HapbeatUnityEventTrigger` |
-| Hotkey | `manual_fire`, `burst` | – | Scene-wide Q / 1-5 keys |
+| Z1 | `Z1_pin_hit` | – | `HapbeatCollisionTrigger` on each pin |
+| Z2 | `Z2_door_open` / `Z2_door_close` / `Z2_door_slam` | – | `HapbeatStateBehaviour` on `Open` / `Closed` / `Slam` |
+| Z2 | `Z2_door_lock` / `Z2_door_unlock` / `Z2_door_rattle` | – | `HapbeatStateBehaviour` on `LockEngage` / `LockRelease` / `LockedRattle` |
+| Z3 | `Z3_hook_start` / `Z3_hook_loop` / `Z3_hook_release` | loop (`Z3_hook_loop`) | `HapbeatSequenceTrigger` Start / Loop / Stop; the loop entry carries the velocity → gain binding |
+| Z4 | `Z4_stream_loop` | loop | `HapbeatUnityEventTrigger` (Space); the entry carries the slider → gain / pan bindings |
+| Z4 | `Z4_slider_tick` | – | `HapbeatTickEmitter` on the Gain / Pan sliders |
+| Z5 | `Z5_charge_loop` | loop | `ChargeShooter`: rumble while charging |
+| Z5 | `Z5_charge_thd` | – | `ChargeShooter`: once when the charge crosses the threshold |
+| Z5 | `Z5_shot_light` / `Z5_shot_heavy` | – | `ChargeShooter`: on release (chosen by charge level) |
+| Z5 | `Z5_tar_hit_light` / `Z5_tar_hit_heavy` | – | `HapbeatUnityEventTrigger` from `TargetReceiver.OnHitLight` / `OnHitHeavy`; Q also fires `Z5_tar_hit_light` |
 
 `gain` and `intensity` semantics: **effective gain = `entry.gain × manifest.intensity × per-trigger modulators`**.
 Set `entry.gain = 1.0` in the EventMap to use the authored manifest intensity
@@ -88,7 +86,9 @@ After you've validated StreamClip, you can move any entry to Command mode for:
 In the EventMap, switch the entry `Mode` from `StreamClip` to `Command` and
 make sure the device has the corresponding Kit deployed. The entry's
 `category + eventName` form the wire `event_id`
-(e.g. `showcase-kit.z1_pin_hit`).
+(e.g. `showcase-kit.z1_pin_hit`). `Z2_door_open`, `Z2_door_close`,
+`Z3_hook_loop`, `Z4_stream_loop` and `Z5_charge_loop` have no
+`category` / `eventName` yet — fill them in before switching those entries.
 
 ## About the `showcase-kit`
 
@@ -104,6 +104,7 @@ matching the pattern under `Assets/HapbeatSDK/Kits/`.
 Each EventMap entry also has an optional **manifest override** field next to
 the Test Play button. When set, the SDK looks up `intensity` from that
 specific manifest first. Leave it empty for auto-discovery across all kits.
+Every Showcase entry sets it to `showcase-kit-manifest.json`.
 
 ## Known constraints
 
