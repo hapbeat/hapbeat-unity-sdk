@@ -64,7 +64,7 @@ namespace Hapbeat
         private bool _warnedMissingIntensity;
 
         // Coroutines spawned via StartHapticDelayCoroutine, representing
-        // Fire / Stop requests waiting on hapticDelaySeconds. Tracked so
+        // Fire / Stop requests waiting on the haptic delay (HapbeatAvSync). Tracked so
         // HapbeatManager.OnHapticDelayChanged can flush them when the user
         // edits latency mid-Play (otherwise stale coroutines fire late with
         // the previous delay, causing timing chaos / burst delivery).
@@ -83,7 +83,7 @@ namespace Hapbeat
 
         /// <summary>
         /// Stop and discard all Fire / Stop coroutines that are currently
-        /// waiting on the global <see cref="HapbeatConfig.hapticDelaySeconds"/>
+        /// waiting on the global <see cref="HapbeatManager.HapticDelaySeconds"/>
         /// (or per-entry offset) before delivering to the device.
         /// <para>
         /// Active StreamClip playbacks (loops, ongoing sequences), the mixer
@@ -105,7 +105,7 @@ namespace Hapbeat
         /// <summary>
         /// Start a coroutine that represents a Fire / Stop request waiting on
         /// the latency-compensation delay. Tracks the coroutine so it can be
-        /// flushed when <c>hapticDelaySeconds</c> changes during Play, and
+        /// flushed when <see cref="HapbeatAvSync.OffsetMs"/> changes, and
         /// auto-removes itself from the tracker on natural completion.
         /// </summary>
         protected Coroutine StartHapticDelayCoroutine(IEnumerator routine)
@@ -238,14 +238,13 @@ namespace Hapbeat
 
         /// <summary>
         /// Effective fire-time deferral (seconds) for this entry. Combines the
-        /// global <see cref="HapbeatConfig.hapticDelaySeconds"/> with the
+        /// global <see cref="HapbeatManager.HapticDelaySeconds"/> (this device's offset, DEC-093) with the
         /// per-entry <see cref="HapbeatEventEntry.delayOffsetSeconds"/> and
         /// clamps to >= 0 (no time-travel).
         /// <para>
         /// Used to compensate audio-output latency (e.g. Bluetooth headphones) by
         /// holding back the Hapbeat haptic so it aligns with the speakers /
-        /// headphones output. See <c>HapbeatConfig.hapticDelaySeconds</c> for
-        /// device-specific guidance.
+        /// headphones output. See <see cref="HapbeatAvSync"/>.
         /// </para>
         /// </summary>
         protected float ComputeEffectiveDelaySeconds(HapbeatEventEntry entry)
@@ -302,7 +301,15 @@ namespace Hapbeat
         /// Fire→Stop interval is preserved.
         /// </para>
         /// </summary>
-        protected void FireHaptic()
+        protected void FireHaptic() => FireHaptic(null);
+
+        /// <summary>
+        /// <paramref name="delaySeconds"/>: the haptic's delay as the caller worked it out (e.g.
+        /// <see cref="HapbeatAvSync.Split"/>, which already holds this device's offset), used instead of
+        /// <see cref="ComputeEffectiveDelaySeconds"/>; null = that. A StreamClip entry starts that much later on the
+        /// stream timeline (sample-accurate); a Command entry waits in a coroutine.
+        /// </summary>
+        protected void FireHaptic(float? delaySeconds)
         {
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] Fire() called on {name} ({GetType().Name} entryId={_entryId})", this);
@@ -350,8 +357,8 @@ namespace Hapbeat
                 return;
             }
 
-            float delay = ComputeEffectiveDelaySeconds(entry);
-            if (delay > 0f)
+            float delay = delaySeconds.HasValue ? Mathf.Max(0f, delaySeconds.Value) : ComputeEffectiveDelaySeconds(entry);
+            if (delay > 0f && entry.mode != HapticMode.StreamClip)
             {
                 if (_verboseLog)
                     Debug.Log($"[Hapbeat] Fire deferred by {delay * 1000f:F0}ms on {name} " +
@@ -361,7 +368,7 @@ namespace Hapbeat
                 return;
             }
 
-            FireHapticImmediate(entry);
+            FireHapticImmediate(entry, delay);
         }
 
         private IEnumerator FireHapticAfterDelay(HapbeatEventEntry entry, float delay)
@@ -378,7 +385,8 @@ namespace Hapbeat
             FireHapticImmediate(entry);
         }
 
-        private void FireHapticImmediate(HapbeatEventEntry entry)
+        /// <param name="startDelaySeconds">StreamClip only: where the clip starts on the stream timeline.</param>
+        private void FireHapticImmediate(HapbeatEventEntry entry, float startDelaySeconds = 0f)
         {
             string baseName = string.IsNullOrEmpty(entry.displayName) ? entry.GetSummary() : entry.displayName;
             // GameObject 名を prefix してログでどの trigger 由来か分かるようにする
@@ -466,7 +474,7 @@ namespace Hapbeat
                                       $"intensity={(entry.CachedManifestIntensity > 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
                                       $"baseline={baselineGain:F2} initialMod={initialMod:F2} initial={initialGain:F2} loop={entry.loop}", this);
                         _activePlayback = HapbeatManager.Instance.StreamAudioClip(
-                            entry.streamClip, baselineGain, initialGain, target, entry.loop);
+                            entry.streamClip, baselineGain, initialGain, target, entry.loop, startDelaySeconds);
 
                         // pan binding (Output=StreamPan) も同様に Self → Children → Parent で探索し
                         // initial pan を pre-seed (gain と同様の race 対策)。無ければ script の _pan。

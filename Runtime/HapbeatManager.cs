@@ -183,33 +183,32 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Global haptic-side latency compensation (seconds). All Trigger-based
+        /// Global haptic-side latency compensation (seconds): the positive part of this device's
+        /// sound / haptics offset (<see cref="HapbeatAvSync.OffsetMs"/>, DEC-093). All Trigger-based
         /// Fire / Stop calls add this to the per-entry <c>delayOffsetSeconds</c>
         /// and clamp at zero to compute the effective deferral. Direct callers
         /// of <c>Play / StreamAudioClip / Stop</c> bypass this — Triggers are
-        /// the canonical integration point.
+        /// the canonical integration point. A negative offset (the sound later) is the app's to apply to its
+        /// own sound (<see cref="HapbeatAvSync.Split"/>).
         /// </summary>
-        public float HapticDelaySeconds => _config != null ? _config.hapticDelaySeconds : 0f;
+        public float HapticDelaySeconds => HapbeatAvSync.HapticDelaySeconds;
 
         /// <summary>
-        /// Raised when <see cref="HapbeatConfig.hapticDelaySeconds"/> changes
-        /// during Play mode. Subscribers (Trigger / Event instances)
+        /// Raised when <see cref="HapbeatAvSync.OffsetMs"/> changes. Subscribers (Trigger / Event instances)
         /// should flush their pending delay coroutines so the new latency value
         /// takes effect immediately on subsequent Fire / Stop calls.
         /// <para>
         /// Active StreamClip playbacks, mixer session state, and SequenceTrigger
         /// internal coroutines (start-shot → loop start delay) are <b>not</b>
         /// affected. Only the per-call Fire/Stop deferral that captured the
-        /// old <c>hapticDelaySeconds</c> value gets cancelled.
+        /// old offset gets cancelled.
         /// </para>
         /// </summary>
         public static event System.Action OnHapticDelayChanged;
 
         /// <summary>
-        /// Invoked by <see cref="HapbeatConfig.OnValidate"/> when the user edits
-        /// <c>hapticDelaySeconds</c> in the Inspector during Play. Public so
-        /// custom UIs that drive the field via code (instead of SerializedObject)
-        /// can also fan out the notification.
+        /// Invoked by <see cref="HapbeatAvSync"/> when the offset changes. Public so
+        /// custom latency settings can also fan out the notification.
         /// </summary>
         public static void NotifyHapticDelayChanged()
         {
@@ -747,6 +746,16 @@ namespace Hapbeat
         /// </summary>
         public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop)
         {
+            return StreamAudioClip(clip, baselineGain, initialGain, target, loop, 0);
+        }
+
+        /// <summary>
+        /// Same as the 5-arg overload, starting <paramref name="startDelaySeconds"/> after the call on the stream
+        /// timeline: sample-accurate, and the same latency whether or not other clips are streaming to the device
+        /// (DEC-093). Use it instead of waiting before the call.
+        /// </summary>
+        public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop, double startDelaySeconds)
+        {
             if (!EnsureConnected()) return null;
             if (clip == null)
             {
@@ -758,7 +767,7 @@ namespace Hapbeat
             // endpoint instead of broadcasting target-less STREAM_DATA. The returned
             // handle exposes Deferred/Active/Stopped through Status.
             HapbeatStreamPlayback playback = GetEndpointStreamMixer().Add(
-                clip, baselineGain, initialGain, target, loop);
+                clip, baselineGain, initialGain, target, loop, startDelaySeconds);
             if (playback.Status == HapbeatStreamPlaybackStatus.Deferred)
             {
                 Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: no addressed WifiUdp endpoint matches target '{target}'. STREAM_DATA was not broadcast.");

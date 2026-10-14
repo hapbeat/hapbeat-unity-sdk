@@ -71,6 +71,13 @@ namespace Hapbeat
         // and then periodically. Legacy firmware restarts on every BEGIN: no repeat.
         private const int BeginRepeatInitialBlocks = 3;
         private const int BeginRepeatIntervalBlocks = 50; // 500 ms of 10 ms blocks
+        // Re-splice (DEC-093): a source due inside blocks already sent ahead would play late by up to the send-ahead
+        // (it joins behind the queued data). When the device holds more than its BEGIN flush threshold (512 frames =
+        // 32 ms; this margin covers packets in flight), the session restarts under a new generation from the source's
+        // start: firmware drops the queued data on that BEGIN and the re-mixed blocks follow at once.
+        private const double RespliceMinQueuedSeconds = 0.04;
+        // One pass never sends more than this many blocks to a session (a stalled thread catches up gradually).
+        private const int MaxBlocksPerPass = 50;
         // Mix bus (sdk-multi-stream.md §5.8): a block whose summed peak is within full
         // scale passes unchanged; one past it is scaled down to LimitTarget (attack
         // ramped within the block, release by LimitReleasePerBlock per block), and a
@@ -100,6 +107,8 @@ namespace Hapbeat
             public readonly string AuthoredTarget;
             public string EffectiveTarget;
             public readonly HapbeatStreamPlayback Playback;
+            // Mixer-clock time (s) its first frame is due on the stream timeline (Add time + its start delay).
+            public double StartSec;
 
             public Source(AudioClip clip, HapbeatStreamPlayback playback, string target)
             {
@@ -129,8 +138,12 @@ namespace Hapbeat
             public string Address;
             public string WireTarget;
             public readonly HapbeatProtocol.StreamLeaseIdentity Lease;
-            public readonly HapbeatProtocol.StreamSessionIdentity Identity;
+            // Replaced by a re-splice (a new generation on the same lease).
+            public HapbeatProtocol.StreamSessionIdentity Identity;
             public readonly StreamEndpointMode Mode;
+            // Mixer-clock time (s) the next block this session sends is due: block k plays about the network latency
+            // after its due time. Kept at "now" while the session sends nothing, so resuming never sends old silence.
+            public double DueSec = double.NegativeInfinity;
             public readonly Dictionary<Source, double> Positions = new Dictionary<Source, double>();
             // Channel gains each source was mixed with at the end of the previous block (§5.7).
             public readonly Dictionary<Source, ChannelGains> Gains = new Dictionary<Source, ChannelGains>();
@@ -206,6 +219,11 @@ namespace Hapbeat
             new Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint>();
         private uint _nextSyntheticGeneration;
         private Thread _thread;
+        // The stream timeline: source start times and session due times are seconds on this clock.
+        private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private double Now => _clock.Elapsed.TotalSeconds;
+        // Set by a re-splice so the scheduler sends the re-mixed blocks without waiting out its sleep.
+        private volatile bool _wakeRequested;
         private volatile bool _stopRequested;
         private volatile bool _suppressSchedulerTerminationPackets;
         private float _sendAheadSeconds;
@@ -307,41 +325,90 @@ namespace Hapbeat
             Interlocked.Exchange(ref _maxMixTicks, 0);
         }
 
+        /// <param name="startDelaySeconds">The source starts this long after the call on the stream timeline
+        /// (sample-accurate, DEC-093); 0 = at once. Every source plays the same network latency after its due
+        /// time, whether or not others are streaming to the same device (re-splice).</param>
         public HapbeatStreamPlayback Add(AudioClip clip, float baselineGain, float initialGain,
-            string authoredTarget, bool loop)
+            string authoredTarget, bool loop, double startDelaySeconds = 0)
         {
             if (clip == null) return null;
             RefreshSendAheadSeconds();
             var playback = new HapbeatStreamPlayback(
                 baselineGain, initialGain, loop, OnPlaybackStopRequested);
-            var source = new Source(clip, playback, authoredTarget);
-            lock (_lock)
-            {
-                ThrowIfDisposed();
-                _sources.Add(source);
-                ReconcileEndpointsLocked();
-                UpdatePlaybackStatesLocked();
-                StartThreadLocked();
-            }
-            return playback;
+            return AddSource(new Source(clip, playback, authoredTarget), startDelaySeconds);
         }
 
         internal HapbeatStreamPlayback AddSamples(float[] samples, int sampleRate, int channels,
-            float baselineGain, float initialGain, string target, bool loop)
+            float baselineGain, float initialGain, string target, bool loop, double startDelaySeconds = 0)
         {
             RefreshSendAheadSeconds();
             var playback = new HapbeatStreamPlayback(
                 baselineGain, initialGain, loop, OnPlaybackStopRequested);
-            var source = new Source(samples, sampleRate, channels, playback, target);
+            return AddSource(new Source(samples, sampleRate, channels, playback, target), startDelaySeconds);
+        }
+
+        private HapbeatStreamPlayback AddSource(Source source, double startDelaySeconds)
+        {
             lock (_lock)
             {
                 ThrowIfDisposed();
+                source.StartSec = Now + Math.Max(0, startDelaySeconds);
                 _sources.Add(source);
                 ReconcileEndpointsLocked();
+                RespliceLocked(source);
                 UpdatePlaybackStatesLocked();
                 StartThreadLocked();
             }
-            return playback;
+            return source.Playback;
+        }
+
+        /// <summary>
+        /// Puts <paramref name="source"/> at its start on every session that already sent the blocks it falls in
+        /// (see <see cref="RespliceMinQueuedSeconds"/>): the other sources' cursors go back to that block, the session
+        /// ENDs its generation and BEGINs a new one, and the scheduler re-sends from there at once. Sessions that did
+        /// not send that far, legacy sessions (no generations), or a queue too short to be flushed are left alone
+        /// (the source then joins at the next unsent block). A one-shot that finished inside the re-sent blocks has
+        /// already been removed: its last few ms are not sent again.
+        /// </summary>
+        private void RespliceLocked(Source source)
+        {
+            double now = Now;
+            foreach (Session session in _sessions.Values)
+            {
+                if (!session.MatchingSources.Contains(source) || !session.BeginSent || session.EndSent ||
+                    session.Mode != StreamEndpointMode.V2 || session.DataBlocksSent == 0) continue;
+                if (source.StartSec >= session.DueSec - ChunkSeconds * 0.5) continue;
+                if (session.DueSec - now < RespliceMinQueuedSeconds) continue;
+                int blocks = (int)Math.Round((session.DueSec - Math.Max(now, source.StartSec)) / ChunkSeconds);
+                if (blocks <= 0) continue;
+                HapbeatProtocol.StreamSessionIdentity next = AllocateSessionIdentity(session.Endpoint, session.Lease);
+                if (session.Lease.IsValid && !next.IsValid) continue;
+
+                double from = session.DueSec - blocks * ChunkSeconds;
+                var cursors = new List<Source>(session.Positions.Keys);
+                foreach (Source other in cursors)
+                {
+                    int frames = other.Samples.Length / other.Channels;
+                    double position;
+                    if (from < other.StartSec) position = (from - other.StartSec) * other.SampleRate;
+                    else
+                    {
+                        position = session.Positions[other] - blocks * ChunkSeconds * other.SampleRate;
+                        if (position < 0) position = other.Playback.Loop && frames > 0 ? (position % frames + frames) % frames : 0;
+                    }
+                    session.Positions[other] = position;
+                }
+                // The new source enters at its start (never part way into it).
+                session.Positions[source] = Math.Min(0, (from - source.StartSec) * source.SampleRate);
+
+                _sink.End(session.Endpoint, session.Identity);
+                session.Identity = next;
+                session.ByteOffset = 0;
+                session.DataBlocksSent = 0;
+                SendBegin(session);
+                session.DueSec = from;
+                _wakeRequested = true;
+            }
         }
 
         /// <summary>Called after PONG callbacks have been dispatched on Unity's main thread.</summary>
@@ -607,8 +674,6 @@ namespace Hapbeat
             const int frames = (int)(OutputSampleRate * ChunkSeconds);
             var mix = new float[frames * OutputChannels];
             var pcm = new byte[mix.Length * 2];
-            var watch = Stopwatch.StartNew();
-            double sentSeconds = 0;
             bool observedNaturalCompletion = false;
             try
             {
@@ -616,6 +681,8 @@ namespace Hapbeat
                 {
                     long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
                     long mixStarted = Stopwatch.GetTimestamp();
+                    double mixStartedSec = Now;
+                    _wakeRequested = false;
                     bool hasSources;
                     lock (_lock)
                     {
@@ -634,10 +701,21 @@ namespace Hapbeat
                             observedNaturalCompletion = !hasSources;
                             break;
                         }
+                        // Each streaming session sends every block due before now + send-ahead (a fresh session:
+                        // a burst from now; a re-spliced one: the re-mixed blocks too). An idle one stays at now.
+                        double clock = Now, ahead = Math.Max(0.01f, Volatile.Read(ref _sendAheadSeconds));
                         foreach (var session in _sessions.Values)
                         {
                             if (session.BeginSent && !session.EndSent && session.MatchingSources.Count > 0)
-                                MixAndSendSessionLocked(session, frames, mix, pcm);
+                            {
+                                if (session.DueSec < clock - ChunkSeconds) session.DueSec = clock;
+                                for (int b = 0; b < MaxBlocksPerPass && session.DueSec < clock + ahead; b++)
+                                {
+                                    MixAndSendSessionLocked(session, frames, mix, pcm);
+                                    session.DueSec += ChunkSeconds;
+                                }
+                            }
+                            else if (session.DueSec < clock) session.DueSec = clock;
                         }
                         if (RemoveCompletedSourcesLocked())
                         {
@@ -655,10 +733,8 @@ namespace Hapbeat
                         Interlocked.Add(ref _schedulerAllocatedBytes, allocatedBytes);
                     UpdateMaximum(ref _maxMixTicks, mixTicks);
 
-                    sentSeconds += ChunkSeconds;
-                    float ahead = Math.Max(0.01f, Volatile.Read(ref _sendAheadSeconds));
-                    double sleep = sentSeconds - watch.Elapsed.TotalSeconds - ahead;
-                    if (sleep > 0) SleepPrecisely(sleep);
+                    // The next block is due one chunk later; a re-splice wakes the loop early.
+                    SleepPrecisely(ChunkSeconds - (Now - mixStartedSec));
                 }
             }
             finally
@@ -748,7 +824,10 @@ namespace Hapbeat
 
         private static void MixSource(Source source, Session session, int frames, float[] mix)
         {
-            if (!session.Positions.TryGetValue(source, out double position)) position = 0;
+            // First block on this session: where the source's start falls in it (negative = later in the block or
+            // after it); one that is already past (a deferred source, an endpoint joining late) starts at frame 0.
+            if (!session.Positions.TryGetValue(source, out double position))
+                position = Math.Min(0, (session.DueSec - source.StartSec) * source.SampleRate);
             double step = source.SampleRate / (double)OutputSampleRate;
             float gain = source.Playback.Gain;
             source.Playback.GetStereoChannelGains(out float panL, out float panR);
@@ -766,6 +845,12 @@ namespace Hapbeat
             int sourceFrames = source.Samples.Length / source.Channels;
             for (int frame = 0; frame < frames; frame++)
             {
+                if (position < 0)
+                {
+                    // Not started yet (a start delay, or a source placed mid-block).
+                    position += step;
+                    continue;
+                }
                 if (position >= sourceFrames)
                 {
                     // A zero-length loop has no frame to wrap to (position % 0 is NaN).
@@ -1106,7 +1191,7 @@ namespace Hapbeat
         {
             const double spinThresholdSeconds = 0.016;
             var watch = Stopwatch.StartNew();
-            while (!_stopRequested)
+            while (!_stopRequested && !_wakeRequested)
             {
                 double remaining = seconds - watch.Elapsed.TotalSeconds;
                 if (remaining <= 0) return;

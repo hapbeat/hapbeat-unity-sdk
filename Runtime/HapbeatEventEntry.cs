@@ -187,7 +187,7 @@ namespace Hapbeat
 
         // ---- Latency offset ----
 
-        [Tooltip("Per-entry delay offset (seconds), added to HapbeatConfig.hapticDelaySeconds (global).\n" +
+        [Tooltip("Per-entry delay offset (seconds), added to this device's sound / haptics offset (HapbeatAvSync, global).\n" +
                  "  Positive: fire later than global (e.g. material whose audio attack is slow).\n" +
                  "  Negative: fire earlier than global (the sum is clamped to >= 0).\n\n" +
                  "Examples:\n" +

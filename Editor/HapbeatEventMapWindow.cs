@@ -1831,16 +1831,16 @@ namespace Hapbeat.Editor
                     "For StreamClip with bindings: multiplied with the binding's StreamGain output.\n" +
                     "Example: Binding StreamGain = 1.0, entry Gain = 0.5 → stream is sent at 0.5 × samples"));
 
-            // Delay offset (per-entry latency tweak; added to HapbeatConfig.hapticDelaySeconds)
+            // Delay offset (per-entry latency tweak; added to this device's offset, HapbeatAvSync)
             var delayOffsetProp = entryProp.FindPropertyRelative("delayOffsetSeconds");
             EditorGUILayout.PropertyField(delayOffsetProp,
                 new GUIContent("Delay Offset (s)",
                     "Per-entry delay offset (seconds). Added on top of " +
-                    "HapbeatConfig.hapticDelaySeconds (global). Final value is clamped at 0.\n" +
+                    "this device's sound / haptics offset (HapbeatAvSync, global). Final value is clamped at 0.\n" +
                     "  + : later than global (e.g. compensate for delayed attack peak)\n" +
                     "  − : earlier than global\n" +
                     "Range -0.2 to +0.2, default 0.\n\n" +
-                    "Edit the global value at Hapbeat → Open Settings → Haptic Delay."));
+                    "The global value is set on each device at runtime (HapbeatAvSync.OffsetMs)."));
 
             // Effective delay readout (global + offset, clamped). Helps the
             // designer see "how late will this fire" without having to switch
@@ -4903,20 +4903,11 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Editor-time accessor for the global haptic latency offset stored in
-        /// the project's <c>HapbeatConfig</c>. Returns 0 when no Config asset
-        /// exists yet (typical for fresh projects). Used by the entry detail
-        /// panel's "実効遅延" readout — the runtime path reads the same value
-        /// via <c>HapbeatManager.Instance.HapticDelaySeconds</c>.
+        /// The haptic part of this machine's sound / haptics offset (HapbeatAvSync, DEC-093) for the entry detail
+        /// panel's effective-delay readout; the runtime path reads the same value via
+        /// <c>HapbeatManager.Instance.HapticDelaySeconds</c>.
         /// </summary>
-        private static float ResolveGlobalHapticDelaySeconds()
-        {
-            var guids = UnityEditor.AssetDatabase.FindAssets("t:HapbeatConfig");
-            if (guids == null || guids.Length == 0) return 0f;
-            var path = UnityEditor.AssetDatabase.GUIDToAssetPath(guids[0]);
-            var cfg = UnityEditor.AssetDatabase.LoadAssetAtPath<HapbeatConfig>(path);
-            return cfg != null ? cfg.hapticDelaySeconds : 0f;
-        }
+        private static float ResolveGlobalHapticDelaySeconds() => HapbeatAvSync.HapticDelaySeconds;
 
         /// <summary>
         /// Walk every entry in the current map and re-populate

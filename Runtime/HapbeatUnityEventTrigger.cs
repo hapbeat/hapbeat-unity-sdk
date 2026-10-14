@@ -21,6 +21,17 @@ namespace Hapbeat
         }
 
         /// <summary>
+        /// Fire with the haptic's delay worked out by the caller (seconds, ≥ 0), instead of this device's offset
+        /// (DEC-093): e.g. the haptic delay of <see cref="HapbeatAvSync.Split"/>, which already holds it, while the
+        /// caller plays its sound with the sound delay. A StreamClip entry starts that much later on the stream
+        /// timeline (sample-accurate).
+        /// </summary>
+        public void FireAfter(float delaySeconds)
+        {
+            FireHaptic(delaySeconds);
+        }
+
+        /// <summary>
         /// Fire with a gain override. Useful for Animation Events with float parameter.
         /// </summary>
         public void FireWithGain(float gain)
