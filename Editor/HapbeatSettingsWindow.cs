@@ -166,6 +166,19 @@ namespace Hapbeat.Editor
                     "matches the target. Default: on."));
 
             EditorGUILayout.PropertyField(
+                _serializedConfig.FindProperty("noNetwork"),
+                new GUIContent(
+                    "No Network",
+                    "Send nothing: no UDP socket is opened and no datagram leaves this PC.\n" +
+                    "Calls, triggers, logs and events run as usual (streams stay Deferred).\n" +
+                    "For recording or testing a scene without actuating a Hapbeat.\n" +
+                    $"The command-line argument {HapbeatConfig.NoNetworkCommandLineFlag} turns it on for one run."));
+            if (HapbeatConfig.IsNoNetworkCommandLine)
+                EditorGUILayout.HelpBox(
+                    $"{HapbeatConfig.NoNetworkCommandLineFlag} is on the command line: nothing is sent in this session.",
+                    MessageType.Info);
+
+            EditorGUILayout.PropertyField(
                 _serializedConfig.FindProperty("enableLogging"),
                 new GUIContent("Enable Logging", "Log Play / Stop / Connect / errors to the Unity console."));
 

@@ -87,6 +87,56 @@ namespace Hapbeat
                  "can never actuate a device the target didn't address. Default: enabled.")]
         public bool commandUnicast = true;
 
+        [Header("Sending")]
+        [Tooltip("Run the SDK without sending anything: no UDP socket is opened and no datagram " +
+                 "(PLAY, STREAM, PING, CONNECT_STATUS, discovery broadcast) leaves this PC. " +
+                 "Play / Fire / StreamAudioClip calls, triggers, logs, playback status and events " +
+                 "still run as usual, so the game behaves the same; no device ever answers, so " +
+                 "streams stay Deferred. Use it to record or test a scene without actuating a Hapbeat.\n\n" +
+                 "The command-line argument " + NoNetworkCommandLineFlag + " turns it on for one run " +
+                 "without editing this asset (Editor and player builds).")]
+        public bool noNetwork = false;
+
+        /// <summary>Command-line argument that forces <see cref="noNetwork"/> on for one run,
+        /// whatever the asset says. Same name as the Unreal SDK's flag.</summary>
+        public const string NoNetworkCommandLineFlag = "-HapbeatNoNetwork";
+
+        private static int _noNetworkCommandLine = -1; // -1 = not read yet, 0 = absent, 1 = present
+
+        /// <summary>True when this process was started with <see cref="NoNetworkCommandLineFlag"/>.</summary>
+        public static bool IsNoNetworkCommandLine
+        {
+            get
+            {
+                if (_noNetworkCommandLine < 0)
+                {
+                    string[] args;
+                    try { args = System.Environment.GetCommandLineArgs(); }
+                    catch { args = null; }
+                    _noNetworkCommandLine = HasNoNetworkFlag(args) ? 1 : 0;
+                }
+                return _noNetworkCommandLine == 1;
+            }
+        }
+
+        /// <summary>Whether <paramref name="args"/> contains <see cref="NoNetworkCommandLineFlag"/>
+        /// (case-insensitive). Pure, for tests.</summary>
+        internal static bool HasNoNetworkFlag(string[] args)
+        {
+            if (args == null) return false;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], NoNetworkCommandLineFlag, System.StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>Effective no-network state: <paramref name="config"/>'s <see cref="noNetwork"/>
+        /// (null = default config) or the <see cref="NoNetworkCommandLineFlag"/> argument.</summary>
+        public static bool ResolveNoNetwork(HapbeatConfig config) =>
+            (config != null && config.noNetwork) || IsNoNetworkCommandLine;
+
         [Header("Debugging")]
         [Tooltip("Enable logging to the Unity console (Play, Stop, Connect, errors).")]
         public bool enableLogging = true;

@@ -210,8 +210,10 @@ namespace Hapbeat
         // specific <kitname>-manifest.json TextAsset here. The intensity
         // lookup will then read intensity from THIS manifest only, ignoring
         // the global scan. Stored as a TextAsset (Unity imports .json as
-        // TextAsset). Editor-only feature; runtime ignores this field
-        // (intensity is baked into _cachedManifestIntensity at edit time).
+        // TextAsset). The intensity itself is baked into _cachedManifestIntensity
+        // at edit time; at runtime this field only tells a Kit StreamClip entry
+        // apart from a Kit-free one (see UsesKitIntensity). The EventMap window
+        // fills it in automatically when a StreamClip's clip lives in a Kit folder.
         [Tooltip("Force resolution against a specific <kit-name>-manifest.json.\n" +
                  "Unset = auto-scan every manifest under HapbeatSDK/Kits/ and pick by clip-match, then by eventId-match.")]
         public UnityEngine.TextAsset manifestOverride;
@@ -248,14 +250,34 @@ namespace Hapbeat
         public void SetCachedManifestIntensity(float value) => _cachedManifestIntensity = value;
 
         /// <summary>
+        /// Whether this entry's intensity is authored in a Kit manifest: every Command
+        /// entry (it plays a Kit event installed on the device), and a StreamClip entry
+        /// that points at a Kit manifest (<see cref="manifestOverride"/>). A StreamClip
+        /// entry without one streams its own clip and plays at intensity 1.
+        /// </summary>
+        public bool UsesKitIntensity => mode == HapticMode.Command || manifestOverride != null;
+
+        /// <summary>
+        /// A Kit entry (<see cref="UsesKitIntensity"/>) whose manifest intensity has not
+        /// been resolved, so it fires at plain <see cref="gain"/>. Fire paths warn about
+        /// this once; a Kit-free StreamClip entry is never "missing" an intensity.
+        /// </summary>
+        public bool IsMissingKitIntensity => UsesKitIntensity && _cachedManifestIntensity < 0f;
+
+        /// <summary>The intensity factor <see cref="GetEffectiveGain"/> applies: the cached
+        /// manifest value, or 1 when there is none (Kit-free StreamClip, or unresolved).</summary>
+        public float EffectiveIntensity => _cachedManifestIntensity < 0f ? 1f : _cachedManifestIntensity;
+
+        /// <summary>
         /// Effective gain to send over the wire: <c>gain × cached intensity</c>.
         /// Applies to both Command and StreamClip modes — the device is a pure
         /// executor (req.gain only) and no longer reads manifest.intensity itself.
         /// <para>
         /// If the cache is unresolved (<c>CachedManifestIntensity &lt; 0</c>),
-        /// returns plain <c>gain</c>; callers should warn when the sentinel is -1
-        /// because it means the Kit has not been deployed yet or the EventMap
-        /// window's refresh has not run.
+        /// returns plain <c>gain</c> (intensity 1). For a Kit entry callers should warn
+        /// (<see cref="IsMissingKitIntensity"/>) because it means the Kit has not been
+        /// deployed yet or the EventMap window's refresh has not run; a Kit-free
+        /// StreamClip entry has no manifest intensity by design.
         /// </para>
         /// <para>
         /// A manifest intensity of exactly 0 is honoured (returns 0), because the

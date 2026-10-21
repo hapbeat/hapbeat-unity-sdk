@@ -732,7 +732,8 @@ namespace Hapbeat.Editor
             if (_editorClient != null)
                 _editorClient.Dispose();
 
-            _editorClient = new HapbeatClient();
+            _editorClient = new HapbeatClient(HapbeatConfig.ResolveNoNetwork(
+                serializedObject.FindProperty("_config").objectReferenceValue as HapbeatConfig));
             _editorClient.OnPong += (rttUs, serverTimeUs) =>
             {
                 _editorPingResult = $"Ping ok: RTT = {rttUs} μs ({rttUs / 1000.0:F1} ms)";
@@ -799,6 +800,8 @@ namespace Hapbeat.Editor
             if (configProp.objectReferenceValue is HapbeatConfig config)
                 port = config.port;
 
+            _editorDiscovery.NoNetwork = HapbeatConfig.ResolveNoNetwork(
+                configProp.objectReferenceValue as HapbeatConfig);
             _editorDiscovery.Discover(3000, port);
 
             EditorApplication.update -= EditorUpdate;

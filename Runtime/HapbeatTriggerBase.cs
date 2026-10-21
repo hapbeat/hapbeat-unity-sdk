@@ -409,7 +409,7 @@ namespace Hapbeat
                         // Per-trigger multiplier composes on top so the same
                         // EventMap entry can run at different intensities across
                         // GameObjects without authoring extra entries.
-                        if (entry.CachedManifestIntensity < 0f && !_warnedMissingIntensity)
+                        if (entry.IsMissingKitIntensity && !_warnedMissingIntensity)
                         {
                             Debug.LogWarning(
                                 $"[Hapbeat] Command entry '{label}' has no cached manifest " +
@@ -421,7 +421,7 @@ namespace Hapbeat
                         float commandGain = entry.GetEffectiveGain() * _gainMultiplier;
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire Command: eventId='{entry.eventId}' target='{target ?? "(broadcast)"}' " +
-                                      $"gain={entry.gain:F2} × intensity={(entry.CachedManifestIntensity >= 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
+                                      $"gain={entry.gain:F2} × intensity={(entry.IsMissingKitIntensity ? "?" : entry.EffectiveIntensity.ToString("F2"))} " +
                                       $"× triggerMult={_gainMultiplier:F2} = {commandGain:F2} pan={_pan:F2}", this);
                         // Pan は StreamClip 経路と同じく per-trigger の値をそのまま乗せる
                         // (_gainMultiplier と対。Command は device 側ミキサーが linear
@@ -443,11 +443,13 @@ namespace Hapbeat
                         // baselineGain には焼き込まない (これにより script から GainMultiplier を
                         // 毎フレーム変えても playback.Gain = baseline × multiplier で対称に効く)。
                         float baselineGain = entry.GetEffectiveGain();
-                        // Warn once per trigger if the manifest intensity cache is
-                        // unresolved — the fire is still going through but at plain
+                        // Warn once per trigger if a Kit entry's manifest intensity cache
+                        // is unresolved — the fire is still going through but at plain
                         // entry.gain, which is a common source of "the runtime
-                        // stream is louder than what I authored" confusion.
-                        if (entry.CachedManifestIntensity < 0f && !_warnedMissingIntensity)
+                        // stream is louder than what I authored" confusion. A Kit-free
+                        // StreamClip entry (no Kit manifest) plays at intensity 1 by
+                        // design and is not warned about.
+                        if (entry.IsMissingKitIntensity && !_warnedMissingIntensity)
                         {
                             Debug.LogWarning(
                                 $"[Hapbeat] StreamClip entry '{label}' has no cached manifest " +
@@ -471,7 +473,7 @@ namespace Hapbeat
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire StreamClip: clip='{entry.streamClip.name}' " +
                                       $"target='{target ?? "(broadcast)"}' gain={entry.gain:F2} " +
-                                      $"intensity={(entry.CachedManifestIntensity > 0f ? entry.CachedManifestIntensity.ToString("F2") : "?")} " +
+                                      $"intensity={(entry.IsMissingKitIntensity ? "?" : entry.EffectiveIntensity.ToString("F2"))} " +
                                       $"baseline={baselineGain:F2} initialMod={initialMod:F2} initial={initialGain:F2} loop={entry.loop}", this);
                         _activePlayback = HapbeatManager.Instance.StreamAudioClip(
                             entry.streamClip, baselineGain, initialGain, target, entry.loop, startDelaySeconds);

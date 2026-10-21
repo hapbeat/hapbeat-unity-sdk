@@ -43,6 +43,16 @@ namespace Hapbeat
     }
 
     /// <summary>
+    /// Replacement for the UDP socket's send side (tests). When a
+    /// <see cref="HapbeatClient"/> is given one, every datagram goes to it instead
+    /// of a socket, and no socket is opened.
+    /// </summary>
+    internal interface IHapbeatDatagramSink
+    {
+        void Send(byte[] data, int length, IPEndPoint destination);
+    }
+
+    /// <summary>
     /// Internal WifiUdp client for communicating with Hapbeat devices.
     /// Discovery is broadcast; addressed commands and streams can use device unicast.
     /// Receive runs on a background thread; callbacks are queued for main-thread dispatch.
@@ -86,6 +96,26 @@ namespace Hapbeat
 
         /// <summary>Whether the client is currently ready to send/receive.</summary>
         public bool IsConnected { get; private set; }
+
+        /// <summary>
+        /// No-network mode (<see cref="HapbeatConfig.noNetwork"/>): <see cref="OpenBroadcast"/>
+        /// opens no socket and every datagram (PLAY / STOP / STOP_ALL / STREAM_* / PING /
+        /// CONNECT_STATUS) is dropped before it reaches one. Everything else behaves as
+        /// usual: the client reports connected, raises its events and counts the dropped
+        /// datagrams (<see cref="SuppressedDatagramCount"/>). No device ever answers, so
+        /// no endpoint resolves and streams stay deferred.
+        /// </summary>
+        public bool NoNetwork { get; }
+
+        /// <summary>Datagrams dropped by <see cref="NoNetwork"/> since this client was created.</summary>
+        public long SuppressedDatagramCount => Interlocked.Read(ref _suppressedDatagramCount);
+        private long _suppressedDatagramCount;
+
+        // Test seam: replaces the socket's send side (see IHapbeatDatagramSink).
+        private readonly IHapbeatDatagramSink _datagramSink;
+
+        /// <summary>True while a real UDP socket is open (never in <see cref="NoNetwork"/> mode).</summary>
+        internal bool HasSocket => _udpClient != null;
 
         private UdpClient _udpClient;
         private IPEndPoint _targetEndPoint;
@@ -295,10 +325,53 @@ namespace Hapbeat
 
         private bool _disposed;
 
-        public HapbeatClient()
+        public HapbeatClient() : this(false, null)
         {
+        }
+
+        /// <param name="noNetwork">See <see cref="NoNetwork"/>.</param>
+        public HapbeatClient(bool noNetwork) : this(noNetwork, null)
+        {
+        }
+
+        /// <param name="noNetwork">See <see cref="NoNetwork"/>.</param>
+        /// <param name="datagramSink">When non-null, receives every datagram instead of a
+        /// socket (no socket is opened). <paramref name="noNetwork"/> still drops datagrams
+        /// before they reach it.</param>
+        internal HapbeatClient(bool noNetwork, IHapbeatDatagramSink datagramSink)
+        {
+            NoNetwork = noNetwork;
+            _datagramSink = datagramSink;
             _stopwatch = Stopwatch.StartNew();
             _clientIncarnation = CreateClientIncarnation();
+        }
+
+        // No socket is opened when nothing may be sent, or when a test sink
+        // stands in for it.
+        private bool UsesSocket => !NoNetwork && _datagramSink == null;
+
+        // Whether a send can proceed: connected, and either a socket snapshot or a
+        // socket-less mode (no-network drop / test sink).
+        private bool CanSend(UdpClient client) => IsConnected && (client != null || !UsesSocket);
+
+        /// <summary>
+        /// The only place a datagram is handed to the network. No-network mode drops
+        /// it here (counted); a test sink receives it instead of the socket.
+        /// </summary>
+        private void SendDatagram(UdpClient client, byte[] data, IPEndPoint destination)
+        {
+            if (NoNetwork)
+            {
+                Interlocked.Increment(ref _suppressedDatagramCount);
+                return;
+            }
+            IHapbeatDatagramSink sink = _datagramSink;
+            if (sink != null)
+            {
+                sink.Send(data, data.Length, destination);
+                return;
+            }
+            client.Send(data, data.Length, destination);
         }
 
         /// <summary>
@@ -314,6 +387,19 @@ namespace Hapbeat
             // and leave its receive thread polling a field we replace below.
             Disconnect();
             RenewStreamLeaseIncarnation();
+
+            if (!UsesSocket)
+            {
+                // No socket, no receive thread, no interface enumeration: nothing can
+                // leave this PC. The client still reports connected so every caller
+                // above it (manager, triggers, mixer) runs its normal path.
+                _targetEndPoint = new IPEndPoint(IPAddress.Broadcast, port);
+                _broadcastRoutes = new List<BroadcastRoute>();
+                _lockedRoute = null;
+                IsConnected = true;
+                EnqueueMainThread(() => OnConnectionStateChanged?.Invoke(true));
+                return;
+            }
 
             try
             {
@@ -347,7 +433,9 @@ namespace Hapbeat
             // would then replace _udpClient while that thread still polls the
             // field. Cleaning up whatever actually exists makes this safe to call
             // from HapbeatManager's reconnect path.
-            if (_udpClient == null && _receiveThread == null)
+            // A socket-less session (no-network / test sink) has neither resource
+            // but is still "connected" and must announce the transition.
+            if (_udpClient == null && _receiveThread == null && !IsConnected)
                 return;
 
             // HandleDisconnection may already have flagged — and announced — the
@@ -782,7 +870,7 @@ namespace Hapbeat
             uint byteOffset, byte[] audioData,
             int dataOffset, int dataLength)
         {
-            if (!IsConnected || _udpClient == null) return;
+            if (!CanSend(_udpClient)) return;
             if (!IsCurrentStreamLease(endpoint, identity.Lease)) return;
             ushort seq = GetNextSequenceNumber();
             byte[] payload = HapbeatProtocol.BuildStreamDataPayload(
@@ -815,7 +903,7 @@ namespace Hapbeat
         internal void SendLegacyStreamDataTo(IPEndPoint endpoint, uint byteOffset, byte[] audioData,
             int dataOffset, int dataLength)
         {
-            if (!IsConnected || _udpClient == null) return;
+            if (!CanSend(_udpClient)) return;
             ushort seq = GetNextSequenceNumber();
             byte[] packet = HapbeatProtocol.BuildLegacyStreamDataPacket(
                 seq, byteOffset, audioData, dataOffset, dataLength);
@@ -1021,7 +1109,7 @@ namespace Hapbeat
         private void SendDiscoveryRaw(byte[] data)
         {
             UdpClient client = _udpClient;
-            if (!IsConnected || client == null)
+            if (!CanSend(client))
                 return;
 
             List<BroadcastRoute> routes = _broadcastRoutes;
@@ -1044,7 +1132,7 @@ namespace Hapbeat
             {
                 try
                 {
-                    client.Send(data, data.Length, routes[i].EndPoint);
+                    SendDatagram(client, data, routes[i].EndPoint);
                     NoteSendSucceeded();
                 }
                 catch (SocketException ex)
@@ -1257,7 +1345,7 @@ namespace Hapbeat
             // NullReferenceException on a background thread rather than the
             // ObjectDisposedException the catch below is written for.
             UdpClient client = _udpClient;
-            if (!IsConnected || client == null)
+            if (!CanSend(client))
                 return;
 
             // Once a device has answered we know which subnet it is on, so send
@@ -1270,7 +1358,7 @@ namespace Hapbeat
 
             try
             {
-                client.Send(data, data.Length, destination);
+                SendDatagram(client, data, destination);
                 NoteSendSucceeded();
             }
             catch (SocketException ex)
@@ -1306,10 +1394,10 @@ namespace Hapbeat
         private void SendStreamRawTo(IPEndPoint endpoint, byte[] data)
         {
             UdpClient client = _udpClient;
-            if (!IsConnected || client == null || endpoint == null) return;
+            if (!CanSend(client) || endpoint == null) return;
             try
             {
-                client.Send(data, data.Length, endpoint);
+                SendDatagram(client, data, endpoint);
                 NoteSendSucceeded();
             }
             catch (SocketException ex)
@@ -1369,7 +1457,7 @@ namespace Hapbeat
         {
             // Snapshot — see SendRaw.
             UdpClient client = _udpClient;
-            if (!IsConnected || client == null)
+            if (!CanSend(client))
                 return CommandSendResult.Broadcast;
 
             if (!_commandUnicastEnabled)
@@ -1407,7 +1495,7 @@ namespace Hapbeat
                 sentAny = true;
                 try
                 {
-                    client.Send(data, data.Length, new IPEndPoint(kv.Key, port));
+                    SendDatagram(client, data, new IPEndPoint(kv.Key, port));
                     NoteSendSucceeded();
                 }
                 catch (SocketException ex)

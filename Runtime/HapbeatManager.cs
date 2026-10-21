@@ -40,8 +40,18 @@ namespace Hapbeat
         private HapbeatConfig _config;
 
         /// <summary>UDP socket is open and ready to send. UDP has no real
-        /// connection, so this stays true even if the device is powered off.</summary>
+        /// connection, so this stays true even if the device is powered off.
+        /// Also true in <see cref="NoNetwork"/> mode, where no socket exists.</summary>
         public bool IsConnected => _client != null && _client.IsConnected;
+
+        /// <summary>
+        /// True when nothing is sent (<see cref="HapbeatConfig.noNetwork"/> or the
+        /// <see cref="HapbeatConfig.NoNetworkCommandLineFlag"/> argument): no socket is
+        /// opened, every datagram is dropped, and calls, logs, status and events run as
+        /// usual. No device answers, so <see cref="AliveDeviceCount"/> stays 0 and
+        /// streams stay Deferred.
+        /// </summary>
+        public bool NoNetwork => HapbeatConfig.ResolveNoNetwork(_config);
 
         /// <summary>
         /// Number of devices that returned a PONG within the last pingInterval × 3 seconds.
@@ -638,7 +648,12 @@ namespace Hapbeat
             try
             {
                 _client.OpenBroadcast(port);
-                Log($"WifiUdp opened on port {port}");
+                if (_client.NoNetwork)
+                    Debug.Log("[Hapbeat] No Network: no socket opened and nothing is sent " +
+                              "(HapbeatConfig.noNetwork or " + HapbeatConfig.NoNetworkCommandLineFlag + "). " +
+                              "Calls, logs and events run as usual; streams stay Deferred.");
+                else
+                    Log($"WifiUdp opened on port {port}");
             }
             catch (Exception ex)
             {
@@ -683,7 +698,7 @@ namespace Hapbeat
         {
             if (_discovery == null)
             {
-                _discovery = new HapbeatDiscovery();
+                _discovery = new HapbeatDiscovery { NoNetwork = NoNetwork };
                 _discovery.OnDeviceFound += (device) =>
                 {
                     Log($"Device found: {device.name} at {device.ipAddress} (group={device.group})");
@@ -768,7 +783,12 @@ namespace Hapbeat
             // handle exposes Deferred/Active/Stopped through Status.
             HapbeatStreamPlayback playback = GetEndpointStreamMixer().Add(
                 clip, baselineGain, initialGain, target, loop, startDelaySeconds);
-            if (playback.Status == HapbeatStreamPlaybackStatus.Deferred)
+            if (_client.NoNetwork)
+            {
+                // Expected, not a fault: nothing is sent, so no endpoint ever resolves.
+                Log($"♪ StreamAudioClip \"{clip.name}\" gain={initialGain:F2} target={target ?? "(all)"} (No Network: not sent)");
+            }
+            else if (playback.Status == HapbeatStreamPlaybackStatus.Deferred)
             {
                 Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: no addressed WifiUdp endpoint matches target '{target}'. STREAM_DATA was not broadcast.");
             }
@@ -850,7 +870,7 @@ namespace Hapbeat
 
         private HapbeatClient CreateClient()
         {
-            var client = new HapbeatClient();
+            var client = new HapbeatClient(NoNetwork);
 
             // Push the routing config here rather than at the Initialize() call site:
             // Connect() also constructs a client when none exists
@@ -864,7 +884,7 @@ namespace Hapbeat
             {
                 if (connected)
                 {
-                    Log("Ready (WifiUdp).");
+                    Log(client.NoNetwork ? "Ready (No Network: nothing is sent)." : "Ready (WifiUdp).");
                     _lastPingTime = Time.realtimeSinceStartup;
                     // Note when this session started; the backoff is only cleared
                     // once it has proven itself (see ReconnectStableSeconds).

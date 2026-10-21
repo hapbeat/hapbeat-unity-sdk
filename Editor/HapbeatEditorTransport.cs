@@ -68,7 +68,7 @@ namespace Hapbeat.Editor
 
             try
             {
-                _client = new HapbeatClient();
+                _client = new HapbeatClient(HapbeatConfig.ResolveNoNetwork(cfg));
                 _client.OpenBroadcast(port);
                 // Mirror the persisted address override (PlayerPrefs) so "▶ Test Play"
                 // previews the same target a running build would actually send —
@@ -99,7 +99,9 @@ namespace Hapbeat.Editor
                 _lastPingTime = EditorApplication.timeSinceStartup;
 
                 LastOpenError = null;
-                Debug.Log($"[Hapbeat] Editor transport opened (UDP broadcast, port={port}).");
+                Debug.Log(_client.NoNetwork
+                    ? "[Hapbeat] Editor transport opened with No Network: nothing is sent."
+                    : $"[Hapbeat] Editor transport opened (UDP broadcast, port={port}).");
                 return true;
             }
             catch (Exception ex)

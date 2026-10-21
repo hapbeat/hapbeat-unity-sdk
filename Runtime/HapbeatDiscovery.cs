@@ -26,6 +26,13 @@ namespace Hapbeat
         private volatile bool _isDiscovering;
         private bool _disposed;
 
+        /// <summary>
+        /// When true (<see cref="HapbeatConfig.noNetwork"/>), <see cref="Discover"/> opens no
+        /// socket and sends no PING: the scan completes at once with no devices, and
+        /// <see cref="OnDiscoveryComplete"/> is still raised.
+        /// </summary>
+        public bool NoNetwork { get; set; }
+
         /// <summary>Whether a discovery scan is currently in progress.</summary>
         public bool IsDiscovering => _isDiscovering;
 
@@ -43,6 +50,14 @@ namespace Hapbeat
 
             _isDiscovering = true;
             _discoveredDevices.Clear();
+
+            if (NoNetwork)
+            {
+                _isDiscovering = false;
+                var none = new List<HapbeatDevice>();
+                _mainThreadQueue.Enqueue(() => OnDiscoveryComplete?.Invoke(none));
+                return;
+            }
 
             _discoveryThread = new Thread(() => DiscoveryLoop(timeoutMs, port))
             {
