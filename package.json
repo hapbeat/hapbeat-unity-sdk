@@ -10,6 +10,11 @@
   },
   "samples": [
     {
+      "displayName": "QuickStart (no Kit)",
+      "description": "Start here. Feel a Hapbeat with no Kit and no Studio deploy: a StreamClip entry streams the bundled 80 Hz pulse. Scene A wires it with no code (Collision Trigger on a falling cube); scene B fires it from your own script with one line (Fire()). URP.",
+      "path": "Samples~/QuickStart"
+    },
+    {
       "displayName": "BasicExample",
       "description": "Smallest possible Hapbeat scene — keyboard input fires a few events. Use to confirm the device connection works.",
       "path": "Samples~/BasicExample"
