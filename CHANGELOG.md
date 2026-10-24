@@ -9,11 +9,24 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [Unreleased]
 
+通信の 1.x（DEC-096）に対応。対応する仕様は hapbeat-contracts `46f246e`（1.0 の仕様。release 時に contracts の版に置き換える）。
+
 ### 追加
+- `HapbeatStreamPlaybackDeferReason` に `UnknownClass`（機体がまだ stream lease の要求に答えていない）・`LeaseUnavailable`（lease が無い・失効した）・`Superseded`（別のアプリが後から再生した）を追加。一致する機体ごとに理由が違うときは Superseded > LeaseUnavailable > UnknownClass > NoResolvedEndpoint の順で 1 つを報告する。
+- `HapbeatManager.GetStreamEndpoints()` と `OnStreamEndpointChanged`: 機体ごとの stream の世代（`HapbeatStreamClass`: Unknown / Gen1 / Gen2）、lease の状態（`HapbeatStreamLeaseState`）、能力申告の世代を返す。
+- 能力申告（CAPS）: 機体の最初の照合済み PONG の後と、ファームの版・起動が変わった後に CAPS_REQ を unicast で送る（500 ms 間隔で 3 回まで。答えない機体は「能力申告なし」）。この SDK より新しい major の機体には、SDK の更新を促す警告を 1 回出す。モーターが 1 個の機体（`haptic_channels` = 1）へは pan を適用せずに混合する。
+- 機体からの ERROR の受信: 既知の機体の address と port 7700 からのものだけを受け、stream の ERROR は自分が送った（今の、または直前の）session のものだけを扱う。STREAM_NOT_STARTED で同じ BEGIN を再送、STREAM_TIMED_OUT・STREAM_LEASE_INVALID で新しい generation、STREAM_SUPERSEDED で保留、STREAM_GEN_UNSUPPORTED・STREAM_TARGET_MISMATCH で分類・address を取り直す。`HapbeatClient.OnError` は受け付けた ERROR だけで出る。
 - `HapbeatAvSync`（DEC-093）: この端末の音と触覚の時間差の補正（ms、正 = 触覚を遅らせる、負 = アプリの音を遅らせる）。端末に保存し（PlayerPrefs）、実行時に変えられる。`Split(soundSyncMs, hapticSyncMs, ...)` は、cue 表の素材の同期点（`syncMs`）とこの補正から、音と触覚それぞれの遅らせ量を返す。
 - `HapbeatUnityEventTrigger.FireAfter(delaySeconds)` と `StreamAudioClip(..., startDelaySeconds)`: StreamClip を指定した時間だけ後に、ストリームの時間軸上で正確に開始する（コルーチン待ちのフレーム単位の揺れがない）。
 
 ### 変更
+- PONG の stream tail を 1.x の規則で読む: `HBS2` で始まり extension_version 1 の 32 byte 以上を Stream Gen 2 とし（32 byte より後ろ・reserved・未知の flag は無視）、volume_wiper の後に何も無いときだけ Stream Gen 1 とする。それ以外（`HBS2` で始まらない byte を含む）は分類も lease も変えない（機体ごとに 1 回警告）。
+- 拡張 PING（16 byte、lease の要求）を unicast だけで、再生する（しそうな）機体へ送る。探索の broadcast は 8 byte の PING。lease は 5 s ごとに更新し、最後の stream から 15 s で更新をやめる。`pingInterval` を 10 s に抑える処理は無くした。
+- `HapbeatClient.SendPing()` は 8 byte の探索の PING を broadcast する（0.6.0 の 16 byte から戻した。lease の要求はしない）。
+- superseded の保留は、機体が ticket を再発行した照合済みの応答（lease_reissued）でも解ける。
+- Stream Gen 2 の BEGIN の再送は、その時点の機体の address を target に入れる。
+- 送信が 3 s 以上止まった（アプリの停止・デバッガ・スリープ）ときは、その session を END して新しい generation で始め直す（続きの位置から）。
+- STOP_ALL で機体の stream が止められた（ERROR STREAM_STOPPED）ときは、その機体で鳴っていた Playback をその機体から外し、同じ Playback では戻さない（他の機体では鳴り続ける）。
 - StreamClip の遅延を一定にした: 別のクリップがストリーム中の端末に新しいクリップを足すと、これまでは先送り分（既定 50 ms）だけ遅れて鳴っていた。先送り済みのブロックに重なるときは、そのセッションを新しい generation で開始し直し、端末に溜まったデータを捨てさせて、新しいクリップの頭から混ぜ直して送る。
 - Trigger の遅延待ちで、StreamClip はコルーチンではなくストリームの時間軸に置く（Command は従来どおりコルーチン）。
 

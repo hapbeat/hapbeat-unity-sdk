@@ -3,7 +3,7 @@
 Single self-contained reference so an AI coding agent can use this SDK correctly
 from one file. Unity package id: `com.hapbeat.sdk`. C# namespace: `Hapbeat`.
 
-- last-verified-against: package 0.7.0-d1 (development build; latest release 0.6.0; requires Unity `6000.0`+)
+- last-verified-against: package 1.0.0-d1 (development build; latest release 0.6.0; requires Unity `6000.0`+)
 - Source of truth is the code: public runtime API in `Runtime/HapbeatManager.cs`,
   the EventMap model in `Runtime/HapbeatEventMap.cs` + `Runtime/HapbeatEventEntry.cs`,
   WifiUdp routing / addressing in `Runtime/HapbeatClient.cs`, settings in
@@ -102,16 +102,21 @@ public long   TimeOffsetUs { get; }
 public event Action OnConnected, OnDisconnected;
 public event Action<string> OnError;
 public event Action<long> OnPong;  // round-trip time (us)
+public IReadOnlyList<HapbeatStreamEndpointInfo> GetStreamEndpoints(); // per device: Ip, Address, StreamClass (Unknown/Gen1/Gen2), LeaseState (None/Valid/Unavailable/Superseded), CapsGeneration (-1 unknown, 0 none)
+public event Action<HapbeatStreamEndpointInfo> OnStreamEndpointChanged; // a device's StreamClass or LeaseState changed
 ```
 
 `HapbeatStreamPlayback` (returned by `StreamAudioClip`) — write per frame to
 modulate one source: `string Id { get; }`, `float Gain { get; set; }`,
 `float Pan { get; set; }`, `bool Loop { get; set; }`, `float BaselineGain { get; }`,
 `void ApplyGainModulation(float)`, `HapbeatStreamPlaybackStatus Status { get; }`
-(`Deferred` / `Active` / `Stopped`), `HapbeatStreamPlaybackDeferReason DeferReason { get; }`,
+(`Deferred` / `Active` / `Stopped`), `HapbeatStreamPlaybackDeferReason DeferReason { get; }`
+(`NoResolvedEndpoint`, `UnknownClass` = the device has not answered the lease request yet,
+`LeaseUnavailable`, `Superseded` = another app streamed to it later; the first of
+Superseded > LeaseUnavailable > UnknownClass > NoResolvedEndpoint over the matching devices),
 `bool IsStopped { get; }`, `bool IsActive { get; }`, `void Stop()`.
 
-## Sound / haptics timing (`HapbeatAvSync`, static, 0.7.0-d1)
+## Sound / haptics timing (`HapbeatAvSync`, static, 1.0.0-d1)
 
 Audio output latency differs per device, so the correction is per device (saved in
 `PlayerPrefs`), not in the project-wide `HapbeatConfig`.
@@ -257,19 +262,25 @@ target the EventMap supplies.
   `Deferred` state and sends no stream packet until that endpoint is discovered.
 - An endpoint session stays armed for at least 300 ms after its last source leaves.
   A source added during that linger joins the same session without another BEGIN.
-  Only for legacy (pre-v2, firmware below 0.5.0) devices, a new BEGIN after END to the
-  same endpoint is delayed by at least 300 ms; v2 devices restart immediately.
-- Streams use the v2 session format (lease + generation) on firmware 0.5.0+ and fall
-  back per device to the pre-v2 format on older firmware. Firmware 0.5.0+ needs this
+  Only for Stream Gen 1 devices (firmware below 0.5.0), a new BEGIN after END to the
+  same endpoint is delayed by at least 300 ms; Stream Gen 2 devices restart immediately.
+- Streams use Stream Gen 2 (session stream: lease + generation) on firmware 0.5.0+ and
+  fall back per device to Stream Gen 1 on older firmware. Firmware 0.5.0+ needs this
   SDK 0.6.0+ for streams (FIRE/PLAY work with any version).
+- The first StreamClip to a device waits one round trip (`Deferred`, `UnknownClass`):
+  the SDK asks for a stream lease by unicast only from the devices a Playback targets,
+  and keeps it for 15 s after the last stream.
 - Stream ownership: if another application starts streaming to the same device, this
   app's lease is superseded and its streams stay deferred (a warning is logged). The
   SDK never takes the device back on its own except when the app regains focus; call
   `HapbeatManager.Instance.ReacquireStreamOwnership()` from an explicit user action.
   In the Editor, a StreamClip Test Play reacquires automatically. Active sources
   continue from their current position after a reacquisition.
-- `pingInterval` above 10 s is capped at 10 s while a v2 device is known (the device
-  drops an idle stream lease 15 s after the last PING).
+- Stream leases are refreshed by their own unicast PINGs every 5 s, independent of
+  `pingInterval` (which only paces the discovery broadcast and CONNECT_STATUS).
+- If a device's STOP_ALL ends a stream (from any app), the Playbacks playing there leave
+  that device for good (they keep playing on other devices); start a new `StreamAudioClip`
+  to play there again.
 - `IsConnected` only means the socket is open; use `AliveDeviceCount` / `OnPong` to
   know a device actually answered. StreamClip requires a matching PONG; one-shot
   commands can still use their broadcast fallback.

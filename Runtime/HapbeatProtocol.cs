@@ -49,7 +49,7 @@ namespace Hapbeat
         /// <summary>Max payload for STREAM_DATA to stay within typical MTU (1500 - IP/UDP headers - protocol header).</summary>
         public const int STREAM_DATA_MAX_PAYLOAD = 1400;
 
-        /// <summary>Size of the v2 identity envelope at the head of every stream payload.</summary>
+        /// <summary>Size of the Stream Gen 2 identity envelope at the head of every stream payload.</summary>
         public const int STREAM_SESSION_ENVELOPE_SIZE = 16;
 
         /// <summary>
@@ -81,7 +81,7 @@ namespace Hapbeat
             public override string ToString() => $"boot={DeviceBootId:X16}, ticket={LeaseTicket}";
         }
 
-        /// <summary>Exact v2 identity stamped on a BEGIN/DATA/END packet.</summary>
+        /// <summary>Exact Stream Gen 2 identity stamped on a BEGIN/DATA/END packet.</summary>
         internal readonly struct StreamSessionIdentity
         {
             public readonly StreamLeaseIdentity Lease;
@@ -99,17 +99,18 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// What follows the ordinary PONG fields (stream-session-v2.md "Legacy receiver
-        /// fallback"): nothing or non-HBS2 bytes (<see cref="Absent"/>; pre-v2 firmware
-        /// on a matched reply), an exact valid 32-byte tail (<see cref="Valid"/>), or an
-        /// HBS2 marker with a wrong length/version/flags/reserved field
-        /// (<see cref="Malformed"/>; ignored for classification and leases).
+        /// What follows the ordinary PONG fields (stream-session.md "Receiver
+        /// classification", 1.x rules): nothing (<see cref="Absent"/>; Stream Gen 1
+        /// firmware on a matched reply), at least 32 bytes starting with HBS2 and
+        /// extension_version 1 (<see cref="Valid"/>; Stream Gen 2), or anything else
+        /// (<see cref="Ignored"/>: fewer than 32 bytes, another extension_version, or
+        /// bytes not starting with HBS2; no class or lease change).
         /// </summary>
         internal enum StreamLeaseTailStatus
         {
             Absent = 0,
             Valid = 1,
-            Malformed = 2,
+            Ignored = 2,
         }
 
         /// <summary>Validated HBS2 tail from a PONG, or <c>IsPresent=false</c>.</summary>
@@ -119,17 +120,21 @@ namespace Hapbeat
             public readonly bool IsPresent;
             public readonly bool IsLeaseValid;
             public readonly bool IsLeaseSuperseded;
+            // Flag bit 2: the receiver re-issued this key a fresh ticket (re-issue rule).
+            public readonly bool IsLeaseReissued;
             public readonly ulong EchoedClientIncarnation;
             public readonly StreamLeaseIdentity Lease;
             public readonly uint HighWaterTicket;
 
             public StreamLeasePongTail(bool isPresent, bool isLeaseValid, bool isLeaseSuperseded,
-                ulong echoedClientIncarnation, StreamLeaseIdentity lease, uint highWaterTicket)
+                ulong echoedClientIncarnation, StreamLeaseIdentity lease, uint highWaterTicket,
+                bool isLeaseReissued = false)
             {
                 Status = isPresent ? StreamLeaseTailStatus.Valid : StreamLeaseTailStatus.Absent;
                 IsPresent = isPresent;
                 IsLeaseValid = isLeaseValid;
                 IsLeaseSuperseded = isLeaseSuperseded;
+                IsLeaseReissued = isLeaseReissued;
                 EchoedClientIncarnation = echoedClientIncarnation;
                 Lease = lease;
                 HighWaterTicket = highWaterTicket;
@@ -141,14 +146,95 @@ namespace Hapbeat
                 IsPresent = false;
                 IsLeaseValid = false;
                 IsLeaseSuperseded = false;
+                IsLeaseReissued = false;
                 EchoedClientIncarnation = 0;
                 Lease = default;
                 HighWaterTicket = 0;
             }
 
-            /// <summary>An HBS2 marker whose tail is not a valid version-1 extension.</summary>
-            public static StreamLeasePongTail Malformed =>
-                new StreamLeasePongTail(StreamLeaseTailStatus.Malformed);
+            /// <summary>Bytes after volume_wiper that are not a Stream Gen 2 version-1 tail.</summary>
+            public static StreamLeasePongTail Ignored =>
+                new StreamLeasePongTail(StreamLeaseTailStatus.Ignored);
+        }
+
+        /// <summary>
+        /// Device capabilities from CAPS (message-format.md §0x13). A field the device
+        /// did not report (or reported too short) keeps its "absent" value: -1 for
+        /// numbers, null for the firmware version, 0 for bitmaps.
+        /// </summary>
+        internal readonly struct CapsInfo
+        {
+            public readonly int CapsVersion;
+            public readonly int Generation;
+            public readonly string FirmwareVersion;
+            public readonly int StreamGens;          // bit0 = Gen 1, bit1 = Gen 2; -1 = absent
+            public readonly int StreamFormats;       // bit0 = PCM16, bit1 = IMA ADPCM, bit2 = Opus; -1 = absent
+            public readonly int LeaseTtlSeconds;
+            public readonly int LeaseSlots;
+            public readonly int InactivityTimeoutSeconds;
+            public readonly int HapticChannels;
+            public readonly int AddressMaxLength;
+            public readonly long Features;           // bit0 = play_pan, bit1 = error_reply; -1 = absent
+
+            public CapsInfo(int capsVersion, int generation, string firmwareVersion, int streamGens,
+                int streamFormats, int leaseTtlSeconds, int leaseSlots, int inactivityTimeoutSeconds,
+                int hapticChannels, int addressMaxLength, long features)
+            {
+                CapsVersion = capsVersion;
+                Generation = generation;
+                FirmwareVersion = firmwareVersion;
+                StreamGens = streamGens;
+                StreamFormats = streamFormats;
+                LeaseTtlSeconds = leaseTtlSeconds;
+                LeaseSlots = leaseSlots;
+                InactivityTimeoutSeconds = inactivityTimeoutSeconds;
+                HapticChannels = hapticChannels;
+                AddressMaxLength = addressMaxLength;
+                Features = features;
+            }
+        }
+
+        /// <summary>
+        /// ERROR with the fields appended in 1.x (message-format.md §0xFF). An ERROR
+        /// from 0.x firmware has only the code and message: <see cref="HasReference"/>
+        /// is false and <see cref="Detail"/> is empty.
+        /// </summary>
+        internal readonly struct ErrorInfo
+        {
+            public readonly ushort Code;
+            public readonly string Message;
+            public readonly bool HasReference;
+            public readonly byte RefCommand;
+            public readonly ushort RefSeq;
+            public readonly byte[] Detail;
+
+            public ErrorInfo(ushort code, string message, bool hasReference, byte refCommand,
+                ushort refSeq, byte[] detail)
+            {
+                Code = code;
+                Message = message;
+                HasReference = hasReference;
+                RefCommand = refCommand;
+                RefSeq = refSeq;
+                Detail = detail ?? Array.Empty<byte>();
+            }
+
+            /// <summary>
+            /// The rejected packet's session envelope (stream codes 0x0011–0x0017 only),
+            /// or false when <see cref="Detail"/> is not exactly 16 bytes.
+            /// </summary>
+            public bool TryGetStreamIdentity(out StreamSessionIdentity identity)
+            {
+                if (Detail.Length != STREAM_SESSION_ENVELOPE_SIZE)
+                {
+                    identity = default;
+                    return false;
+                }
+                identity = new StreamSessionIdentity(
+                    new StreamLeaseIdentity(ReadUInt64(Detail, 0), ReadUInt32(Detail, 8)),
+                    ReadUInt32(Detail, 12));
+                return true;
+            }
         }
 
         /// <summary>Parsed PONG fields plus its optional HBS2 lease tail.</summary>
@@ -180,6 +266,37 @@ namespace Hapbeat
         // Response types (Device → SDK)
         public const byte CMD_PONG = 0x11;
         public const byte CMD_ERROR = 0xFF;
+
+        // Capability query (message-format.md §0x12 / §0x13)
+        public const byte CMD_CAPS_REQ = 0x12;
+        public const byte CMD_CAPS = 0x13;
+
+        /// <summary>Highest CAPS format this SDK reads (sent as CAPS_REQ caps_version).</summary>
+        public const byte CAPS_VERSION = 1;
+
+        /// <summary>
+        /// This SDK's major version (versioning.md §3). Keep it equal to the major of
+        /// <c>package.json</c>'s <c>version</c>: a device whose CAPS generation is greater
+        /// draws one "update the SDK" warning.
+        /// </summary>
+        internal const int SdkMajorVersion = 1;
+
+        // ERROR codes (message-format.md §0xFF)
+        public const ushort ERROR_UNSUPPORTED_VERSION = 0x0001;
+        public const ushort ERROR_UNKNOWN_COMMAND = 0x0002;
+        public const ushort ERROR_MALFORMED = 0x0003;
+        public const ushort ERROR_STREAM_GEN_UNSUPPORTED = 0x0010;
+        public const ushort ERROR_STREAM_LEASE_INVALID = 0x0011;
+        public const ushort ERROR_STREAM_SUPERSEDED = 0x0012;
+        public const ushort ERROR_STREAM_NOT_STARTED = 0x0013;
+        public const ushort ERROR_STREAM_TIMED_OUT = 0x0014;
+        public const ushort ERROR_STREAM_STOPPED = 0x0015;
+        public const ushort ERROR_STREAM_ENDED = 0x0016;
+        public const ushort ERROR_STREAM_TARGET_MISMATCH = 0x0017;
+
+        /// <summary>Whether <paramref name="code"/> carries a session envelope in its detail (0x0011–0x0017).</summary>
+        internal static bool IsStreamSessionErrorCode(ushort code) =>
+            code >= ERROR_STREAM_LEASE_INVALID && code <= ERROR_STREAM_TARGET_MISMATCH;
 
         // Group ID constants
         public const byte GROUP_BROADCAST = 0;
@@ -329,6 +446,8 @@ namespace Hapbeat
         /// <summary>
         /// Build an extended PING that asks a receiver for a stream lease. This is
         /// still a version-1 PING; a zero incarnation is invalid and never emitted.
+        /// Extended PINGs are sent by unicast only (stream-session.md "How SDKs send
+        /// extended PINGs"); discovery broadcasts use the 8-byte form.
         /// </summary>
         public static byte[] BuildPingPayload(long timestampUs, ulong clientIncarnation)
         {
@@ -340,6 +459,12 @@ namespace Hapbeat
             WriteInt64(payload, 0, timestampUs);
             WriteUInt64(payload, 8, clientIncarnation);
             return payload;
+        }
+
+        /// <summary>Build the CAPS_REQ payload: the CAPS format this SDK reads (<see cref="CAPS_VERSION"/>).</summary>
+        public static byte[] BuildCapsRequestPayload()
+        {
+            return new[] { CAPS_VERSION };
         }
 
         /// <summary>
@@ -432,7 +557,7 @@ namespace Hapbeat
             return payload;
         }
 
-        /// <summary>Build the v2 END payload, which is precisely its identity envelope.</summary>
+        /// <summary>Build the Stream Gen 2 END payload, which is precisely its identity envelope.</summary>
         internal static byte[] BuildStreamEndPayload(StreamSessionIdentity identity)
         {
             ValidateStreamIdentity(identity);
@@ -442,10 +567,9 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Build a pre-v2 (legacy) STREAM_BEGIN payload for receivers that predate
-        /// stream-session-v2 (message-format.md "v1 stream"): no identity envelope.
-        /// Byte-identical to the SDK's pre-v2 builder. Sent with <see cref="BuildPacket"/>
-        /// (header protocol_version=1).
+        /// Build a Stream Gen 1 STREAM_BEGIN payload for receivers that predate Stream
+        /// Gen 2 (firmware before 0.5.0, message-format.md "Stream Gen 1"): no identity
+        /// envelope. Sent with <see cref="BuildPacket"/> (header protocol_version=1).
         /// </summary>
         internal static byte[] BuildLegacyStreamBeginPayload(ushort sampleRate, byte channels, byte format,
             uint totalSamples, float gain, string target = null)
@@ -473,7 +597,7 @@ namespace Hapbeat
             return payload;
         }
 
-        /// <summary>Build a pre-v2 (legacy) STREAM_DATA payload: offset(4) + data, no envelope.</summary>
+        /// <summary>Build a Stream Gen 1 STREAM_DATA payload: offset(4) + data, no envelope.</summary>
         internal static byte[] BuildLegacyStreamDataPayload(uint byteOffset, byte[] audioData,
             int dataOffset, int dataLength)
         {
@@ -484,7 +608,7 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Build a pre-v2 (legacy) STREAM_DATA packet stamped protocol_version=1. Uses
+        /// Build a Stream Gen 1 STREAM_DATA packet stamped protocol_version=1. Uses
         /// the stream MTU limit instead of the command packet limit.
         /// </summary>
         internal static byte[] BuildLegacyStreamDataPacket(ushort seq, uint byteOffset, byte[] audioData,
@@ -611,8 +735,8 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Parse the ordinary PONG fields and, when present, the exact 32-byte HBS2
-        /// stream-lease tail. A malformed or absent tail is not a lease response.
+        /// Parse the ordinary PONG fields and, when present, the HBS2 stream-lease
+        /// tail. An absent or ignored tail is not a lease response.
         /// </summary>
         internal static PongExtendedInfo ParsePongExtendedInfo(byte[] payload)
         {
@@ -645,18 +769,19 @@ namespace Hapbeat
         {
             const int tailSize = 32;
             int remaining = payload.Length - offset;
-            bool hasMarker = remaining >= 4 &&
-                payload[offset] == (byte)'H' && payload[offset + 1] == (byte)'B' &&
-                payload[offset + 2] == (byte)'S' && payload[offset + 3] == (byte)'2';
-            // No marker after the ordinary fields (nothing follows, or other bytes
-            // do) is how pre-v2 firmware answers an extended PING.
-            if (!hasMarker)
+            // Nothing after the ordinary fields is how Stream Gen 1 firmware answers
+            // an extended PING.
+            if (remaining <= 0)
                 return default;
-            if (remaining != tailSize ||
-                payload[offset + 4] != 1 || (payload[offset + 5] & ~0x03) != 0 ||
-                ReadUInt16(payload, offset + 6) != 0)
+            // 1.x rule: read the first 32 bytes of an HBS2 version-1 tail and ignore
+            // whatever follows them, the reserved field and flag bits other than 0-2,
+            // so a later major can extend the tail. Anything else changes nothing.
+            if (remaining < tailSize ||
+                payload[offset] != (byte)'H' || payload[offset + 1] != (byte)'B' ||
+                payload[offset + 2] != (byte)'S' || payload[offset + 3] != (byte)'2' ||
+                payload[offset + 4] != 1)
             {
-                return StreamLeasePongTail.Malformed;
+                return StreamLeasePongTail.Ignored;
             }
 
             byte flags = payload[offset + 5];
@@ -666,8 +791,9 @@ namespace Hapbeat
             uint highWaterTicket = ReadUInt32(payload, offset + 28);
             bool leaseValid = (flags & 0x01) != 0 && lease.IsValid;
             bool superseded = (flags & 0x02) != 0;
+            bool reissued = (flags & 0x04) != 0;
             return new StreamLeasePongTail(true, leaseValid, superseded,
-                incarnation, lease, highWaterTicket);
+                incarnation, lease, highWaterTicket, reissued);
         }
 
         /// <summary>
@@ -718,6 +844,80 @@ namespace Hapbeat
             }
 
             return (errorCode, message);
+        }
+
+        /// <summary>
+        /// Parse an ERROR payload including the fields 1.x firmware appends after the
+        /// message (ref_command, ref_seq, detail_length, detail). An ERROR without them
+        /// (0.x firmware) parses with <see cref="ErrorInfo.HasReference"/> false; a
+        /// detail cut short by the payload end keeps only the bytes present.
+        /// </summary>
+        internal static ErrorInfo ParseErrorExtended(byte[] payload)
+        {
+            var (errorCode, message) = ParseError(payload);
+            int terminator = Array.IndexOf(payload, (byte)0, 2);
+            if (terminator < 0 || payload.Length < terminator + 1 + 4)
+                return new ErrorInfo(errorCode, message, false, 0, 0, null);
+
+            int offset = terminator + 1;
+            byte refCommand = payload[offset];
+            ushort refSeq = ReadUInt16(payload, offset + 1);
+            int detailLength = Math.Min(payload[offset + 3], payload.Length - (offset + 4));
+            var detail = new byte[detailLength];
+            Buffer.BlockCopy(payload, offset + 4, detail, 0, detailLength);
+            return new ErrorInfo(errorCode, message, true, refCommand, refSeq, detail);
+        }
+
+        /// <summary>
+        /// Parse a CAPS payload (message-format.md §0x13): skip unknown types by their
+        /// length, read only the defined prefix of a longer known entry, ignore a known
+        /// entry that is too short, use the first sufficient entry of a repeated type,
+        /// and ignore an entry cut off by the payload end.
+        /// </summary>
+        internal static CapsInfo ParseCaps(byte[] payload)
+        {
+            if (payload == null || payload.Length < 1)
+                throw new ArgumentException("CAPS payload too short, expected at least 1 byte.");
+
+            int generation = -1, streamGens = -1, streamFormats = -1;
+            int leaseTtl = -1, leaseSlots = -1, inactivityTimeout = -1;
+            int hapticChannels = -1, addressMaxLength = -1;
+            long features = -1;
+            string firmwareVersion = null;
+            int seen = 0; // bit per known type already taken
+
+            int offset = 2;
+            while (offset + 2 <= payload.Length)
+            {
+                byte type = payload[offset];
+                int length = payload[offset + 1];
+                int value = offset + 2;
+                offset = value + length;
+                if (offset > payload.Length) break; // cut off by the payload end
+                if (type == 0 || type > 0x08 || (seen & (1 << type)) != 0) continue;
+
+                int defined = type == 0x05 || type == 0x08 ? 4 : type == 0x02 ? 0 : 1;
+                if (length < defined) continue;
+                seen |= 1 << type;
+                switch (type)
+                {
+                    case 0x01: generation = payload[value]; break;
+                    case 0x02: firmwareVersion = Encoding.UTF8.GetString(payload, value, length); break;
+                    case 0x03: streamGens = payload[value]; break;
+                    case 0x04: streamFormats = payload[value]; break;
+                    case 0x05:
+                        leaseTtl = payload[value];
+                        leaseSlots = payload[value + 1];
+                        inactivityTimeout = payload[value + 2];
+                        break;
+                    case 0x06: hapticChannels = payload[value]; break;
+                    case 0x07: addressMaxLength = payload[value]; break;
+                    case 0x08: features = ReadUInt32(payload, value); break;
+                }
+            }
+
+            return new CapsInfo(payload[0], generation, firmwareVersion, streamGens, streamFormats,
+                leaseTtl, leaseSlots, inactivityTimeout, hapticChannels, addressMaxLength, features);
         }
 
         #endregion
@@ -810,7 +1010,7 @@ namespace Hapbeat
         private static void ValidateStreamIdentity(StreamSessionIdentity identity)
         {
             if (!identity.IsValid)
-                throw new ArgumentException("A v2 stream packet requires a valid boot ID, lease ticket, and generation.",
+                throw new ArgumentException("A Stream Gen 2 packet requires a valid boot ID, lease ticket, and generation.",
                     nameof(identity));
         }
 

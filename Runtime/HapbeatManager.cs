@@ -34,6 +34,12 @@ namespace Hapbeat
         /// <summary>Invoked when a PONG response is received. Parameter is round-trip time in microseconds.</summary>
         public event Action<long> OnPong;
 
+        /// <summary>
+        /// Invoked when a device endpoint's stream class (<see cref="HapbeatStreamClass"/>) or
+        /// lease state (<see cref="HapbeatStreamLeaseState"/>) changes. See <see cref="GetStreamEndpoints"/>.
+        /// </summary>
+        public event Action<HapbeatStreamEndpointInfo> OnStreamEndpointChanged;
+
         [Header("Configuration")]
         [Tooltip("Hapbeat configuration asset. If not set, default settings will be used.")]
         [SerializeField]
@@ -77,19 +83,15 @@ namespace Hapbeat
         /// <summary>True if at least one device is responsive.</summary>
         public bool IsAlive => AliveDeviceCount > 0;
 
-        // v2 firmware expires a non-active stream lease 15 s after its last PING
-        // (stream-session-v2.md "Discovery lease", kLeaseTtlMs). A longer configured
-        // interval would leave the first BEGIN after an idle gap under a dead lease, so
-        // the effective interval is capped while any v2 device is known. 10 s leaves
-        // room for one late PONG round trip.
-        internal const float MaxV2LeasePingIntervalSeconds = 10f;
-
-        /// <summary>
-        /// The keep-alive PING interval actually used: <paramref name="configured"/>,
-        /// capped at <see cref="MaxV2LeasePingIntervalSeconds"/> while a v2 device exists.
-        /// </summary>
-        internal static float EffectivePingInterval(float configured, bool hasV2StreamEndpoints) =>
-            hasV2StreamEndpoints ? Mathf.Min(configured, MaxV2LeasePingIntervalSeconds) : configured;
+        // Stream leases are refreshed by unicast extended PINGs on their own schedule
+        // (HapbeatClient.RefreshStreamLeases: every TTL/3 = 5 s per lease target), so the
+        // discovery PING keeps the configured pingInterval. This is how often that
+        // schedule (and the CAPS_REQ retries, 500 ms apart) is checked.
+        private const float StreamLeaseTickSeconds = 0.1f;
+        private float _nextStreamLeaseTickTime;
+        private readonly List<string> _streamTargets = new List<string>();
+        // ERRORs logged once per device and code (the device repeats them up to 1/s).
+        private readonly HashSet<string> _loggedErrors = new HashSet<string>();
 
         private float AliveTimeoutSeconds =>
             Mathf.Max(5f, (_config != null ? _config.pingInterval : 5f) * 3f);
@@ -354,16 +356,22 @@ namespace Hapbeat
                 _nextStreamEndpointReconcileTime = Time.realtimeSinceStartup + 1f;
             }
 
-            // Periodic ping + connect status for keep-alive and device display
+            // Periodic discovery ping + connect status for keep-alive and device display
             if (IsConnected && _config != null && _config.pingInterval > 0)
             {
-                float pingInterval = EffectivePingInterval(_config.pingInterval, _client.HasV2StreamEndpoints);
-                if (Time.realtimeSinceStartup - _lastPingTime >= pingInterval)
+                if (Time.realtimeSinceStartup - _lastPingTime >= _config.pingInterval)
                 {
                     Ping();
                     _client.SendConnectStatus(true, ConnectStatusGroupByte, AppName, SystemInfo.deviceName);
                     _lastPingTime = Time.realtimeSinceStartup;
                 }
+            }
+
+            // Unicast lease PINGs to the devices that stream (or are about to), and CAPS_REQ retries.
+            if (IsConnected && Time.realtimeSinceStartup >= _nextStreamLeaseTickTime)
+            {
+                RefreshStreamLeases(false);
+                _nextStreamLeaseTickTime = Time.realtimeSinceStartup + StreamLeaseTickSeconds;
             }
 
             // Reopen the socket if anything dropped it (see TryAutoReconnect).
@@ -512,6 +520,7 @@ namespace Hapbeat
                 _client != null && _client.IsConnected)
             {
                 _client.SendPing();
+                RefreshStreamLeases(true);
                 _lastPingTime = Time.realtimeSinceStartup;
             }
 
@@ -583,7 +592,7 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Send a PING for keep-alive and time synchronization.
+        /// Broadcast a discovery PING for keep-alive and time synchronization.
         /// </summary>
         public void Ping()
         {
@@ -591,6 +600,27 @@ namespace Hapbeat
                 return;
 
             _client.SendPing();
+        }
+
+        /// <summary>
+        /// Stream class and lease state of every live device endpoint: whether it takes
+        /// Stream Gen 1 or Gen 2, and whether this application holds its stream lease.
+        /// A Deferred <see cref="HapbeatStreamPlayback"/> says why in
+        /// <see cref="HapbeatStreamPlayback.DeferReason"/>.
+        /// </summary>
+        public IReadOnlyList<HapbeatStreamEndpointInfo> GetStreamEndpoints()
+        {
+            if (_client == null) return Array.Empty<HapbeatStreamEndpointInfo>();
+            return _client.GetStreamEndpointInfos();
+        }
+
+        // Lease targets are the effective targets of the Deferred / Active stream sources.
+        private void RefreshStreamLeases(bool immediate)
+        {
+            if (_client == null || !_client.IsConnected) return;
+            _streamTargets.Clear();
+            _endpointStreamMixer?.CollectStreamTargets(_streamTargets);
+            _client.RefreshStreamLeases(_streamTargets, immediate);
         }
 
         /// <summary>
@@ -613,6 +643,7 @@ namespace Hapbeat
             // chunk under an identity the caller just relinquished.
             _endpointStreamMixer?.ReconcileEndpoints();
             _client.SendPing();
+            RefreshStreamLeases(true);
             _lastPingTime = Time.realtimeSinceStartup;
             Log("Stream lease reacquisition requested.");
         }
@@ -730,7 +761,7 @@ namespace Hapbeat
         /// <para>
         /// <b>Multi-source mixing:</b> overlapping <c>StreamAudioClip</c> calls
         /// are float-mixed inside the SDK and sent as a single wire stream. The
-        /// endpoint's v2 wire session carries a device-issued lease and generation.
+        /// endpoint's Stream Gen 2 wire session carries a device-issued lease and generation.
         /// Each returned <see cref="HapbeatStreamPlayback"/> is
         /// independent; <c>.Stop()</c> ends just that source.
         /// </para>
@@ -790,7 +821,13 @@ namespace Hapbeat
             }
             else if (playback.Status == HapbeatStreamPlaybackStatus.Deferred)
             {
-                Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: no addressed WifiUdp endpoint matches target '{target}'. STREAM_DATA was not broadcast.");
+                // A device that has not answered a lease request yet gets one now; the
+                // source starts when it does (one round trip).
+                RefreshStreamLeases(false);
+                if (playback.DeferReason == HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint)
+                    Debug.LogWarning($"[Hapbeat] StreamAudioClip deferred: no addressed WifiUdp endpoint matches target '{target}'. STREAM_DATA was not broadcast.");
+                else
+                    Log($"StreamAudioClip \"{clip.name}\" deferred ({playback.DeferReason}) for target '{target}'.");
             }
             return playback;
         }
@@ -902,6 +939,8 @@ namespace Hapbeat
                     // for DTIM). Pinging on connect shrinks that window from
                     // seconds to about one RTT.
                     client.SendPing();
+                    _loggedErrors.Clear();
+                    RefreshStreamLeases(true);
                     OnConnected?.Invoke();
                 }
                 else
@@ -977,10 +1016,25 @@ namespace Hapbeat
                 Log($"Stream BEGIN {sender} ({identity}).");
             };
 
-            client.OnError += (errorCode, message) =>
+            client.OnStreamEndpointStateChanged += sender =>
             {
-                string errorMsg = $"Error (code={errorCode}): {message}";
-                Debug.LogWarning($"[Hapbeat] {errorMsg}");
+                _endpointStreamMixer?.ReconcileEndpoints();
+                OnStreamEndpointChanged?.Invoke(client.GetStreamEndpointInfo(sender.Address));
+            };
+
+            // A device's CAPS can change how its stream is mixed (one motor: no pan).
+            client.OnCapsResolved += _ => _endpointStreamMixer?.ReconcileEndpoints();
+
+            client.OnStreamLeaseRenewed += sender => _endpointStreamMixer?.RestartSessionGeneration(sender);
+
+            client.OnStreamError += (sender, code, identity) =>
+                _endpointStreamMixer?.HandleStreamError(sender, code, identity);
+
+            client.OnErrorFrom += (sender, errorCode, message) =>
+            {
+                string errorMsg = $"Error (code=0x{errorCode:X4}) from {sender.Address}: {message}";
+                if (_loggedErrors.Add(sender.Address + "|" + errorCode))
+                    Debug.LogWarning($"[Hapbeat] {errorMsg}");
                 OnError?.Invoke(errorMsg);
             };
 

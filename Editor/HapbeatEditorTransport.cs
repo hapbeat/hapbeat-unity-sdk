@@ -90,6 +90,13 @@ namespace Hapbeat.Editor
                 };
                 _client.OnStreamSessionBegan += (sender, identity) =>
                     Debug.Log($"[Hapbeat:Editor] Stream BEGIN {sender} ({identity}).");
+                _client.OnStreamEndpointStateChanged += _ => _streamMixer?.ReconcileEndpoints();
+                _client.OnCapsResolved += _ => _streamMixer?.ReconcileEndpoints();
+                _client.OnStreamLeaseRenewed += sender => _streamMixer?.RestartSessionGeneration(sender);
+                _client.OnStreamError += (sender, code, identity) =>
+                    _streamMixer?.HandleStreamError(sender, code, identity);
+                _client.OnErrorFrom += (sender, code, message) =>
+                    Debug.LogWarning($"[Hapbeat:Editor] Error (code=0x{code:X4}) from {sender.Address}: {message}");
                 EditorApplication.update -= Tick;
                 EditorApplication.update += Tick;
 
@@ -169,7 +176,7 @@ namespace Hapbeat.Editor
             }
 
             // An explicit Test Play is the user's request to take the device back from
-            // a writer that superseded this transport (stream-session-v2.md allows an
+            // a writer that superseded this transport (stream-session.md allows an
             // explicit reacquisition, never an automatic one).
             bool reacquired = _client.ReacquireStreamLeasesIfSuperseded();
             if (reacquired)
@@ -183,6 +190,8 @@ namespace Hapbeat.Editor
                 StopStream();
 
             HapbeatStreamPlayback playback = GetStreamMixer().Add(clip, gain, gain, target, loop);
+            // Lease requests go to the devices this clip targets, at once.
+            RefreshStreamLeases(true);
             if (playback.IsActive)
             {
                 Debug.Log($"[Hapbeat:Editor] \u266a StreamClip \"{clip.name}\" " +
@@ -194,10 +203,15 @@ namespace Hapbeat.Editor
                 Debug.Log($"[Hapbeat:Editor] Stream lease was superseded; reacquiring it. StreamClip " +
                           $"\"{clip.name}\" starts when the device confirms the new lease.");
             }
-            else
+            else if (playback.DeferReason == HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint)
             {
                 Debug.LogWarning($"[Hapbeat:Editor] StreamClip deferred: no PONG-resolved endpoint matches " +
                                  $"target '{target}'. STREAM_DATA was not broadcast.");
+            }
+            else
+            {
+                Debug.Log($"[Hapbeat:Editor] StreamClip \"{clip.name}\" deferred ({playback.DeferReason}); " +
+                          "it starts when the device answers the stream lease request.");
             }
         }
 
@@ -221,17 +235,37 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Re-PING periodically so PONG-resolved stream endpoints stay live.
+        /// Re-PING periodically so PONG-resolved stream endpoints stay live, and keep the
+        /// stream leases of the devices Test Play streams to (unicast extended PINGs).
         /// </summary>
         private static void TickDiscovery()
         {
             if (!IsOpen) return;
 
             double now = EditorApplication.timeSinceStartup;
+            if (now >= _nextLeaseTickTime)
+            {
+                _nextLeaseTickTime = now + LeaseTickSeconds;
+                RefreshStreamLeases(false);
+            }
             if (now - _lastPingTime < PingIntervalSeconds) return;
 
             _lastPingTime = now;
             _client.SendPing();
+        }
+
+        // How often the client's lease / CAPS_REQ schedule is checked.
+        private const double LeaseTickSeconds = 0.1;
+        private static double _nextLeaseTickTime;
+        private static readonly System.Collections.Generic.List<string> _streamTargets =
+            new System.Collections.Generic.List<string>();
+
+        private static void RefreshStreamLeases(bool immediate)
+        {
+            if (!IsOpen) return;
+            _streamTargets.Clear();
+            _streamMixer?.CollectStreamTargets(_streamTargets);
+            _client.RefreshStreamLeases(_streamTargets, immediate);
         }
 
         /// <summary>Lead to keep buffered on the device, from config.</summary>

@@ -65,9 +65,9 @@ namespace Hapbeat.Tests
             CollectionAssert.AreEqual(new[] { true, false }, observed.ConnectionStates);
         }
 
-        // ConnectStatus, PING, PLAY/STOP/STOP_ALL broadcast, PLAY unicast,
-        // v2 BEGIN/DATA/END, legacy BEGIN/DATA/END, ConnectStatus(false).
-        private const int ExpectedDatagrams = 13;
+        // ConnectStatus, discovery PING, PLAY/STOP/STOP_ALL broadcast, lease PING, CAPS_REQ,
+        // PLAY unicast, Gen 2 BEGIN/DATA/END, Gen 1 BEGIN/DATA/END, ConnectStatus(false).
+        private const int ExpectedDatagrams = 15;
 
         private static Observed DriveEverySendPath(HapbeatClient client)
         {
@@ -82,21 +82,24 @@ namespace Hapbeat.Tests
 
             // Discovery / keep-alive, then commands while no device is known (broadcast).
             client.SendConnectStatus(true, 0, "app", "pc");
-            ushort seq = client.SendPing();
-            Assert.IsTrue(client.TryGetPendingPing(seq, out long timestamp, out ulong incarnation));
+            client.SendPing();
             Assert.AreEqual(CommandSendResult.Broadcast, client.SendPlay("kit.hit", 0, 1f));
             client.SendStop("kit.hit");
             client.SendStopAll();
 
-            // A device answers (injected; TEST-NET address): unicast commands and a stream lease.
+            // A device answers its lease request (injected; TEST-NET address): unicast
+            // commands, a stream lease and a CAPS_REQ.
             var device = new IPEndPoint(IPAddress.Parse("192.0.2.10"), 7700);
             const string address = "player_1/pos_chest/group_1";
+            ushort seq = client.SendLeasePingTo(device);
+            Assert.IsTrue(client.TryGetPendingPing(seq, out long timestamp, out ulong incarnation));
             var lease = new HapbeatProtocol.StreamLeaseIdentity(0x0102030405060708UL, 7);
             HandlePongMethod.Invoke(client, new object[]
             {
                 seq, BuildPongPayload(timestamp, address, incarnation, lease), device,
             });
             client.DispatchMainThreadCallbacks();
+            client.RefreshStreamLeases(new[] { "player_1" });
             Assert.AreEqual(CommandSendResult.Unicast, client.SendPlay("kit.hit", 0, 1f, "player_1"));
 
             List<HapbeatClient.StreamEndpoint> endpoints = client.GetResolvedStreamEndpoints("player_1");

@@ -8,9 +8,9 @@ using NUnit.Framework;
 namespace Hapbeat.Tests
 {
     /// <summary>
-    /// A single lost v2 BEGIN must not silence a whole session: the identical BEGIN is
+    /// A single lost Gen 2 BEGIN must not silence a whole session: the identical BEGIN is
     /// repeated before the first DATA blocks and then periodically (equal BEGIN is
-    /// idempotent on the receiver). Legacy firmware restarts on BEGIN, so it gets none.
+    /// idempotent on the receiver). Gen 1 firmware restarts on BEGIN, so it gets none.
     /// Recording sinks only; no socket is opened and nothing is sent.
     /// </summary>
     public sealed class StreamBeginRepeatTests
@@ -127,7 +127,7 @@ namespace Hapbeat.Tests
             // Unopened client: the send path returns before any socket write.
             using var client = new HapbeatClient();
             var lease = new HapbeatProtocol.StreamLeaseIdentity(0x72, 9);
-            ushort seq = client.SendPing();
+            ushort seq = client.SendLeasePingTo(Device);
             Assert.IsTrue(client.TryGetPendingPing(seq, out long timestamp, out ulong incarnation));
             typeof(HapbeatClient).GetMethod("HandlePong", BindingFlags.Instance | BindingFlags.NonPublic)
                 .Invoke(client, new object[] { seq, StreamLegacyClassificationTests.V2Pong(timestamp, incarnation, lease), Device });
