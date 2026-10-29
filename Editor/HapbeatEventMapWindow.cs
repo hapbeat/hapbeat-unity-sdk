@@ -1808,7 +1808,14 @@ namespace Hapbeat.Editor
                         // Refresh so subsequent GUI reads the updated entry.
                         so.Update();
                     }
-                    DrawKitFolderHint("stream-clips");
+                    // Point at the Kit's stream-clips/ folder only when the entry
+                    // is (or is about to become) a Kit entry: its clip resolved to
+                    // a Kit manifest, or no clip yet while Kits are installed.
+                    // A Kit-free clip (e.g. a WAV bundled with a sample) gets no hint.
+                    if (entry.manifestOverride != null ||
+                        (entry.streamClip == null &&
+                         HapbeatManifestIntensity.GetKitDirectoryNames().Count > 0))
+                        DrawKitFolderHint("stream-clips");
                     // Loop is meaningful for StreamClip — used by HapbeatSequenceTrigger's
                     // hold phase so a short clip repeats until Stop() is called, and by
                     // continuously-modulated effects (drag/scrape) driven by bindings.
@@ -1987,10 +1994,18 @@ namespace Hapbeat.Editor
                 DrawBindingsList(entryProp);
             }
 
-            // Notes (last)
+            // Notes (last). Drawn as a label + TextArea rather than
+            // PropertyField: `notes` carries [TextArea], and Unity's TextAreaDrawer
+            // registers its label as a deferred prefix label but skips the text
+            // area during the Layout event, so the prefix (with Layout's dummy
+            // (0,0) rect) stays pending. As the last control in this window
+            // nothing consumes it, and the next control drawn elsewhere paints
+            // "Notes" at the top-left corner over the dock tab title.
             EditorGUILayout.Space(4);
-            EditorGUILayout.PropertyField(entryProp.FindPropertyRelative("notes"),
-                new GUIContent("Notes", "Designer notes. Not sent to devices."));
+            var notesProp = entryProp.FindPropertyRelative("notes");
+            EditorGUILayout.LabelField(new GUIContent("Notes", "Designer notes. Not sent to devices."));
+            notesProp.stringValue = EditorGUILayout.TextArea(notesProp.stringValue ?? "",
+                GUILayout.MinHeight(EditorGUIUtility.singleLineHeight * 2));
 
             EditorGUIUtility.labelWidth = prevLabelWidth;
             if (EditorGUI.EndChangeCheck())
