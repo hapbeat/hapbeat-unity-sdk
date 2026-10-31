@@ -157,6 +157,9 @@ namespace Hapbeat
             string label = $"{gameObject.name}: {baseName}";
             string target = entry.HasTarget ? entry.target : null;
 
+            // Reported before the deferral below; the velocity-scaled stream never loops.
+            ReportFired(entry, curveValue * _gainMultiplier, entry.mode != HapticMode.StreamClip && entry.loop);
+
             // Latency compensation: use the same global + per-entry offset as
             // the base FireHaptic path (VelocityScaled is a sibling fire path
             // that does its own gain math, so it needs to defer explicitly).
@@ -198,7 +201,7 @@ namespace Hapbeat
                             Debug.LogWarning($"[Hapbeat] VelocityScaled Command but eventId empty on '{label}'", this);
                         return;
                     }
-                    mgr.Play(entry.eventId, scaledGain, label, target, Pan);
+                    mgr.PlayUnreported(entry.eventId, scaledGain, label, target, Pan);
                     break;
 
                 case HapticMode.StreamClip:
@@ -208,7 +211,7 @@ namespace Hapbeat
                             Debug.LogWarning($"[Hapbeat] VelocityScaled StreamClip but streamClip null on '{label}'", this);
                         return;
                     }
-                    mgr.StreamAudioClip(entry.streamClip, scaledGain, target, loop: false);
+                    mgr.StreamAudioClipUnreported(entry.streamClip, scaledGain, scaledGain, target, loop: false);
                     if (_verboseLog)
                         Debug.Log($"[Hapbeat] ♪ {label} velocity-scaled stream (gain={scaledGain:F2})", this);
                     break;

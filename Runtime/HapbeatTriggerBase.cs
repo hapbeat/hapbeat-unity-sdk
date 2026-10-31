@@ -309,7 +309,14 @@ namespace Hapbeat
         /// <see cref="ComputeEffectiveDelaySeconds"/>; null = that. A StreamClip entry starts that much later on the
         /// stream timeline (sample-accurate); a Command entry waits in a coroutine.
         /// </summary>
-        protected void FireHaptic(float? delaySeconds)
+        protected void FireHaptic(float? delaySeconds) => FireHaptic(delaySeconds, reportFired: true);
+
+        /// <summary>
+        /// <paramref name="reportFired"/> false: the caller already raised
+        /// <see cref="HapbeatManager.Fired"/> when the game fired (e.g. a sequence loop
+        /// that starts after its start delay).
+        /// </summary>
+        private protected void FireHaptic(float? delaySeconds, bool reportFired)
         {
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] Fire() called on {name} ({GetType().Name} entryId={_entryId})", this);
@@ -357,6 +364,10 @@ namespace Hapbeat
                 return;
             }
 
+            // Reported here, before any deferral, so Fired carries the frame the game fired on.
+            if (reportFired)
+                ReportFired(entry, ResolveFireGain(entry), entry.loop);
+
             float delay = delaySeconds.HasValue ? Mathf.Max(0f, delaySeconds.Value) : ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f && entry.mode != HapticMode.StreamClip)
             {
@@ -369,6 +380,28 @@ namespace Hapbeat
             }
 
             FireHapticImmediate(entry, delay);
+        }
+
+        /// <summary>
+        /// Raise <see cref="HapbeatManager.Fired"/> for <paramref name="entry"/> of this
+        /// trigger's map, fired now with <paramref name="gain"/> on top of the entry's own
+        /// gain. Nothing is raised for an entry that cannot play.
+        /// </summary>
+        private protected void ReportFired(HapbeatEventEntry entry, float gain, bool loop)
+        {
+            HapbeatManager.RaiseFired(HapbeatFired.FromEntry(entry, _eventMap, gain, loop, this));
+        }
+
+        /// <summary>
+        /// The multiplier <see cref="FireHapticImmediate"/> applies on top of the entry's
+        /// effective gain: a StreamGain binding's current value for a StreamClip (the same
+        /// pre-seed it uses), else <see cref="GainMultiplier"/>.
+        /// </summary>
+        private protected float ResolveFireGain(HapbeatEventEntry entry)
+        {
+            if (entry.mode != HapticMode.StreamClip) return _gainMultiplier;
+            var gainBind = FindBindingForEntry(entry.id, wantStreamGain: true);
+            return gainBind != null ? gainBind.EvaluateNow() : _gainMultiplier;
         }
 
         private IEnumerator FireHapticAfterDelay(HapbeatEventEntry entry, float delay)
@@ -426,7 +459,7 @@ namespace Hapbeat
                         // Pan は StreamClip 経路と同じく per-trigger の値をそのまま乗せる
                         // (_gainMultiplier と対。Command は device 側ミキサーが linear
                         // balance で展開する — contracts message-format.md §0x01 DEC-055)。
-                        HapbeatManager.Instance.Play(entry.eventId, commandGain, label, target, _pan);
+                        HapbeatManager.Instance.PlayUnreported(entry.eventId, commandGain, label, target, _pan);
                     }
                     break;
 
@@ -475,7 +508,7 @@ namespace Hapbeat
                                       $"target='{target ?? "(broadcast)"}' gain={entry.gain:F2} " +
                                       $"intensity={(entry.IsMissingKitIntensity ? "?" : entry.EffectiveIntensity.ToString("F2"))} " +
                                       $"baseline={baselineGain:F2} initialMod={initialMod:F2} initial={initialGain:F2} loop={entry.loop}", this);
-                        _activePlayback = HapbeatManager.Instance.StreamAudioClip(
+                        _activePlayback = HapbeatManager.Instance.StreamAudioClipUnreported(
                             entry.streamClip, baselineGain, initialGain, target, entry.loop, startDelaySeconds);
 
                         // pan binding (Output=StreamPan) も同様に Self → Children → Parent で探索し

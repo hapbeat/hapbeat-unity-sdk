@@ -12,6 +12,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 ### 追加
 - `HapbeatAvSync`（DEC-093）: この端末の音と触覚の時間差の補正（ms、正 = 触覚を遅らせる、負 = アプリの音を遅らせる）。端末に保存し（PlayerPrefs）、実行時に変えられる。`Split(soundSyncMs, hapticSyncMs, ...)` は、cue 表の素材の同期点（`syncMs`）とこの補正から、音と触覚それぞれの遅らせ量を返す。
 - `HapbeatUnityEventTrigger.FireAfter(delaySeconds)` と `StreamAudioClip(..., startDelaySeconds)`: StreamClip を指定した時間だけ後に、ストリームの時間軸上で正確に開始する（コルーチン待ちのフレーム単位の揺れがない）。
+- `HapbeatManager.Fired`（`HapbeatFired`）: 触覚の発生ごとに 1 回、ゲームが鳴らした時点（クールダウンなどの判定の後、遅れて送る前）で通知する。Trigger・`HapbeatStateBehaviour` からの発生は Event Map の項目の id 付き、`Play` / `StreamAudioClip` の直接の呼び出しは id なし。インスペクターだけでつないだ Trigger も、コードを変えずに Hapbeat Studio の Scene 用に記録できる（contracts `scene-recording.md` §5）。No Network でも通知する。
 
 ### 変更
 - StreamClip の遅延を一定にした: 別のクリップがストリーム中の端末に新しいクリップを足すと、これまでは先送り分（既定 50 ms）だけ遅れて鳴っていた。先送り済みのブロックに重なるときは、そのセッションを新しい generation で開始し直し、端末に溜まったデータを捨てさせて、新しいクリップの頭から混ぜ直して送る。

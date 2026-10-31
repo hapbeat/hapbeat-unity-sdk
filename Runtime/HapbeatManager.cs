@@ -34,6 +34,42 @@ namespace Hapbeat
         /// <summary>Invoked when a PONG response is received. Parameter is round-trip time in microseconds.</summary>
         public event Action<long> OnPong;
 
+        /// <summary>
+        /// Raised once per haptic fire, at the moment the game fires: after the trigger's
+        /// checks (enabled, cooldown, "already playing") pass and before any delayed send
+        /// (entry delay, <c>FireAfter</c>, sequence start delay), so
+        /// <see cref="HapbeatFired.frame"/> is the frame the game fired on. Covers every
+        /// trigger and <see cref="HapbeatStateBehaviour"/> (reported with the entry id,
+        /// including triggers wired only in the Inspector) and direct
+        /// <see cref="Play"/> / <see cref="StreamAudioClip(AudioClip, float, string, bool)"/>
+        /// calls (reported with <see cref="HapbeatFired.entryId"/> null). Not raised for
+        /// stops. Raised in <see cref="NoNetwork"/> mode too, so a scene can be recorded
+        /// without sending anything. An exception thrown by a subscriber is logged and
+        /// does not stop the fire.
+        /// </summary>
+        public static event Action<HapbeatFired> Fired;
+
+        /// <summary>Raises <see cref="Fired"/>; a null report (entry that cannot play) is ignored.</summary>
+        internal static void RaiseFired(HapbeatFired fired)
+        {
+            if (fired == null) return;
+            var handlers = Fired;
+            if (handlers == null) return;
+            // Per subscriber, so one throwing recorder neither breaks the fire nor
+            // starves the subscribers after it.
+            foreach (Action<HapbeatFired> handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    handler(fired);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
+        }
+
         [Header("Configuration")]
         [Tooltip("Hapbeat configuration asset. If not set, default settings will be used.")]
         [SerializeField]
@@ -416,6 +452,20 @@ namespace Hapbeat
             if (!EnsureConnected())
                 return;
 
+            RaiseFired(new HapbeatFired(null, eventId, displayName, HapticMode.Command, gain, target,
+                false, null, null));
+            PlayUnreported(eventId, gain, displayName, target, pan);
+        }
+
+        /// <summary>
+        /// <see cref="Play"/> without raising <see cref="Fired"/>: for the trigger paths,
+        /// which report the fire themselves (with the entry id) when the game fires.
+        /// </summary>
+        internal void PlayUnreported(string eventId, float gain, string displayName, string target, float pan)
+        {
+            if (!EnsureConnected())
+                return;
+
             long targetTimeUs = 0;
             _client.SendPlay(eventId, targetTimeUs, gain, target, pan);
 
@@ -770,6 +820,25 @@ namespace Hapbeat
         /// (DEC-093). Use it instead of waiting before the call.
         /// </summary>
         public HapbeatStreamPlayback StreamAudioClip(AudioClip clip, float baselineGain, float initialGain, string target, bool loop, double startDelaySeconds)
+        {
+            if (!EnsureConnected()) return null;
+            if (clip == null)
+            {
+                Debug.LogWarning("[Hapbeat] StreamAudioClip: clip is null.");
+                return null;
+            }
+
+            RaiseFired(new HapbeatFired(null, null, clip.name, HapticMode.StreamClip, initialGain, target,
+                loop, null, null));
+            return StreamAudioClipUnreported(clip, baselineGain, initialGain, target, loop, startDelaySeconds);
+        }
+
+        /// <summary>
+        /// <see cref="StreamAudioClip(AudioClip, float, float, string, bool, double)"/> without
+        /// raising <see cref="Fired"/>: for the trigger paths, which report the fire themselves.
+        /// </summary>
+        internal HapbeatStreamPlayback StreamAudioClipUnreported(AudioClip clip, float baselineGain, float initialGain,
+            string target, bool loop, double startDelaySeconds = 0)
         {
             if (!EnsureConnected()) return null;
             if (clip == null)

@@ -151,6 +151,8 @@ namespace Hapbeat
             var entry = ResolveEntry(_entryIdOnEnter);
             if (entry == null) return;
 
+            ReportFired(entry);
+
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f && HapbeatManager.Instance != null)
             {
@@ -225,6 +227,8 @@ namespace Hapbeat
             var entry = ResolveEntry(_entryIdOnExit);
             if (entry == null) return;
 
+            ReportFired(entry);
+
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f && HapbeatManager.Instance != null)
             {
@@ -241,6 +245,17 @@ namespace Hapbeat
             }
 
             FireEntry(animator, entry, "Exit");
+        }
+
+        /// <summary>
+        /// Raise <see cref="HapbeatManager.Fired"/> for <paramref name="entry"/> when the
+        /// state is entered / exited, before any delay. Same conditions as
+        /// <see cref="FireEntry"/>: a manager exists and the entry can play.
+        /// </summary>
+        private void ReportFired(HapbeatEventEntry entry)
+        {
+            if (HapbeatManager.Instance == null) return;
+            HapbeatManager.RaiseFired(HapbeatFired.FromEntry(entry, _eventMap, _gainMultiplier, entry.loop, this));
         }
 
         // --- Delay helpers ---
@@ -327,7 +342,7 @@ namespace Hapbeat
                     if (_verboseLog)
                         Debug.Log($"[HapbeatState] Fire Command ({phase}): eventId='{entry.eventId}' " +
                                   $"target='{target ?? "(broadcast)"}' gain={commandGain:F2}", animator);
-                    HapbeatManager.Instance.Play(entry.eventId, commandGain, label, target);
+                    HapbeatManager.Instance.PlayUnreported(entry.eventId, commandGain, label, target, 0f);
                     return null;
                 }
 
@@ -343,7 +358,7 @@ namespace Hapbeat
                     if (_verboseLog)
                         Debug.Log($"[HapbeatState] Fire StreamClip ({phase}): clip='{entry.streamClip.name}' " +
                                   $"target='{target ?? "(broadcast)"}' gain={streamGain:F2} loop={entry.loop}", animator);
-                    return HapbeatManager.Instance.StreamAudioClip(
+                    return HapbeatManager.Instance.StreamAudioClipUnreported(
                         entry.streamClip, streamGain, streamGain, target, entry.loop);
                 }
             }

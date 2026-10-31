@@ -217,6 +217,7 @@ namespace Hapbeat
                 if (_verboseLog)
                     Debug.Log($"[Hapbeat] Sequence: delaying On Stop one-shot by {_stopShotDelay:F3}s on {name} " +
                               "(configured sequence timing gap)", this);
+                ReportOneShotFired(_onStopEntryId);
                 _pendingStopShot = StartCoroutine(StopShotCoroutine(_stopShotDelay));
             }
             else
@@ -275,6 +276,7 @@ namespace Hapbeat
             if (_verboseLog)
                 Debug.Log($"[Hapbeat] Sequence: delaying Loop start by {delay:F3}s on {name} " +
                           $"(workaround for rapid-stream device issue)", this);
+            ReportLoopFired();
             _pendingLoopStart = StartCoroutine(LoopStartCoroutine(delay));
         }
 
@@ -282,7 +284,19 @@ namespace Hapbeat
         {
             yield return new WaitForSecondsRealtime(delay);
             _pendingLoopStart = null;
-            FireHaptic();
+            // Already reported by StartLoopAfterDelay when the game fired.
+            FireHaptic(null, reportFired: false);
+        }
+
+        /// <summary>
+        /// Report the Loop entry as fired now, for a loop that starts after the start-shot
+        /// delay (<see cref="HapbeatManager.Fired"/> carries the frame the game fired on).
+        /// </summary>
+        private void ReportLoopFired()
+        {
+            if (!_triggerEnabled || _eventMap == null || HapbeatManager.Instance == null) return;
+            var entry = ResolveEntry();
+            if (entry != null) ReportFired(entry, ResolveFireGain(entry), entry.loop);
         }
 
         private void CancelPendingLoop()
@@ -321,7 +335,8 @@ namespace Hapbeat
             yield return new WaitForSecondsRealtime(delay);
             _pendingStopShot = null;
             if (HapbeatManager.Instance == null) yield break;
-            PlayOneShot(_onStopEntryId, "end");
+            // Already reported by Stop() when the game stopped the hold.
+            PlayOneShot(_onStopEntryId, "end", reportFired: false);
         }
 
         /// <summary>
@@ -365,7 +380,20 @@ namespace Hapbeat
             _isActive = false;
         }
 
-        private void PlayOneShot(string entryId, string phase, float gainMultiplier = 1f)
+        /// <summary>
+        /// Report a one-shot entry as fired now, for an On Stop one-shot sent after
+        /// <see cref="_stopShotDelay"/>. One-shots never loop.
+        /// </summary>
+        private void ReportOneShotFired(string entryId, float gainMultiplier = 1f)
+        {
+            if (string.IsNullOrEmpty(entryId) || !_triggerEnabled || HapbeatManager.Instance == null) return;
+            var entry = ResolveSequenceEntry(entryId);
+            if (entry != null) ReportFired(entry, gainMultiplier * _gainMultiplier, false);
+        }
+
+        /// <param name="reportFired">False when <see cref="HapbeatManager.Fired"/> was already raised
+        /// for this one-shot (<see cref="ReportOneShotFired"/>).</param>
+        private void PlayOneShot(string entryId, string phase, float gainMultiplier = 1f, bool reportFired = true)
         {
             // "(none)" — empty id means the user deliberately left this phase unset.
             if (string.IsNullOrEmpty(entryId)) return;
@@ -402,6 +430,9 @@ namespace Hapbeat
 
             // Latency compensation (start / stop one-shots). Loop phase delegates
             // to inherited FireHaptic which already applies the same offset.
+            if (reportFired)
+                ReportFired(entry, gainMultiplier * _gainMultiplier, false);
+
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
@@ -430,7 +461,7 @@ namespace Hapbeat
                         if (_verboseLog) Debug.Log($"[Hapbeat] Sequence {phase}-shot: Command mode but eventId is empty on entry '{label}'", this);
                         return;
                     }
-                    HapbeatManager.Instance.Play(entry.eventId, gain, label, target, Pan);
+                    HapbeatManager.Instance.PlayUnreported(entry.eventId, gain, label, target, Pan);
                     break;
 
                 case HapticMode.StreamClip:
@@ -441,7 +472,7 @@ namespace Hapbeat
                     }
                     // One-shots never loop — entry.loop applies only to the Loop phase,
                     // which goes through the inherited FireHaptic() path.
-                    HapbeatManager.Instance.StreamAudioClip(entry.streamClip, gain, target, loop: false);
+                    HapbeatManager.Instance.StreamAudioClipUnreported(entry.streamClip, gain, gain, target, loop: false);
                     break;
             }
         }

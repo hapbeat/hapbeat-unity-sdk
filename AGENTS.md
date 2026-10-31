@@ -102,7 +102,14 @@ public long   TimeOffsetUs { get; }
 public event Action OnConnected, OnDisconnected;
 public event Action<string> OnError;
 public event Action<long> OnPong;  // round-trip time (us)
+public static event Action<HapbeatFired> Fired;  // once per haptic fire, when the game fires (see below)
 ```
+`HapbeatFired` fields: `string entryId` (Event Map entry id; null for a direct
+`Play` / `StreamAudioClip` call), `string eventId`, `string displayName`,
+`HapticMode mode`, `float gain` (the multiplier the game applied on top of the entry's
+gain; for a direct call, the gain passed), `string target`, `bool loop`,
+`HapbeatEventMap map`, `UnityEngine.Object sender` (the trigger / state behaviour, or
+null), `int frame` (`Time.frameCount`), `double time` (`Time.timeAsDouble`).
 
 `HapbeatStreamPlayback` (returned by `StreamAudioClip`) — write per frame to
 modulate one source: `string Id { get; }`, `float Gain { get; set; }`,
@@ -214,6 +221,28 @@ Add via `Add Component > Hapbeat/...`. All reference an `HapbeatEventMap` + an e
   Animator state → Add Behaviour. Separate entries for state Enter / Exit, optional
   `Required Previous State`, looping StreamClip auto-stops on state exit. (The
   pre-0.2.0 `HapbeatAnimatorTrigger` no longer exists.)
+
+## Recording for Hapbeat Studio's Scene (`HapbeatManager.Fired`)
+
+`HapbeatManager.Fired` is raised once per haptic fire — every trigger above,
+`HapbeatStateBehaviour`, and direct `Play` / `StreamAudioClip` calls — at the moment
+the game fires (after cooldown / enable checks, before any entry delay, `FireAfter`
+or sequence start delay), so a scene can be recorded without changing game code, even
+when the triggers are wired only in the Inspector. Not raised for stops.
+- Subscribe in a recorder script (`HapbeatManager.Fired += OnFired;`, unsubscribe in
+  `OnDisable` — it is a static event) and, for each fire with an `entryId`, write one
+  contracts `scene-recording.md` §5 line to the log with the marker `HAPBEAT_SCENE `:
+  `Debug.Log("HAPBEAT_SCENE " + json)` with
+  `{"t":"cue","frame":<Time.frameCount − start frame>,"source":"unity:<map guid>/<entryId>","gain":…}`,
+  where `<map guid>` is the asset guid of `fired.map` (Editor: `AssetDatabase.TryGetGUIDAndLocalFileIdentifier`;
+  a duplicated Event Map keeps its entries' ids, so the guid tells them apart).
+  The project's `hapbeat-scene.json` `bindings` maps each source to a cue.
+  A direct call (`entryId == null`) has no `source`; write a `cue` yourself if needed.
+  `Fired` reports a loop's start only: write its input (`level`) from your recorder.
+- Record with No Network (`HapbeatConfig.noNetwork` or the `-HapbeatNoNetwork`
+  command-line flag): `Fired` is still raised, nothing is sent to devices.
+- Steps and a ready-made recorder: `hapbeat-helper scene guide --engine unity` and
+  `hapbeat-helper scene template unity`.
 
 ## Configuration (`HapbeatConfig`, `Assets > Create > Hapbeat > Config`)
 

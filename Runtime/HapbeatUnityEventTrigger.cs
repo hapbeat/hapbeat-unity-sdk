@@ -47,6 +47,11 @@ namespace Hapbeat
             string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
             string target = entry.HasTarget ? entry.target : null;
 
+            // gain replaces the entry's own gain, so Fired reports it as the factor on
+            // top of that gain (contracts scene-recording.md §2 events[].gain).
+            float effective = entry.GetEffectiveGain();
+            ReportFired(entry, effective > 0f ? gain / effective : gain, entry.loop);
+
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
@@ -55,14 +60,14 @@ namespace Hapbeat
                 StartHapticDelayCoroutine(FireWithGainAfterDelay(entry.eventId, gain, Pan, label, target, delay));
                 return;
             }
-            HapbeatManager.Instance.Play(entry.eventId, gain, label, target, Pan);
+            HapbeatManager.Instance.PlayUnreported(entry.eventId, gain, label, target, Pan);
         }
 
         private IEnumerator FireWithGainAfterDelay(string eventId, float gain, float pan, string label, string target, float delay)
         {
             yield return new WaitForSecondsRealtime(delay);
             if (!_triggerEnabled || HapbeatManager.Instance == null) yield break;
-            HapbeatManager.Instance.Play(eventId, gain, label, target, pan);
+            HapbeatManager.Instance.PlayUnreported(eventId, gain, label, target, pan);
         }
 
         /// <summary>
