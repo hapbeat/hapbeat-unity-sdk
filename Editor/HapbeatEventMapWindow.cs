@@ -2560,8 +2560,7 @@ namespace Hapbeat.Editor
             // StreamClip entry (no Kit manifest) plays at clip_gain 1 by design.
             bool missingClipGain = entry.mode == HapticMode.StreamClip
                 && entry.streamClip != null
-                && entry.UsesKitClipGain
-                && entry.CachedManifestClipGain <= 0f;
+                && entry.IsMissingKitClipGain;
 
             bool isStreaming = playPath
                 ? HapbeatManager.Instance.IsStreaming
