@@ -27,5 +27,5 @@ MonoBehaviour:
     notes: 'Kit-free StreamClip: the SDK streams this WAV from the PC. No Studio
       deploy needed.'
     manifestOverride: {fileID: 0}
-    _cachedManifestIntensity: -1
+    _cachedManifestClipGain: -1
   revertPlayModeChanges: 0

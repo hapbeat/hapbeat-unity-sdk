@@ -161,7 +161,8 @@ namespace Hapbeat.Editor
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("_outputParameter"),
                     new GUIContent("Parameter",
                         "StreamGain: overall volume multiplier on the active StreamClip " +
-                        "playback (0..2). Use for intensity modulation.\n" +
+                        "playback, on top of clip_gain × entry.gain (the product is capped at 1). " +
+                        "Use for strength modulation.\n" +
                         "StreamPan: stereo pan (-1..+1). Ignored for mono clips."));
                 EditorGUILayout.PropertyField(serializedObject.FindProperty("_outputMin"),
                     new GUIContent("Output Min", "Output value when input = inputMin."));

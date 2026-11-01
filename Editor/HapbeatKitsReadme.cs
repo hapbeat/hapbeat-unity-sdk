@@ -155,11 +155,12 @@ namespace Hapbeat.Editor
             // ── Strength model ───────────────────────────────────────────────
             GUILayout.Label("Strength model", _h2);
             GUILayout.Label(
-                "<b>Final output = WAV amplitude × intensity × SDK_gain × device volume</b>",
+                "<b>Output = clip × app_gain × device volume, clip = WAV × clip_gain</b>",
                 _body);
             GUILayout.Label(
-                "intensity — set by the content creator in Studio (0.0 – 1.0).\n" +
-                "SDK_gain — set on the Unity side (entry.gain × binding, 0.0 – 2.0, default 1.0).",
+                "clip_gain — the clip's strength, set by the content creator in Studio (0.0 – 1.0).\n" +
+                "app_gain — set on the Unity side (entry.gain × trigger multiplier × binding × call gain, about 0 – 2, default 1.0).\n" +
+                "Sent value = clamp(clip_gain × app_gain, 0, 1).",
                 _muted);
 
             // ── Troubleshooting ──────────────────────────────────────────────

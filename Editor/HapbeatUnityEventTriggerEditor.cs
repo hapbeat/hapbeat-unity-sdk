@@ -29,7 +29,7 @@ namespace Hapbeat.Editor
                     "  \u89e6\u899a\u30a4\u30d9\u30f3\u30c8\u3092\u767a\u706b\u3002\u6700\u3082\u57fa\u672c\u7684\u306a\u4f7f\u3044\u65b9\u3002\n" +
                     "  \u4f8b: Button.onClick, XRI selectEntered\n\n" +
                     "\u25b6 FireWithGain(float)\n" +
-                    "  gain \u3092\u4e0a\u66f8\u304d\u3057\u3066\u767a\u706b\u3002\n" +
+                    "  gain \u3092\u639b\u3051\u3066\u767a\u706b\uff08\u7d20\u6750\u306e\u5f37\u3055 clip_gain \u3068\u9805\u76ee\u306e gain \u306b\u639b\u3051\u308b\uff09\u3002\n" +
                     "  \u4f8b: Animation Event (\u52d5\u7684\u5f37\u5ea6), Slider.onValueChanged\n\n" +
                     "\u25b6 Stop()\n" +
                     "  \u89e6\u899a\u30a4\u30d9\u30f3\u30c8\u3092\u505c\u6b62\u3002\n" +

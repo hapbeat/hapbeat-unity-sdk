@@ -39,7 +39,7 @@ a `[Hapbeat Event Router]` GameObject with a `HapbeatManager`). It auto-connects
 ```csharp
 using Hapbeat;
 
-HapbeatManager.Instance.Play("sample-kit.sine_100hz", gain: 0.3f);  // gain 0..2, default 1.0
+HapbeatManager.Instance.Play("sample-kit.sine_100hz", gain: 0.3f);  // gain 0..2, default 1.0; sent value capped at 1
 HapbeatManager.Instance.Play("sample-kit.sine_100hz", gain: 0.3f, pan: -1f);  // pan -1 left / 0 center / +1 right
 HapbeatManager.Instance.Stop("sample-kit.sine_100hz");
 HapbeatManager.Instance.StopAll();
@@ -52,7 +52,7 @@ HapbeatManager.Instance.StopAll();
 
 - **Trigger side** (when/where to fire): a Trigger component or a `Play(id)` call.
 - **Tuning side** (what/how strong): the **EventMap** entry + the Kit's
-  `manifest.intensity`. Keep gains/targets out of firing code; put them in the
+  `parameters.clip_gain` (the clip's strength). Keep gains/targets out of firing code; put them in the
   EventMap (and the Studio-authored Kit), referenced only by **event id**.
 
 Recommended path = an `HapbeatEventMap` ScriptableObject
@@ -64,8 +64,11 @@ breaks wiring. Direct `Play(id, gain)` bypasses the EventMap (gain hardcoded).
 `displayName`, `category`, `eventName` (=> `eventId` is `category.eventName`, i.e.
 `<kit-name>.<clip-name>`), `streamClip`, `loop`, `gain` (0..2), `target`,
 `delayOffsetSeconds` (per-entry, added to this device's `HapbeatAvSync` offset by
-Triggers), `notes`, `bindings`, `manifestOverride`. Effective wire gain =
-`gain × manifest intensity` (`GetEffectiveGain()`).
+Triggers), `notes`, `bindings`, `manifestOverride`. Strength model: output = clip × app_gain × device volume,
+clip = WAV × `clip_gain`. `GetEffectiveGain()` = `clip_gain × gain` (clip_gain 1 when the Kit has none);
+the trigger multiplier, binding output and a call-time `gain` multiply on top (they are all `app_gain`),
+and only the final product is clamped: sent value = `clamp(clip_gain × app_gain, 0, 1)`. A direct
+`Play(id, gain)` knows no `clip_gain` (1), so it sends `clamp(gain, 0, 1)`.
 
 ## Public runtime API (`HapbeatManager.Instance`, verbatim)
 
@@ -204,7 +207,8 @@ Add via `Add Component > Hapbeat/...`. All reference an `HapbeatEventMap` + an e
 - **Hapbeat UnityEvent Trigger** (`HapbeatUnityEventTrigger`) — exposes
   `public void Fire()`, `public void FireAfter(float delaySeconds)` (the caller's own
   haptic delay instead of this device's offset, e.g. from `HapbeatAvSync.Split`),
-  `public void FireWithGain(float gain)`, `public void Stop()`.
+  `public void FireWithGain(float gain)` (the call-time `gain` multiplies the entry's
+  `clip_gain × gain` and the trigger multiplier; it never replaces them), `public void Stop()`.
   Wire `Fire()` to UI Button `OnClick`, XR Interaction Toolkit events, Animation
   Events, or any UnityEvent.
 - **Hapbeat Sequence Trigger** (`HapbeatSequenceTrigger`) — grab/hold/release phases.

@@ -8,25 +8,25 @@ using UnityEngine;
 namespace Hapbeat.Editor
 {
     /// <summary>
-    /// Editor-only lookup for the <c>parameters.intensity</c> value authored in a
+    /// Editor-only lookup for the <c>parameters.clip_gain</c> value authored in a
     /// Kit's <c>manifest.json</c>, keyed either by eventId (for Command mode) or
     /// by AudioClip asset path (for StreamClip).
     ///
     /// Why this exists:
     /// <list type="bullet">
-    ///   <item>Studio stores <c>intensity</c> as a manifest parameter, NOT baked into
+    ///   <item>Studio stores <c>clip_gain</c> as a manifest parameter, NOT baked into
     ///     the WAV amplitude. The device is a pure executor that plays req.gain as-is
-    ///     and no longer reads manifest.intensity at runtime. The SDK (sender) must
-    ///     therefore multiply <c>gain × intensity</c> before putting the value on the
+    ///     and no longer reads manifest clip_gain at runtime. The SDK (sender) must
+    ///     therefore multiply <c>gain × clip_gain</c> before putting the value on the
     ///     wire — for both Command and StreamClip modes.</item>
     /// </list>
     ///
     /// This helper drives the <b>test-play</b> path and the Entry Detail "missing
-    /// manifest intensity" warning. For runtime fire paths, the intensity is cached
-    /// onto each <see cref="HapbeatEventEntry"/> (see <c>CachedManifestIntensity</c>)
+    /// manifest clip_gain" warning. For runtime fire paths, the clip_gain is cached
+    /// onto each <see cref="HapbeatEventEntry"/> (see <c>CachedManifestClipGain</c>)
     /// so the SDK has no manifest dependency at player runtime.
     /// </summary>
-    public static class HapbeatManifestIntensity
+    public static class HapbeatManifestClipGain
     {
         /// <summary>
         /// One parsed event from a Kit's manifest.json. Public so other
@@ -54,8 +54,8 @@ namespace Hapbeat.Editor
             public string mode;
             /// <summary>Optional designer description from manifest.</summary>
             public string description;
-            /// <summary>Authored intensity 0..1, defaults to 1.0 if absent.</summary>
-            public float intensity;
+            /// <summary>Authored clip_gain 0..1, defaults to 1.0 if absent.</summary>
+            public float clipGain;
         }
 
         private static List<KitManifestEvent> _cache;
@@ -108,7 +108,7 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Look up the manifest intensity for a <see cref="HapbeatEventEntry"/>.
+        /// Look up the manifest clip_gain for a <see cref="HapbeatEventEntry"/>.
         /// Matching rule:
         /// <list type="bullet">
         ///   <item><b>Command</b>: match by <c>eventId</c>.</item>
@@ -119,28 +119,28 @@ namespace Hapbeat.Editor
         /// </list>
         /// </summary>
         /// <summary>
-        /// Look up the manifest intensity for an entry. Convenience wrapper
+        /// Look up the manifest clip_gain for an entry. Convenience wrapper
         /// around <see cref="TryResolve"/> that discards the source-path info.
         /// </summary>
-        public static bool TryGetIntensity(HapbeatEventEntry entry, out float intensity)
-            => TryResolve(entry, out intensity, out _);
+        public static bool TryGetClipGain(HapbeatEventEntry entry, out float clipGain)
+            => TryResolve(entry, out clipGain, out _);
 
         /// <summary>
-        /// Single resolution pass that returns the intensity AND the
+        /// Single resolution pass that returns the clip_gain AND the
         /// human-readable source description in one shot. Used by both
         /// runtime cache population and the EventMap Window UI.
         /// </summary>
         /// <param name="entry">Entry to resolve.</param>
-        /// <param name="intensity">Resolved intensity (1.0 if no match).</param>
+        /// <param name="clip_gain">Resolved clip_gain (1.0 if no match).</param>
         /// <param name="source">
         /// Human-readable hit source:
         ///   "(override) {manifest path}" — per-entry override matched
         ///   "{kit asset path}"           — auto-resolved from a Kit
         ///   "" (empty)                   — no match
         /// </param>
-        public static bool TryResolve(HapbeatEventEntry entry, out float intensity, out string source)
+        public static bool TryResolve(HapbeatEventEntry entry, out float clipGain, out string source)
         {
-            intensity = 1f;
+            clipGain = 1f;
             source = "";
             if (entry == null) return false;
 
@@ -148,7 +148,7 @@ namespace Hapbeat.Editor
             if (entry.manifestOverride != null)
             {
                 var overrideEvents = LoadFromTextAsset(entry.manifestOverride);
-                if (TryResolveFromList(overrideEvents, entry, out intensity, out _))
+                if (TryResolveFromList(overrideEvents, entry, out clipGain, out _))
                 {
                     source = $"(override) {AssetDatabase.GetAssetPath(entry.manifestOverride)}";
                     return true;
@@ -158,7 +158,7 @@ namespace Hapbeat.Editor
                 // than a silent zero. The UI tooltip indicates auto-fallback.
             }
 
-            if (TryResolveFromList(LoadAll(), entry, out intensity, out string kitPath))
+            if (TryResolveFromList(LoadAll(), entry, out clipGain, out string kitPath))
             {
                 source = kitPath;
                 return true;
@@ -177,7 +177,7 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Resolution against a specific event list. Sets both the intensity
+        /// Resolution against a specific event list. Sets both the clip_gain
         /// and the kit asset path of the matched entry (for source reporting).
         /// <para>
         /// schema 2.0.0: same eventId can appear in both <c>events</c> (command)
@@ -189,9 +189,9 @@ namespace Hapbeat.Editor
         /// </summary>
         private static bool TryResolveFromList(
             List<KitManifestEvent> list, HapbeatEventEntry entry,
-            out float intensity, out string kitPath)
+            out float clipGain, out string kitPath)
         {
-            intensity = 1f;
+            clipGain = 1f;
             kitPath = "";
             if (list == null || list.Count == 0) return false;
 
@@ -199,12 +199,12 @@ namespace Hapbeat.Editor
             if (entry.mode == HapticMode.Command)
             {
                 return TryMatchByEventIdAndMode(list, entry.eventId, "command",
-                    out intensity, out kitPath);
+                    out clipGain, out kitPath);
             }
 
             // StreamClip — prefer clip-path match (more specific), restricted to
             // stream_clip entries so a Command-only event with the same id can't
-            // hijack a StreamClip's intensity.
+            // hijack a StreamClip's clip_gain.
             if (entry.streamClip != null)
             {
                 string clipAssetPath = AssetDatabase.GetAssetPath(entry.streamClip);
@@ -217,7 +217,7 @@ namespace Hapbeat.Editor
                         string expected = $"{ev.kitDir}/{ev.clipRelPath}".Replace('\\', '/');
                         if (clipPath == expected)
                         {
-                            intensity = ev.intensity;
+                            clipGain = ev.clipGain;
                             kitPath = ev.kitDir;
                             return true;
                         }
@@ -228,7 +228,7 @@ namespace Hapbeat.Editor
             // Fallback: (eventId, mode=stream_clip) match.
             if (!string.IsNullOrEmpty(entry.eventId))
                 return TryMatchByEventIdAndMode(list, entry.eventId, "stream_clip",
-                    out intensity, out kitPath);
+                    out clipGain, out kitPath);
 
             return false;
         }
@@ -240,16 +240,16 @@ namespace Hapbeat.Editor
         /// </summary>
         private static bool TryMatchByEventIdAndMode(
             List<KitManifestEvent> all, string eventId, string expectedMode,
-            out float intensity, out string kitPath)
+            out float clipGain, out string kitPath)
         {
-            intensity = 1f;
+            clipGain = 1f;
             kitPath = "";
             if (string.IsNullOrEmpty(eventId)) return false;
             foreach (var ev in all)
             {
                 if (ev.eventId == eventId && ev.mode == expectedMode)
                 {
-                    intensity = ev.intensity;
+                    clipGain = ev.clipGain;
                     kitPath = ev.kitDir;
                     return true;
                 }
@@ -438,7 +438,7 @@ namespace Hapbeat.Editor
                 var descMatch = Regex.Match(body, "\"description\"\\s*:\\s*\"([^\"]*)\"");
                 if (descMatch.Success) description = descMatch.Groups[1].Value;
 
-                float intensity = ExtractIntensity(body);
+                float clipGain = ExtractClipGain(body);
 
                 output.Add(new KitManifestEvent
                 {
@@ -448,7 +448,7 @@ namespace Hapbeat.Editor
                     clipRelPath = clipRel,
                     mode = mode,
                     description = description,
-                    intensity = intensity,
+                    clipGain = clipGain,
                 });
 
                 pos = entryEnd + 1;
@@ -456,11 +456,11 @@ namespace Hapbeat.Editor
         }
 
         /// <summary>
-        /// Extract <c>parameters.intensity</c> from an event body. Returns 1.0 if
+        /// Extract <c>parameters.clip_gain</c> from an event body. Returns 1.0 if
         /// absent. Grabs via the inner parameters block to avoid accidentally
-        /// matching any other "intensity" key further in the JSON.
+        /// matching any other "clip_gain" key further in the JSON.
         /// </summary>
-        private static float ExtractIntensity(string body)
+        private static float ExtractClipGain(string body)
         {
             var paramsMatch = Regex.Match(body, "\"parameters\"\\s*:\\s*\\{");
             if (!paramsMatch.Success) return 1f;
@@ -468,13 +468,13 @@ namespace Hapbeat.Editor
             int pEnd = FindMatchingBrace(body, pStart);
             if (pEnd <= 0) return 1f;
             string pBody = body.Substring(pStart, pEnd - pStart);
-            var intensityMatch = Regex.Match(pBody, "\"intensity\"\\s*:\\s*([0-9.]+)");
-            if (!intensityMatch.Success) return 1f;
-            if (float.TryParse(intensityMatch.Groups[1].Value,
+            var clipGainMatch = Regex.Match(pBody, "\"clip_gain\"\\s*:\\s*([0-9.]+)");
+            if (!clipGainMatch.Success) return 1f;
+            if (float.TryParse(clipGainMatch.Groups[1].Value,
                 System.Globalization.NumberStyles.Float,
                 System.Globalization.CultureInfo.InvariantCulture,
-                out float intensity))
-                return intensity;
+                out float clipGain))
+                return clipGain;
             return 1f;
         }
 

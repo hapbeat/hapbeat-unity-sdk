@@ -15,6 +15,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - `HapbeatManager.Fired`（`HapbeatFired`）: 触覚の発生ごとに 1 回、ゲームが鳴らした時点（クールダウンなどの判定の後、遅れて送る前）で通知する。Trigger・`HapbeatStateBehaviour` からの発生は Event Map の項目の id 付き、`Play` / `StreamAudioClip` の直接の呼び出しは id なし。インスペクターだけでつないだ Trigger も、コードを変えずに Hapbeat Studio の Scene 用に記録できる（contracts `scene-recording.md` §5）。No Network でも通知する。
 
 ### 変更
+- 強さの名前と式をそろえた（DEC-103）: 素材の強さ `intensity` を `clip_gain` に改名（Kit の manifest は `parameters.clip_gain` だけを読む。`HapbeatManifestIntensity` → `HapbeatManifestClipGain`、`CachedManifestIntensity` → `CachedManifestClipGain`、シリアライズ名 `_cachedManifestIntensity` → `_cachedManifestClipGain` ほか）。送る値はどの発火の経路でも `clamp(clip_gain × app_gain, 0, 1)`（新しい `HapbeatGain.ToSendGain`）で、頭打ちは最後の積だけ: PLAY の `gain` は送る時に 0〜1、StreamClip の source の `Gain` は 0〜2 から 0〜1 に。`HapbeatUnityEventTrigger.FireWithGain` は呼ぶ時の `gain` で項目の強さを置き換えていたのを、`clip_gain × 項目の gain × Trigger の倍率 × gain` に掛けるよう直した。
 - StreamClip の遅延を一定にした: 別のクリップがストリーム中の端末に新しいクリップを足すと、これまでは先送り分（既定 50 ms）だけ遅れて鳴っていた。先送り済みのブロックに重なるときは、そのセッションを新しい generation で開始し直し、端末に溜まったデータを捨てさせて、新しいクリップの頭から混ぜ直して送る。
 - Trigger の遅延待ちで、StreamClip はコルーチンではなくストリームの時間軸に置く（Command は従来どおりコルーチン）。
 

@@ -15,7 +15,7 @@
       "clip": "stream-clips/grab_heavy.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.35
+        "clip_gain": 0.35
       }
     },
     "handdemo.grab-right": {
@@ -23,7 +23,7 @@
       "clip": "stream-clips/grab-right.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.3
+        "clip_gain": 0.3
       }
     },
     "handdemo.ui-click-hard": {
@@ -31,7 +31,7 @@
       "clip": "stream-clips/ui-click-2.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.8
+        "clip_gain": 0.8
       }
     },
     "handdemo.ui-click-weak": {
@@ -39,7 +39,7 @@
       "clip": "stream-clips/ui-click-weak.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.9
+        "clip_gain": 0.9
       }
     },
     "handdemo.c_160hz-10s": {
@@ -47,7 +47,7 @@
       "clip": "stream-clips/160hz-10s.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.6
+        "clip_gain": 0.6
       }
     },
     "handdemo.c_40hz-10s": {
@@ -55,7 +55,7 @@
       "clip": "stream-clips/40hz-10s.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.1
+        "clip_gain": 0.1
       }
     },
     "handdemo.c_63hz_1s": {
@@ -63,7 +63,7 @@
       "clip": "stream-clips/63Hz_1s.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.15
+        "clip_gain": 0.15
       }
     },
     "handdemo.scratch-soft": {
@@ -71,7 +71,7 @@
       "clip": "stream-clips/scratch-soft.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.15
+        "clip_gain": 0.15
       }
     },
     "handdemo.snap-sine": {
@@ -79,7 +79,7 @@
       "clip": "stream-clips/snap-sine.wav",
       "description": "",
       "parameters": {
-        "intensity": 0.25
+        "clip_gain": 0.25
       }
     }
   },

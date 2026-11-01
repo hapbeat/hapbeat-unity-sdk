@@ -62,7 +62,7 @@ namespace Hapbeat
         private string _requiredPreviousState = "";
 
         [Header("Gain")]
-        [Tooltip("Per-behaviour gain multiplier applied on top of entry.gain × manifest.intensity.\n" +
+        [Tooltip("Per-behaviour gain multiplier applied on top of clip_gain × entry.gain.\n" +
                  "1.0 = use entry default. Range [0, 2].")]
         [SerializeField, Range(0f, 2f)]
         private float _gainMultiplier = 1f;

@@ -48,8 +48,8 @@ namespace Hapbeat.Editor
                     EditorGUILayout.FloatField(
                         new GUIContent("Gain",
                             "Authored gain (0–2). " +
-                            "Wire = Gain × Manifest Intensity × Trigger Multiplier.\n" +
-                            "The device plays req.gain directly; manifest.intensity is " +
+                            "Wire = clamp(clip_gain × Gain × Trigger Multiplier, 0, 1).\n" +
+                            "The device plays req.gain directly; the manifest's clip_gain is " +
                             "applied by the SDK before sending."),
                         entry.gain);
                     if (entry.HasTarget)

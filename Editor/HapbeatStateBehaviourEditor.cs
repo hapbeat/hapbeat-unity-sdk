@@ -90,7 +90,7 @@ namespace Hapbeat.Editor
             EditorGUILayout.LabelField("Gain", EditorStyles.boldLabel);
             EditorGUILayout.PropertyField(_gainMultiplierProp,
                 new GUIContent("Gain Multiplier",
-                    "Per-behaviour multiplier applied on top of entry.gain × manifest.intensity."));
+                    "Per-behaviour multiplier applied on top of clip_gain × entry.gain."));
 
             EditorGUILayout.Space(4);
             EditorGUILayout.LabelField("Diagnostics", EditorStyles.boldLabel);

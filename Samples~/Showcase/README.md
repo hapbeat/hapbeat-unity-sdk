@@ -71,9 +71,10 @@ generated from the `.asset` by **Hapbeat → Export Event Map**.
 | Z5 | `Z5_shot_light` / `Z5_shot_heavy` | – | `ChargeShooter`: on release (chosen by charge level) |
 | Z5 | `Z5_tar_hit_light` / `Z5_tar_hit_heavy` | – | `HapbeatUnityEventTrigger` from `TargetReceiver.OnHitLight` / `OnHitHeavy`; Q also fires `Z5_tar_hit_light` |
 
-`gain` and `intensity` semantics: **effective gain = `entry.gain × manifest.intensity × per-trigger modulators`**.
-Set `entry.gain = 1.0` in the EventMap to use the authored manifest intensity
-directly, or scale up / down for per-entry overrides.
+`gain` and `clip_gain` semantics: **sent value = `clamp(clip_gain × entry.gain × per-trigger modulators, 0, 1)`**,
+where `clip_gain` is the clip's strength from the Kit manifest and the rest is the app's gain (`app_gain`).
+Set `entry.gain = 1.0` in the EventMap to use the authored `clip_gain`
+directly, or scale up / down for per-entry overrides (above 1 lifts a `clip_gain` below 1, capped at 1).
 
 ### Switching to Command (Fire) mode (optional)
 
@@ -93,7 +94,7 @@ make sure the device has the corresponding Kit deployed. The entry's
 ## About the `showcase-kit`
 
 `Kit/showcase-kit/showcase-kit-manifest.json` provides the per-event
-`intensity` values that drive both Command and StreamClip paths. The
+`clip_gain` values that drive both Command and StreamClip paths. The
 `install-clips/` / `stream-clips/` subfolders ship populated so the same Kit
 can be used in either mode on the device.
 
@@ -102,7 +103,7 @@ Manifest filename convention is `<kit-name>-manifest.json`
 matching the pattern under `Assets/HapbeatSDK/Kits/`.
 
 Each EventMap entry also has an optional **manifest override** field next to
-the Test Play button. When set, the SDK looks up `intensity` from that
+the Test Play button. When set, the SDK looks up `clip_gain` from that
 specific manifest first. Leave it empty for auto-discovery across all kits.
 Every Showcase entry sets it to `showcase-kit-manifest.json`.
 

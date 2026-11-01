@@ -11,7 +11,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z1_pin_hit`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z1_pin_hit.wav` (16000 Hz, 2ch, 0.05s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.25
+- **manifest clip_gain (cached)**: 0.25
 - **effective gain**: 0.25
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -22,7 +22,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **mode**: StreamClip
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z2_door_open.wav` (16000 Hz, 2ch, 2.64s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.30
+- **manifest clip_gain (cached)**: 0.30
 - **effective gain**: 0.30
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -33,7 +33,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **mode**: StreamClip
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z2_door_close.wav` (16000 Hz, 2ch, 2.78s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.20
+- **manifest clip_gain (cached)**: 0.20
 - **effective gain**: 0.20
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -45,7 +45,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z2_door_slam`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z2_door_slam.wav` (16000 Hz, 2ch, 0.75s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.25
+- **manifest clip_gain (cached)**: 0.25
 - **effective gain**: 0.25
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -57,7 +57,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z2_door_lock`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z2_door_lock.wav` (16000 Hz, 2ch, 0.24s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.30
+- **manifest clip_gain (cached)**: 0.30
 - **effective gain**: 0.30
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -69,7 +69,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z2_door_unlock`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z2_door_unlock.wav` (16000 Hz, 2ch, 0.48s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.30
+- **manifest clip_gain (cached)**: 0.30
 - **effective gain**: 0.30
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -81,7 +81,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z2_door_rattle`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z2_door_rattle.wav` (16000 Hz, 2ch, 0.54s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.25
+- **manifest clip_gain (cached)**: 0.25
 - **effective gain**: 0.25
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -93,7 +93,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z3_hook_start`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z3_hook_start.wav` (16000 Hz, 2ch, 0.30s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.60
+- **manifest clip_gain (cached)**: 0.60
 - **effective gain**: 0.60
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -104,7 +104,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **mode**: StreamClip (loop)
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z3_hook_loop.wav` (16000 Hz, 2ch, 10.00s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.50
+- **manifest clip_gain (cached)**: 0.50
 - **effective gain**: 0.50
 - **target**: broadcast (any device)
 - **Parameter Bindings (1)**:
@@ -117,7 +117,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z3_hook_release`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z3_hook_release.wav` (16000 Hz, 2ch, 0.30s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.55
+- **manifest clip_gain (cached)**: 0.55
 - **effective gain**: 0.55
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -128,7 +128,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **mode**: StreamClip (loop)
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z4_stream_loop.wav` (16000 Hz, 2ch, 10.00s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.50
+- **manifest clip_gain (cached)**: 0.50
 - **effective gain**: 0.50
 - **target**: broadcast (any device)
 - **Parameter Bindings (2)**:
@@ -142,7 +142,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z4_slider_tick`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z4_slider_tick.wav` (16000 Hz, 2ch, 0.01s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.30
+- **manifest clip_gain (cached)**: 0.30
 - **effective gain**: 0.30
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -154,7 +154,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z5_tar_hit_light`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z5_tar_hit_light.wav` (16000 Hz, 2ch, 0.05s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.45
+- **manifest clip_gain (cached)**: 0.45
 - **effective gain**: 0.45
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -166,7 +166,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z5_tar_hit_heavy`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z5_tar_hit_heavy.wav` (16000 Hz, 2ch, 0.84s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.40
+- **manifest clip_gain (cached)**: 0.40
 - **effective gain**: 0.40
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -177,7 +177,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **mode**: StreamClip (loop)
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z5_charge_loop.wav` (16000 Hz, 2ch, 10.00s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.14
+- **manifest clip_gain (cached)**: 0.14
 - **effective gain**: 0.14
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -189,7 +189,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z5_shot_light`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z5_shot_light.wav` (16000 Hz, 2ch, 0.09s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.30
+- **manifest clip_gain (cached)**: 0.30
 - **effective gain**: 0.30
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -201,7 +201,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z5_shot_heavy`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z5_shot_heavy.wav` (16000 Hz, 2ch, 0.47s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.40
+- **manifest clip_gain (cached)**: 0.40
 - **effective gain**: 0.40
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none
@@ -213,7 +213,7 @@ _Auto-generated from `Assets/Samples/Hapbeat SDK/<version>/Showcase/EventMaps/Sh
 - **eventId** (inactive): `showcase-kit.z5_charge_thd`
 - **streamClip** ←: `Assets/Samples/Hapbeat SDK/<version>/Showcase/Kit/showcase-kit/stream-clips/z5_charge_thd.wav` (16000 Hz, 2ch, 0.20s)
 - **gain (authored)**: 1.00
-- **manifest intensity (cached)**: 0.30
+- **manifest clip_gain (cached)**: 0.30
 - **effective gain**: 0.30
 - **target**: broadcast (any device)
 - **Parameter Bindings**: none

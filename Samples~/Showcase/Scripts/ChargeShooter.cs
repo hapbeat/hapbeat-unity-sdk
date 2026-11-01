@@ -70,12 +70,12 @@ namespace Hapbeat.Samples.Showcase
 
         [Header("Charge modulator")]
         [Tooltip("Loop の動的 gain に使う curve。default EaseInOut(0→0, 1→1): chargeT 0 で\n" +
-                 "silent、満タンで full intensity。entry.gain × intensity (= baseline) に対する\n" +
+                 "silent、満タンで full strength。clip_gain × entry.gain (= baseline) に対する\n" +
                  "modulator (0..1 ≒ silent..authored)。\n" +
                  "Shot Follows ChargeT が ON のとき shot 側でも同じ curve を再利用する。")]
         [SerializeField] private AnimationCurve _gainCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
 
-        [Tooltip("Threshold 1-shot の追加 gain modulator (entry.gain × intensity に乗る)。\n" +
+        [Tooltip("Threshold 1-shot の追加 gain modulator (clip_gain × entry.gain に乗る)。\n" +
                  "固定値 (chargeT 連動なし)。entry 側 gain を絶対値、こちらは Tutorial 側の調整係数。")]
         [SerializeField, Range(0f, 2f)] private float _chargeThresholdModulator = 1.0f;
 
@@ -248,7 +248,7 @@ namespace Hapbeat.Samples.Showcase
         /// <summary>
         /// EventMap から charge_loop entry を引いて loop stream を開く本体。
         /// BeginCharge から直接 or _loopStartDelay coroutine 経由で呼ばれる。
-        /// baselineGain = entry.GetEffectiveGain() (= entry.gain × intensity、modulator 抜き)、
+        /// baselineGain = entry.GetEffectiveGain() (= clip_gain × entry.gain、modulator 抜き)、
         /// initialGain = baseline × curve(0) で race-free silent start。
         /// </summary>
         private void StartLoopStream()

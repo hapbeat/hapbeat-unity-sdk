@@ -56,8 +56,8 @@ namespace Hapbeat
         private Action _onStopRequested;
 
         /// <summary>
-        /// The gain the entry authored (entry.gain × manifest.intensity),
-        /// captured at stream start. <see cref="HapbeatParameterBinding"/>
+        /// The gain the entry authored (clip_gain × entry.gain), captured at
+        /// stream start. Not clamped: only <see cref="Gain"/> (the final product) is. <see cref="HapbeatParameterBinding"/>
         /// multiplies this by its modulation output so a bound stream is
         /// <c>BaselineGain × bindingOutput</c> — author intent ("full press
         /// = authored strength") is preserved regardless of which bindings
@@ -74,26 +74,29 @@ namespace Hapbeat
             Id = Guid.NewGuid().ToString("N");
             BaselineGain = baselineGain;
             _onStopRequested = onStopRequested;
-            Volatile.Write(ref _gain, FiniteOrZero(initialGain));
+            Volatile.Write(ref _gain, HapbeatGain.ToSendGain(initialGain));
             Volatile.Write(ref _pan, 0f);
             Volatile.Write(ref _loop, loop ? 1 : 0);
             Volatile.Write(ref _stopped, 0);
         }
 
         /// <summary>
-        /// Overall gain multiplier applied to every sample before sending.
+        /// Overall gain multiplier applied to every sample before sending: this source's
+        /// sent value <c>clamp(clip_gain × app_gain, 0, 1)</c> (contracts
+        /// sdk-multi-stream.md §5.5; STREAM_BEGIN itself carries gain 1.0).
         /// Thread-safe; the streaming scheduler reads this per chunk.
-        /// Clamped to <c>[0, 2]</c> on write; NaN / infinity is written as 0.
+        /// Clamped to <c>[0, 1]</c> on write (<see cref="HapbeatGain.ToSendGain(float)"/>);
+        /// NaN / infinity is written as 0.
         /// </summary>
         public float Gain
         {
             get => Volatile.Read(ref _gain);
-            set => Volatile.Write(ref _gain, Mathf.Clamp(FiniteOrZero(value), 0f, 2f));
+            set => Volatile.Write(ref _gain, HapbeatGain.ToSendGain(value));
         }
 
-        // Mathf.Clamp passes NaN through, and a NaN gain turns every mixed sample of
+        // Mathf.Clamp passes NaN through, and a NaN pan turns every mixed sample of
         // the endpoint into NaN. A non-finite value (e.g. a bound parameter divided
-        // by zero) is treated as silence.
+        // by zero) is treated as center.
         private static float FiniteOrZero(float value) =>
             float.IsNaN(value) || float.IsInfinity(value) ? 0f : value;
 
@@ -102,11 +105,12 @@ namespace Hapbeat
         /// Single shared entry point: <see cref="HapbeatTriggerBase.GainMultiplier"/>
         /// (imperative) and <see cref="HapbeatParameterBinding"/> Update (declarative)
         /// <b>both call this</b> so the formula lives in one place.
-        /// Typical modulator range is [0, 1] (= 0..authored); up to [0, 2] is allowed for boost.
+        /// Typical modulator range is [0, 1] (= 0..authored); above 1 boosts, up to the
+        /// sent value's cap of 1.
         /// </summary>
         public void ApplyGainModulation(float modulator)
         {
-            Gain = BaselineGain * modulator;  // Gain setter clamps the result.
+            Gain = BaselineGain * modulator;  // Gain setter clamps the product to [0, 1].
         }
 
         /// <summary>

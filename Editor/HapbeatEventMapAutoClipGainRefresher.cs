@@ -7,7 +7,7 @@ namespace Hapbeat.Editor
 {
     /// <summary>
     /// Editor-side guarantee that every HapbeatEventEntry has its
-    /// <see cref="HapbeatEventEntry.CachedManifestIntensity"/> populated from the
+    /// <see cref="HapbeatEventEntry.CachedManifestClipGain"/> populated from the
     /// owning Kit's manifest.json, without requiring the user to open the
     /// HapbeatEventMapWindow.
     /// <para>
@@ -23,9 +23,9 @@ namespace Hapbeat.Editor
     /// </para>
     /// </summary>
     [InitializeOnLoad]
-    public static class HapbeatEventMapAutoIntensityRefresher
+    public static class HapbeatEventMapAutoClipGainRefresher
     {
-        static HapbeatEventMapAutoIntensityRefresher()
+        static HapbeatEventMapAutoClipGainRefresher()
         {
             // Defer so we don't run during script reload / asset import.
             EditorApplication.delayCall += () => RefreshAll(invalidateParserCache: false);
@@ -42,7 +42,7 @@ namespace Hapbeat.Editor
         /// </param>
         public static void RefreshAll(bool invalidateParserCache)
         {
-            if (invalidateParserCache) HapbeatManifestIntensity.Invalidate();
+            if (invalidateParserCache) HapbeatManifestClipGain.Invalidate();
 
             var guids = AssetDatabase.FindAssets("t:HapbeatEventMap");
             for (int i = 0; i < guids.Length; i++)
@@ -62,14 +62,14 @@ namespace Hapbeat.Editor
             foreach (var entry in map.entries)
             {
                 if (entry == null) continue;
-                bool isSentinel = entry.CachedManifestIntensity < 0f;
+                bool isSentinel = entry.CachedManifestClipGain < 0f;
                 if (!forceAllEntries && !isSentinel) continue;
 
-                if (HapbeatManifestIntensity.TryGetIntensity(entry, out float intensity))
+                if (HapbeatManifestClipGain.TryGetClipGain(entry, out float clipGain))
                 {
-                    if (Math.Abs(entry.CachedManifestIntensity - intensity) > 0.0005f)
+                    if (Math.Abs(entry.CachedManifestClipGain - clipGain) > 0.0005f)
                     {
-                        entry.SetCachedManifestIntensity(intensity);
+                        entry.SetCachedManifestClipGain(clipGain);
                         changed = true;
                     }
                 }

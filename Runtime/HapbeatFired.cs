@@ -30,7 +30,7 @@ namespace Hapbeat
 
         /// <summary>
         /// The gain multiplier the game applied for this fire. For an entry: the factor on
-        /// top of the entry's own gain (entry gain × Kit intensity), e.g. the trigger's
+        /// top of the entry's own gain (clip_gain × entry gain), e.g. the trigger's
         /// gain multiplier, a velocity curve value, a StreamGain binding's initial value
         /// or <c>FireWithStartGain</c>'s argument; 1 = the entry as authored. For a direct
         /// call (<see cref="entryId"/> null): the gain passed to the call.

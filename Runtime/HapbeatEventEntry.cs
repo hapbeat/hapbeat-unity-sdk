@@ -207,91 +207,93 @@ namespace Hapbeat
         //
         // When auto-resolution (clip-path / eventId match against discovered
         // manifests) fails or picks the wrong Kit, the designer can drop a
-        // specific <kitname>-manifest.json TextAsset here. The intensity
-        // lookup will then read intensity from THIS manifest only, ignoring
+        // specific <kitname>-manifest.json TextAsset here. The clip_gain
+        // lookup will then read clip_gain from THIS manifest only, ignoring
         // the global scan. Stored as a TextAsset (Unity imports .json as
-        // TextAsset). The intensity itself is baked into _cachedManifestIntensity
+        // TextAsset). The clip_gain itself is baked into _cachedManifestClipGain
         // at edit time; at runtime this field only tells a Kit StreamClip entry
-        // apart from a Kit-free one (see UsesKitIntensity). The EventMap window
+        // apart from a Kit-free one (see UsesKitClipGain). The EventMap window
         // fills it in automatically when a StreamClip's clip lives in a Kit folder.
         [Tooltip("Force resolution against a specific <kit-name>-manifest.json.\n" +
                  "Unset = auto-scan every manifest under HapbeatSDK/Kits/ and pick by clip-match, then by eventId-match.")]
         public UnityEngine.TextAsset manifestOverride;
 
-        // ---- Manifest intensity cache ----
+        // ---- Manifest clip_gain cache ----
         //
-        // Studio authors <c>parameters.intensity</c> in each Kit's manifest.json. The
-        // SDK needs to honour that value in both Command and StreamClip modes — the
-        // device no longer reads manifest.intensity at runtime (device is a pure
-        // executor that plays req.gain as-is). The sender (SDK) is responsible for
-        // multiplying gain × intensity before putting it on the wire.
+        // Studio authors <c>parameters.clip_gain</c> (the clip's strength, 0..1) in
+        // each Kit's manifest.json. The device never reads it (it plays the PLAY /
+        // stream gain as-is), so the sender (SDK) multiplies it in, for both Command
+        // and StreamClip: sent = clamp(clip_gain × app_gain, 0, 1)
+        // (contracts kit-format.md "強さの式（正本）").
         //
         // We cache it onto the entry (populated by the EventMap window in the editor)
         // so the runtime player — which doesn't ship the manifest.json — still has
         // access to the authored value. -1 means "not yet resolved" or "no matching
         // manifest entry found" (in which case the SDK falls back to 1.0).
         [SerializeField, HideInInspector]
-        private float _cachedManifestIntensity = -1f;
+        private float _cachedManifestClipGain = -1f;
 
         /// <summary>
-        /// Authored intensity (0..1) cached from the Kit manifest. Returns -1 if
+        /// Authored clip_gain (0..1) cached from the Kit manifest. Returns -1 if
         /// unresolved / not yet looked up. Editor refreshes this when the EventMap
         /// is opened or when the entry's clip / eventId changes.
         /// </summary>
-        public float CachedManifestIntensity => _cachedManifestIntensity;
+        public float CachedManifestClipGain => _cachedManifestClipGain;
 
         /// <summary>
-        /// Editor-only helper for writing the cached intensity (e.g. when
+        /// Editor-only helper for writing the cached clip_gain (e.g. when
         /// duplicating an entry the caller wants the copy to inherit the
         /// resolved cache). Runtime code should never call this — the cache
         /// is populated by <c>HapbeatMigrateLegacyReferences</c> or the
         /// EventMap window's refresh pass.
         /// </summary>
-        public void SetCachedManifestIntensity(float value) => _cachedManifestIntensity = value;
+        public void SetCachedManifestClipGain(float value) => _cachedManifestClipGain = value;
 
         /// <summary>
-        /// Whether this entry's intensity is authored in a Kit manifest: every Command
+        /// Whether this entry's clip_gain is authored in a Kit manifest: every Command
         /// entry (it plays a Kit event installed on the device), and a StreamClip entry
         /// that points at a Kit manifest (<see cref="manifestOverride"/>). A StreamClip
-        /// entry without one streams its own clip and plays at intensity 1.
+        /// entry without one streams its own clip and plays at clip_gain 1.
         /// </summary>
-        public bool UsesKitIntensity => mode == HapticMode.Command || manifestOverride != null;
+        public bool UsesKitClipGain => mode == HapticMode.Command || manifestOverride != null;
 
         /// <summary>
-        /// A Kit entry (<see cref="UsesKitIntensity"/>) whose manifest intensity has not
-        /// been resolved, so it fires at plain <see cref="gain"/>. Fire paths warn about
-        /// this once; a Kit-free StreamClip entry is never "missing" an intensity.
+        /// A Kit entry (<see cref="UsesKitClipGain"/>) whose manifest clip_gain has not
+        /// been resolved, so it fires at clip_gain 1. Fire paths warn about this once;
+        /// a Kit-free StreamClip entry is never "missing" a clip_gain.
         /// </summary>
-        public bool IsMissingKitIntensity => UsesKitIntensity && _cachedManifestIntensity < 0f;
+        public bool IsMissingKitClipGain => UsesKitClipGain && _cachedManifestClipGain < 0f;
 
-        /// <summary>The intensity factor <see cref="GetEffectiveGain"/> applies: the cached
+        /// <summary>The clip_gain <see cref="GetEffectiveGain"/> applies: the cached
         /// manifest value, or 1 when there is none (Kit-free StreamClip, or unresolved).</summary>
-        public float EffectiveIntensity => _cachedManifestIntensity < 0f ? 1f : _cachedManifestIntensity;
+        public float EffectiveClipGain => _cachedManifestClipGain < 0f ? 1f : _cachedManifestClipGain;
 
         /// <summary>
-        /// Effective gain to send over the wire: <c>gain × cached intensity</c>.
-        /// Applies to both Command and StreamClip modes — the device is a pure
-        /// executor (req.gain only) and no longer reads manifest.intensity itself.
+        /// <c>clip_gain × gain</c>: the entry's part of the value sent on the wire.
+        /// Fire paths multiply the rest of app_gain (trigger multiplier, binding output,
+        /// call-time gain) on top; the product is clamped to [0, 1] only where it is sent
+        /// (<see cref="HapbeatGain.ToSendGain(float)"/>), so a gain above 1 can lift a
+        /// clip_gain below 1 (0.5 × 2 → 1.0).
         /// <para>
-        /// If the cache is unresolved (<c>CachedManifestIntensity &lt; 0</c>),
-        /// returns plain <c>gain</c> (intensity 1). For a Kit entry callers should warn
-        /// (<see cref="IsMissingKitIntensity"/>) because it means the Kit has not been
+        /// If the cache is unresolved (<c>CachedManifestClipGain &lt; 0</c>),
+        /// returns plain <c>gain</c> (clip_gain 1). For a Kit entry callers should warn
+        /// (<see cref="IsMissingKitClipGain"/>) because it means the Kit has not been
         /// deployed yet or the EventMap window's refresh has not run; a Kit-free
-        /// StreamClip entry has no manifest intensity by design.
+        /// StreamClip entry has no manifest clip_gain by design.
         /// </para>
         /// <para>
-        /// A manifest intensity of exactly 0 is honoured (returns 0), because the
+        /// A manifest clip_gain of exactly 0 is honoured (returns 0), because the
         /// designer may intentionally silence an event in the manifest.
         /// </para>
         /// </summary>
         public float GetEffectiveGain()
         {
-            // _cachedManifestIntensity < 0 is the "not yet resolved" sentinel.
-            // 0 is a valid authored intensity (silence), so we only use plain gain
+            // _cachedManifestClipGain < 0 is the "not yet resolved" sentinel.
+            // 0 is a valid authored clip_gain (silence), so we only use plain gain
             // for the strictly-negative sentinel case.
-            return _cachedManifestIntensity < 0f
+            return _cachedManifestClipGain < 0f
                 ? gain
-                : gain * _cachedManifestIntensity;
+                : gain * _cachedManifestClipGain;
         }
 
         /// <summary>

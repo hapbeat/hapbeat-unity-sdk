@@ -32,7 +32,10 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Fire with a gain override. Useful for Animation Events with float parameter.
+        /// Fire with a call-time gain. Useful for Animation Events with float parameter.
+        /// <paramref name="gain"/> multiplies the entry (it does not replace its gain or
+        /// clip_gain): sent = clamp(clip_gain × entry.gain × <see cref="HapbeatTriggerBase.GainMultiplier"/>
+        /// × <paramref name="gain"/>, 0, 1).
         /// </summary>
         public void FireWithGain(float gain)
         {
@@ -47,20 +50,24 @@ namespace Hapbeat
             string label = string.IsNullOrEmpty(entry.displayName) ? entry.eventId : entry.displayName;
             string target = entry.HasTarget ? entry.target : null;
 
-            // gain replaces the entry's own gain, so Fired reports it as the factor on
-            // top of that gain (contracts scene-recording.md §2 events[].gain).
-            float effective = entry.GetEffectiveGain();
-            ReportFired(entry, effective > 0f ? gain / effective : gain, entry.loop);
+            // The call-time gain composes on top of the entry (clip_gain × entry.gain)
+            // and the trigger multiplier, like every other fire path (contracts
+            // kit-format.md "強さの式（正本）": the call's gain never replaces clip_gain).
+            // Fired reports the factor on top of the entry's own gain
+            // (contracts scene-recording.md §2 events[].gain).
+            float callFactor = GainMultiplier * gain;
+            ReportFired(entry, callFactor, entry.loop);
+            float sendGain = entry.GetEffectiveGain() * callFactor;
 
             float delay = ComputeEffectiveDelaySeconds(entry);
             if (delay > 0f)
             {
                 // gain と同じく pan も発火時点の値を捕捉して遅延送信する
                 // (送信時に読み直すと Fire→送信の間の変更が混ざる)。
-                StartHapticDelayCoroutine(FireWithGainAfterDelay(entry.eventId, gain, Pan, label, target, delay));
+                StartHapticDelayCoroutine(FireWithGainAfterDelay(entry.eventId, sendGain, Pan, label, target, delay));
                 return;
             }
-            HapbeatManager.Instance.PlayUnreported(entry.eventId, gain, label, target, Pan);
+            HapbeatManager.Instance.PlayUnreported(entry.eventId, sendGain, label, target, Pan);
         }
 
         private IEnumerator FireWithGainAfterDelay(string eventId, float gain, float pan, string label, string target, float delay)

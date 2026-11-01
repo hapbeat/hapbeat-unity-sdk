@@ -139,16 +139,15 @@ namespace Hapbeat
                 return;
             _lastFireTimeInternal = Time.unscaledTime;
 
-            // Map velocity through curve, then apply manifest.intensity.
+            // Map velocity through curve, then apply the manifest's clip_gain.
             // Device is a pure executor (req.gain only) so the sender must
-            // multiply in intensity. Per-trigger gain multiplier composes on
-            // top so the same EventMap entry can drive different intensities
-            // across collision objects.
+            // multiply in clip_gain. Per-trigger gain multiplier composes on
+            // top so the same EventMap entry can drive different strengths
+            // across collision objects. The product is clamped to [0, 1] where
+            // it is sent (PLAY payload / stream source Gain).
             float normalizedVel = Mathf.Clamp01(velocity / _maxVelocity);
             float curveValue = _velocityCurve.Evaluate(normalizedVel);
-            float intensity = entry.CachedManifestIntensity;
-            float intensityFactor = intensity < 0f ? 1f : intensity;
-            float scaledGain = curveValue * entry.gain * intensityFactor * _gainMultiplier;
+            float scaledGain = curveValue * entry.GetEffectiveGain() * _gainMultiplier;
 
             var mgr = HapbeatManager.Instance;
             if (mgr == null) return;

@@ -37,9 +37,9 @@ namespace Hapbeat
         [SerializeField]
         protected float _cooldown = 0f;
 
-        [Tooltip("Per-trigger gain multiplier. Final gain = entry.gain × this.\n" +
+        [Tooltip("Per-trigger gain multiplier. Sent = clamp(clip_gain × entry.gain × this, 0, 1).\n" +
                  "Default 1.0 (no override). Use when the same entry is wired " +
-                 "to multiple GameObjects but each needs a different intensity " +
+                 "to multiple GameObjects but each needs a different strength " +
                  "without authoring a per-object EventMap entry.")]
         [SerializeField, Range(0f, 2f)]
         protected float _gainMultiplier = 1f;
@@ -61,7 +61,7 @@ namespace Hapbeat
         private bool _warnedNoManager;
         private bool _warnedNoEventMap;
         private bool _warnedStaleId;
-        private bool _warnedMissingIntensity;
+        private bool _warnedMissingClipGain;
 
         // Coroutines spawned via StartHapticDelayCoroutine, representing
         // Fire / Stop requests waiting on the haptic delay (HapbeatAvSync). Tracked so
@@ -436,25 +436,25 @@ namespace Hapbeat
                         return;
                     }
                     {
-                        // GetEffectiveGain() = entry.gain × manifest.intensity.
-                        // Device no longer reads manifest.intensity at runtime —
-                        // the sender (SDK) is responsible for the multiplication.
-                        // Per-trigger multiplier composes on top so the same
-                        // EventMap entry can run at different intensities across
-                        // GameObjects without authoring extra entries.
-                        if (entry.IsMissingKitIntensity && !_warnedMissingIntensity)
+                        // GetEffectiveGain() = clip_gain × entry.gain. The device
+                        // never reads the manifest's clip_gain — the sender (SDK)
+                        // multiplies it in. Per-trigger multiplier composes on top
+                        // so the same EventMap entry can run at different strengths
+                        // across GameObjects without authoring extra entries; the
+                        // product is clamped to [0, 1] when the PLAY is built.
+                        if (entry.IsMissingKitClipGain && !_warnedMissingClipGain)
                         {
                             Debug.LogWarning(
                                 $"[Hapbeat] Command entry '{label}' has no cached manifest " +
-                                $"intensity; firing at plain gain={entry.gain:F2} " +
-                                "(intensity factor skipped). Open the EventMap window to refresh the cache, " +
+                                $"clip_gain; firing at clip_gain 1 × gain={entry.gain:F2}. " +
+                                "Open the EventMap window to refresh the cache, " +
                                 "and confirm the Kit is deployed on this device.", this);
-                            _warnedMissingIntensity = true;
+                            _warnedMissingClipGain = true;
                         }
                         float commandGain = entry.GetEffectiveGain() * _gainMultiplier;
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire Command: eventId='{entry.eventId}' target='{target ?? "(broadcast)"}' " +
-                                      $"gain={entry.gain:F2} × intensity={(entry.IsMissingKitIntensity ? "?" : entry.EffectiveIntensity.ToString("F2"))} " +
+                                      $"clip_gain={(entry.IsMissingKitClipGain ? "?" : entry.EffectiveClipGain.ToString("F2"))} × gain={entry.gain:F2} " +
                                       $"× triggerMult={_gainMultiplier:F2} = {commandGain:F2} pan={_pan:F2}", this);
                         // Pan は StreamClip 経路と同じく per-trigger の値をそのまま乗せる
                         // (_gainMultiplier と対。Command は device 側ミキサーが linear
@@ -471,25 +471,24 @@ namespace Hapbeat
                         return;
                     }
                     {
-                        // baselineGain = author intent (entry.gain × manifest.intensity)。
+                        // baselineGain = author intent (clip_gain × entry.gain)。
                         // _gainMultiplier / binding output は live modulator として後乗せするので
                         // baselineGain には焼き込まない (これにより script から GainMultiplier を
                         // 毎フレーム変えても playback.Gain = baseline × multiplier で対称に効く)。
                         float baselineGain = entry.GetEffectiveGain();
-                        // Warn once per trigger if a Kit entry's manifest intensity cache
-                        // is unresolved — the fire is still going through but at plain
-                        // entry.gain, which is a common source of "the runtime
-                        // stream is louder than what I authored" confusion. A Kit-free
-                        // StreamClip entry (no Kit manifest) plays at intensity 1 by
-                        // design and is not warned about.
-                        if (entry.IsMissingKitIntensity && !_warnedMissingIntensity)
+                        // Warn once per trigger if a Kit entry's manifest clip_gain cache
+                        // is unresolved — the fire is still going through but at clip_gain 1,
+                        // which is a common source of "the runtime stream is louder than
+                        // what I authored" confusion. A Kit-free StreamClip entry (no Kit
+                        // manifest) plays at clip_gain 1 by design and is not warned about.
+                        if (entry.IsMissingKitClipGain && !_warnedMissingClipGain)
                         {
                             Debug.LogWarning(
                                 $"[Hapbeat] StreamClip entry '{label}' has no cached manifest " +
-                                $"intensity; firing at plain gain={entry.gain:F2} " +
-                                "(intensity factor skipped). Open the EventMap window to refresh the cache, " +
+                                $"clip_gain; firing at clip_gain 1 × gain={entry.gain:F2}. " +
+                                "Open the EventMap window to refresh the cache, " +
                                 "and confirm the clip is in a deployed Kit.", this);
-                            _warnedMissingIntensity = true;
+                            _warnedMissingClipGain = true;
                         }
                         // 初期 modulator: 自己 + 子孫 + 親 を辿って同 entry を modulate する binding
                         // (Output=StreamGain) を探し、binding.EvaluateNow() を pre-seed 値とする。
@@ -506,7 +505,7 @@ namespace Hapbeat
                         if (_verboseLog)
                             Debug.Log($"[Hapbeat] Fire StreamClip: clip='{entry.streamClip.name}' " +
                                       $"target='{target ?? "(broadcast)"}' gain={entry.gain:F2} " +
-                                      $"intensity={(entry.IsMissingKitIntensity ? "?" : entry.EffectiveIntensity.ToString("F2"))} " +
+                                      $"clip_gain={(entry.IsMissingKitClipGain ? "?" : entry.EffectiveClipGain.ToString("F2"))} " +
                                       $"baseline={baselineGain:F2} initialMod={initialMod:F2} initial={initialGain:F2} loop={entry.loop}", this);
                         _activePlayback = HapbeatManager.Instance.StreamAudioClipUnreported(
                             entry.streamClip, baselineGain, initialGain, target, entry.loop, startDelaySeconds);

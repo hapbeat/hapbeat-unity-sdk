@@ -101,8 +101,8 @@ namespace Hapbeat.Editor
             else if (!isCommand)
                 sb.AppendLine($"- **streamClip**{clipMarker}: (not assigned)");
             sb.AppendLine($"- **gain (authored)**: {e.gain:F2}");
-            float intensity = e.CachedManifestIntensity;
-            sb.AppendLine($"- **manifest intensity (cached)**: {(intensity < 0f ? "(not resolved)" : intensity.ToString("F2"))}");
+            float clipGain = e.CachedManifestClipGain;
+            sb.AppendLine($"- **manifest clip_gain (cached)**: {(clipGain < 0f ? "(not resolved)" : clipGain.ToString("F2"))}");
             sb.AppendLine($"- **effective gain**: {e.GetEffectiveGain():F2}");
             sb.AppendLine($"- **target**: {(e.HasTarget ? $"`{e.target}`" : "broadcast (any device)")}");
 

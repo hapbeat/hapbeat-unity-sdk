@@ -59,8 +59,9 @@ namespace Hapbeat
     public enum BindingOutputParameter
     {
         /// <summary>
-        /// Overall gain (0..2). Applied to every sample before sending. Use for
-        /// intensity modulation (e.g. stronger haptics as an object is pressed
+        /// Overall gain. Multiplies the entry's baseline (clip_gain × entry.gain); the
+        /// product, clamped to [0, 1], is applied to every sample before sending. Use for
+        /// strength modulation (e.g. stronger haptics as an object is pressed
         /// harder or moved faster).
         /// </summary>
         StreamGain,
@@ -432,12 +433,12 @@ namespace Hapbeat
                 switch (outParam)
                 {
                     case BindingOutputParameter.StreamGain:
-                        // Multiplicative on the entry's baseline (entry.gain ×
-                        // manifest.intensity) so author intent is preserved:
-                        //   final = entry.gain × intensity × bindingOutput
+                        // Multiplicative on the entry's baseline (clip_gain ×
+                        // entry.gain) so author intent is preserved:
+                        //   sent = clamp(clip_gain × entry.gain × bindingOutput, 0, 1)
                         // Output range typically [0,1] where 1 = authored
                         // strength, 0 = silent. Can exceed 1 to boost past
-                        // authored; ApplyGainModulation clamps Gain to [0, 2].
+                        // authored; the Gain setter clamps only the product to [0, 1].
                         //
                         // Calls the same entry point as the imperative path
                         // (HapbeatTriggerBase.GainMultiplier setter) so the

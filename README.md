@@ -56,6 +56,8 @@ HapbeatManager.Instance.StopAll();
 
 > `pan` は FIRE（Command モード）でデバイス側ミキサーが左右ゲインに展開する。**DEC-055 対応版のデバイスファームウェアが必要**で、未対応版は中央（`gain` のみ）で再生する。
 
+> 強さの式: 出力 = クリップ × アプリの倍率（`app_gain`）× 本体の音量、クリップ = WAV × 素材の強さ（Kit の manifest の `clip_gain`）。SDK が送る値は `clamp(clip_gain × app_gain, 0, 1)` で、`gain` 引数・EventMap の項目の `gain`・Trigger の倍率・binding はどれも `app_gain` の部品として掛け合わされる（頭打ちは最後の積だけ）。`Play(id, gain)` の直接の呼び出しは `clip_gain` を知らないので 1 として扱う。
+
 **利点**: 即座に動く、学習コストゼロ
 **欠点**: 触覚コードが散在する、ID やゲインがハードコード
 

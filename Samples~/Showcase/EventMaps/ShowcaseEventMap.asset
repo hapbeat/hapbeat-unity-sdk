@@ -26,7 +26,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.25
+    _cachedManifestClipGain: 0.25
   - _id: 097c5c77c643422290a4cc15e5da789e
     mode: 1
     displayName: Z2_door_open
@@ -40,7 +40,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.3
+    _cachedManifestClipGain: 0.3
   - _id: 3ec09f14e87b40b0a2120de59f283c7d
     mode: 1
     displayName: Z2_door_close
@@ -54,7 +54,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.2
+    _cachedManifestClipGain: 0.2
   - _id: 13c5585a0719421ba8b5b6e8bcf681bb
     mode: 1
     displayName: Z2_door_slam
@@ -68,7 +68,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.25
+    _cachedManifestClipGain: 0.25
   - _id: 548dbbe23170484082274dcf288398ed
     mode: 1
     displayName: Z2_door_lock
@@ -82,7 +82,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.3
+    _cachedManifestClipGain: 0.3
   - _id: 17f736b6c7664d74a9478c06bdbf8fd9
     mode: 1
     displayName: Z2_door_unlock
@@ -96,7 +96,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.3
+    _cachedManifestClipGain: 0.3
   - _id: 96508c38734348408e681396f0f6dd89
     mode: 1
     displayName: Z2_door_rattle
@@ -110,7 +110,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.25
+    _cachedManifestClipGain: 0.25
   - _id: a81f3af1b37e40bba0a9e7f2a421e259
     mode: 1
     displayName: Z3_hook_start
@@ -124,7 +124,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.6
+    _cachedManifestClipGain: 0.6
   - _id: a7a19cd41ce042f7977118c65f0ff078
     mode: 1
     displayName: Z3_hook_loop
@@ -157,7 +157,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.5
+    _cachedManifestClipGain: 0.5
   - _id: 9c20ef5e159e44028435aef426257938
     mode: 1
     displayName: Z3_hook_release
@@ -171,7 +171,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.55
+    _cachedManifestClipGain: 0.55
   - _id: 9a75447994fe4046a1f4ce20a03069e3
     mode: 1
     displayName: Z4_stream_loop
@@ -223,7 +223,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.5
+    _cachedManifestClipGain: 0.5
   - _id: 699d0b5d6fa84f3c9ec316feb65be7d3
     mode: 1
     displayName: Z4_slider_tick
@@ -237,7 +237,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.3
+    _cachedManifestClipGain: 0.3
   - _id: c840e0dda57242409e8783ef15fc7eda
     mode: 1
     displayName: Z5_tar_hit_light
@@ -251,7 +251,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.45
+    _cachedManifestClipGain: 0.45
   - _id: 74313ca4328146ad8bbfe9b9a4459d95
     mode: 1
     displayName: Z5_tar_hit_heavy
@@ -265,7 +265,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.4
+    _cachedManifestClipGain: 0.4
   - _id: 93ea5314391546d5b9264fb3b6c1928a
     mode: 1
     displayName: Z5_charge_loop
@@ -279,7 +279,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.14
+    _cachedManifestClipGain: 0.14
   - _id: 17df415ff7784c9baf207ee84ba64b13
     mode: 1
     displayName: Z5_shot_light
@@ -293,7 +293,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.3
+    _cachedManifestClipGain: 0.3
   - _id: 36b35d42d61847558df415c1766187ac
     mode: 1
     displayName: Z5_shot_heavy
@@ -307,7 +307,7 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.4
+    _cachedManifestClipGain: 0.4
   - _id: 41db498a8b3942bea009e11cae943771
     mode: 1
     displayName: Z5_charge_thd
@@ -321,5 +321,5 @@ MonoBehaviour:
     delayOffsetSeconds: 0
     notes: 
     manifestOverride: {fileID: 4900000, guid: 4a3e78a5d1212f14f925d10577db6d8b, type: 3}
-    _cachedManifestIntensity: 0.3
+    _cachedManifestClipGain: 0.3
   revertPlayModeChanges: 0

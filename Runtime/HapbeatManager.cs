@@ -441,7 +441,10 @@ namespace Hapbeat
         /// Play a haptic event immediately.
         /// </summary>
         /// <param name="eventId">Event identifier.</param>
-        /// <param name="gain">Gain multiplier (0.0 to 1.0+). Default is 1.0.</param>
+        /// <param name="gain">Gain multiplier (0 to about 2; part of app_gain). Default is 1.0.
+        /// This call knows no clip_gain (treated as 1), so the PLAY carries
+        /// <c>clamp(gain, 0, 1)</c>; an Event Map entry multiplies its clip_gain in first
+        /// (<see cref="HapbeatEventEntry.GetEffectiveGain"/>).</param>
         /// <param name="displayName">Optional display name for logging (e.g. "Grab"). Not sent to devices.</param>
         /// <param name="target">Device-addressing target string. Empty = broadcast. See contracts/specs/device-addressing.md (e.g. "player_1/pos_neck", "*/pos_chest").</param>
         /// <param name="pan">Stereo balance applied on the device: -1 = left only, 0 = center, +1 = right only.
@@ -773,7 +776,7 @@ namespace Hapbeat
         /// Returns a <see cref="HapbeatStreamPlayback"/> handle whose <c>Gain</c>,
         /// <c>Pan</c>, and <c>Loop</c> properties can be written at runtime to modulate the
         /// stream continuously. This is the mechanism <see cref="HapbeatParameterBinding"/>
-        /// uses to map game state (velocity, position, …) to haptic intensity /
+        /// uses to map game state (velocity, position, …) to haptic strength /
         /// stereo balance in real time.
         /// </para>
         ///
@@ -790,8 +793,9 @@ namespace Hapbeat
         /// </para>
         /// </summary>
         /// <param name="clip">AudioClip to stream (will be read as PCM16).</param>
-        /// <param name="gain">Initial gain multiplier (0.0 - 2.0). Binding can
-        /// override this per frame via the returned handle.</param>
+        /// <param name="gain">Initial gain multiplier (0 to about 2; clip_gain is 1 for a
+        /// clip without a Kit). The source's PCM is multiplied by <c>clamp(gain, 0, 1)</c>.
+        /// Binding can override this per frame via the returned handle.</param>
         /// <param name="target">Optional target filter (e.g. "player_1/pos_neck").
         /// Null selects every resolved device endpoint without broadcasting STREAM_DATA.</param>
         /// <param name="loop">Initial value for <see cref="HapbeatStreamPlayback.Loop"/>.

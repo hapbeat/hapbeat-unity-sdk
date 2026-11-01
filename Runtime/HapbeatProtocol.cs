@@ -229,7 +229,8 @@ namespace Hapbeat
         /// </summary>
         /// <param name="eventId">Event identifier (null-terminated UTF-8 string).</param>
         /// <param name="targetTimeUs">Target time in microseconds.</param>
-        /// <param name="gain">Gain multiplier.</param>
+        /// <param name="gain"><c>clip_gain × app_gain</c>. Clamped to [0, 1] before it goes
+        /// on the wire (<see cref="HapbeatGain.ToSendGain(float)"/>, contracts message-format.md §0x01).</param>
         /// <param name="target">Target address string; "" for broadcast.</param>
         /// <param name="pan">Stereo balance (-1 = left only / 0 = center / +1 = right only).
         /// Clamped to [-1, +1] before it goes on the wire.</param>
@@ -247,6 +248,9 @@ namespace Hapbeat
 
             // Clamp here rather than at each call site so every PLAY on the wire is
             // spec-conformant regardless of who built it. NaN falls through to 0.
+            // gain is the final product clip_gain × app_gain: this is the one place a
+            // PLAY's gain is capped at 1 (callers never clamp the factors themselves).
+            gain = HapbeatGain.ToSendGain(gain);
             if (float.IsNaN(pan))   pan = 0f;
             else if (pan < -1f)     pan = -1f;
             else if (pan >  1f)     pan =  1f;

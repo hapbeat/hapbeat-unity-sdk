@@ -257,7 +257,7 @@ namespace Hapbeat.Editor
             _splitRatio = EditorPrefs.GetFloat(kSplitRatioKey, 0.42f);
             _splitRatio = Mathf.Clamp(_splitRatio, 0.2f, 0.8f);
             _viewMode = (ViewMode)EditorPrefs.GetInt(kViewModeKey, (int)ViewMode.List);
-            RefreshIntensityCache();
+            RefreshClipGainCache();
             EnsureEntryIdsAssigned();
         }
 
@@ -670,7 +670,7 @@ namespace Hapbeat.Editor
                 _selectedMap = newMap;
                 RememberSelectedMap();
                 ScanScene();
-                RefreshIntensityCache();
+                RefreshClipGainCache();
             }
 
             // Dirty インジケータ + Save ボタン (asset 単位)。
@@ -732,17 +732,17 @@ namespace Hapbeat.Editor
                 ScanScene();
             }
 
-            // Refresh the cached manifest intensity values on every entry in the map.
+            // Refresh the cached manifest clip_gain values on every entry in the map.
             // The cache is also refreshed automatically when the entries list changes
-            // (see RefreshIntensityCache), but manual refresh is useful after Studio
+            // (see RefreshClipGainCache), but manual refresh is useful after Studio
             // re-deploys a Kit without any Unity-side change.
             if (_selectedMap != null && GUILayout.Button(
-                new GUIContent("\u21bb", "Refresh manifest intensity cache for all entries in this map."),
+                new GUIContent("\u21bb", "Refresh manifest clip_gain cache for all entries in this map."),
                 EditorStyles.toolbarButton, GUILayout.Width(24)))
             {
-                HapbeatManifestIntensity.Invalidate();
-                RefreshIntensityCache();
-                ShowNotification(new GUIContent("Intensity cache refreshed"));
+                HapbeatManifestClipGain.Invalidate();
+                RefreshClipGainCache();
+                ShowNotification(new GUIContent("clip_gain cache refreshed"));
             }
 
             // View mode toggle (List | Table)
@@ -1308,7 +1308,7 @@ namespace Hapbeat.Editor
             BulkEditPopup.Open(_selectedMap, selected, () =>
             {
                 ScanScene();
-                RefreshIntensityCache();
+                RefreshClipGainCache();
                 Repaint();
             });
         }
@@ -1329,7 +1329,7 @@ namespace Hapbeat.Editor
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
             _tableMultiSelected.Clear();
             ScanScene();
-            RefreshIntensityCache();
+            RefreshClipGainCache();
         }
 
         /// <summary>
@@ -1359,13 +1359,13 @@ namespace Hapbeat.Editor
                 delayOffsetSeconds = src.delayOffsetSeconds,
                 notes = src.notes,
             };
-            // Propagate the manifest intensity cache. The new entry points at
+            // Propagate the manifest clip_gain cache. The new entry points at
             // the same category/eventName/streamClip as the source, so the
-            // resolved intensity is identical. Without this, dup'd entries fire
-            // at plain `gain` (intensity treated as -1 / unknown) until the
-            // next RefreshIntensityCache pass — a source of the "sometimes
-            // intensity not applied" bug.
-            dst.SetCachedManifestIntensity(src.CachedManifestIntensity);
+            // resolved clip_gain is identical. Without this, dup'd entries fire
+            // at plain `gain` (clip_gain treated as -1 / unknown) until the
+            // next RefreshClipGainCache pass — a source of the "sometimes
+            // clip_gain not applied" bug.
+            dst.SetCachedManifestClipGain(src.CachedManifestClipGain);
             return dst;
         }
 
@@ -1672,9 +1672,9 @@ namespace Hapbeat.Editor
             _selectedEntryIndex = index;
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
-            // New entry starts with _cachedManifestIntensity = -1 so its stream
-            // mode would silently ignore Studio-authored intensity until refreshed.
-            RefreshIntensityCache();
+            // New entry starts with _cachedManifestClipGain = -1 so its stream
+            // mode would silently ignore Studio-authored clip_gain until refreshed.
+            RefreshClipGainCache();
             // Runtime resolution is id-based so insert / delete / reorder do
             // not require trigger-side rewrites.
         }
@@ -1716,8 +1716,8 @@ namespace Hapbeat.Editor
             EditorUtility.SetDirty(_selectedMap);
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
             // Pasted category/eventName/clip may point at a different manifest
-            // entry than before — recompute the intensity cache.
-            RefreshIntensityCache();
+            // entry than before — recompute the clip_gain cache.
+            RefreshClipGainCache();
         }
 
         private void DuplicateEntry(int index)
@@ -1731,7 +1731,7 @@ namespace Hapbeat.Editor
             AssetDatabase.SaveAssetIfDirty(_selectedMap);
             // Belt-and-suspenders: CloneEntry already copies the cache, but
             // rescan in case the duplicate's fields drifted since last refresh.
-            RefreshIntensityCache();
+            RefreshClipGainCache();
         }
 
         private void DrawSelectedEntryDetail()
@@ -1814,7 +1814,7 @@ namespace Hapbeat.Editor
                     // A Kit-free clip (e.g. a WAV bundled with a sample) gets no hint.
                     if (entry.manifestOverride != null ||
                         (entry.streamClip == null &&
-                         HapbeatManifestIntensity.GetKitDirectoryNames().Count > 0))
+                         HapbeatManifestClipGain.GetKitDirectoryNames().Count > 0))
                         DrawKitFolderHint("stream-clips");
                     // Loop is meaningful for StreamClip — used by HapbeatSequenceTrigger's
                     // hold phase so a short clip repeats until Stop() is called, and by
@@ -2012,8 +2012,8 @@ namespace Hapbeat.Editor
             {
                 so.ApplyModifiedProperties();
                 // Clip / eventId edits may change the manifest lookup result for
-                // this entry, so refresh the cached intensity. Cheap (cached).
-                RefreshIntensityCache();
+                // this entry, so refresh the cached clip_gain. Cheap (cached).
+                RefreshClipGainCache();
             }
         }
 
@@ -2257,7 +2257,7 @@ namespace Hapbeat.Editor
                 GUI.Label(new Rect(cursor, rect.y, gainLabelW, rect.height),
                     new GUIContent("gain",
                         "Per-state-behaviour gain multiplier.\n" +
-                        "Effective gain = entry.gain × manifest.intensity × this value."),
+                        "Sent = clamp(clip_gain × entry.gain × this value, 0, 1)."),
                     EditorStyles.miniLabel);
                 cursor += gainLabelW;
 
@@ -2534,7 +2534,7 @@ namespace Hapbeat.Editor
         /// Manual-rect layout is used so the buttons are guaranteed to stay visible
         /// as the detail panel shrinks — the summary label clips instead of the buttons.
         /// Buttons fire on <b>MouseDown</b> (press), not MouseUp (release), so feedback
-        /// feels instant when tuning haptic intensity.
+        /// feels instant when tuning haptic strength.
         ///
         /// For StreamClip entries with parameter bindings, test-play streams
         /// the clip with the entry's effective gain; runtime modulation from
@@ -2555,13 +2555,13 @@ namespace Hapbeat.Editor
             if (inPlay && !playPath)
                 hint = "HapbeatManager is not connected yet. Wait a moment or add one via Hapbeat > Create Event Router.";
 
-            // Extra warning for Kit stream entries with no matching manifest intensity —
-            // the designer's authored intensity is being silently ignored. A Kit-free
-            // StreamClip entry (no Kit manifest) plays at intensity 1 by design.
-            bool missingIntensity = entry.mode == HapticMode.StreamClip
+            // Extra warning for Kit stream entries with no matching manifest clip_gain —
+            // the designer's authored clip_gain is being silently ignored. A Kit-free
+            // StreamClip entry (no Kit manifest) plays at clip_gain 1 by design.
+            bool missingClipGain = entry.mode == HapticMode.StreamClip
                 && entry.streamClip != null
-                && entry.UsesKitIntensity
-                && entry.CachedManifestIntensity <= 0f;
+                && entry.UsesKitClipGain
+                && entry.CachedManifestClipGain <= 0f;
 
             bool isStreaming = playPath
                 ? HapbeatManager.Instance.IsStreaming
@@ -2643,7 +2643,7 @@ namespace Hapbeat.Editor
                 var manifestRect = new Rect(fieldX,   btnY, fieldW,         btnH);
                 var refreshRect  = new Rect(refreshX, btnY, refreshBtnW,    btnH);
 
-                string resolvedSource = HapbeatManifestIntensity.DescribeResolvedSource(entry);
+                string resolvedSource = HapbeatManifestClipGain.DescribeResolvedSource(entry);
                 string manifestTooltip = entry.manifestOverride != null
                     ? $"Manifest override: {AssetDatabase.GetAssetPath(entry.manifestOverride)}\n" +
                       "Clear to auto-resolve. Use ⟳ to re-detect from the clip's folder."
@@ -2664,10 +2664,10 @@ namespace Hapbeat.Editor
                     if (owningMap != null)
                         Undo.RegisterCompleteObjectUndo(owningMap, "Set Manifest Override");
                     entry.manifestOverride = newOverride;
-                    if (HapbeatManifestIntensity.TryGetIntensity(entry, out float resolved))
-                        entry.SetCachedManifestIntensity(resolved);
+                    if (HapbeatManifestClipGain.TryGetClipGain(entry, out float resolved))
+                        entry.SetCachedManifestClipGain(resolved);
                     else
-                        entry.SetCachedManifestIntensity(-1f);
+                        entry.SetCachedManifestClipGain(-1f);
                     if (owningMap != null) EditorUtility.SetDirty(owningMap);
                 }
 
@@ -2692,7 +2692,7 @@ namespace Hapbeat.Editor
 
             // Inline hint / status text — rendered on the SAME row as the buttons
             // (right of them) so the bar never takes a second line's worth of height.
-            // Priority: connection hint > missing intensity > streaming indicator.
+            // Priority: connection hint > missing clip_gain > streaming indicator.
             string inlineHint = null;
             Color hintColor = Color.gray;
             string fullHintTooltip = null;
@@ -2703,9 +2703,9 @@ namespace Hapbeat.Editor
                 fullHintTooltip = hint;
                 hintColor = new Color(0.95f, 0.85f, 0.55f);
             }
-            else if (missingIntensity)
+            else if (missingClipGain)
             {
-                string msg = "\u26a0 manifest intensity not found \u2014 using gain as-is";
+                string msg = "\u26a0 manifest clip_gain not found \u2014 using clip_gain 1";
                 inlineHint = msg;
                 fullHintTooltip = msg +
                     "\n\nDeploy the Kit from Studio, or Refresh the EventMap (↻ toolbar).";
@@ -2755,10 +2755,10 @@ namespace Hapbeat.Editor
         ///   <item><b>category (= kit name)</b> (Command mode, or when
         ///         streamClip is null): look up
         ///         <c>HapbeatSDK/Kits/&lt;category&gt;/&lt;category&gt;-manifest.json</c>
-        ///         via <see cref="HapbeatManifestIntensity.GetKitDirectory"/>.</item>
+        ///         via <see cref="HapbeatManifestClipGain.GetKitDirectory"/>.</item>
         /// </list>
         /// Updates <see cref="HapbeatEventEntry.manifestOverride"/> and
-        /// refreshes the cached intensity. Called automatically when the
+        /// refreshes the cached clip_gain. Called automatically when the
         /// user assigns / changes the entry's streamClip OR category, and
         /// manually via the Refresh button next to the Manifest field.
         /// </summary>
@@ -2768,17 +2768,17 @@ namespace Hapbeat.Editor
 
             // Try clip-based discovery first (more specific — works for any
             // entry that has a clip, regardless of mode).
-            var found = HapbeatManifestIntensity.FindManifestForClip(entry.streamClip);
+            var found = HapbeatManifestClipGain.FindManifestForClip(entry.streamClip);
 
             // Fallback: category-based discovery for Command-mode entries
             // (or anywhere streamClip is empty). Maps category → kit folder
             // → <kit>-manifest.json.
             if (found == null && !string.IsNullOrEmpty(entry.category))
             {
-                string kitDir = HapbeatManifestIntensity.GetKitDirectory(entry.category);
+                string kitDir = HapbeatManifestClipGain.GetKitDirectory(entry.category);
                 if (!string.IsNullOrEmpty(kitDir))
                 {
-                    string manifestAssetPath = HapbeatManifestIntensity.FindKitManifest(kitDir);
+                    string manifestAssetPath = HapbeatManifestClipGain.FindKitManifest(kitDir);
                     if (!string.IsNullOrEmpty(manifestAssetPath))
                         found = AssetDatabase.LoadAssetAtPath<TextAsset>(manifestAssetPath);
                 }
@@ -2789,20 +2789,20 @@ namespace Hapbeat.Editor
             if (found == null && entry.manifestOverride == null) return;
             if (found == entry.manifestOverride)
             {
-                // Same target — still refresh the cached intensity in case
-                // the manifest's intensity value was edited externally.
-                if (HapbeatManifestIntensity.TryGetIntensity(entry, out float same))
-                    entry.SetCachedManifestIntensity(same);
+                // Same target — still refresh the cached clip_gain in case
+                // the manifest's clip_gain value was edited externally.
+                if (HapbeatManifestClipGain.TryGetClipGain(entry, out float same))
+                    entry.SetCachedManifestClipGain(same);
                 if (owningMap != null) EditorUtility.SetDirty(owningMap);
                 return;
             }
             if (owningMap != null)
                 Undo.RegisterCompleteObjectUndo(owningMap, "Auto-attach Manifest");
             entry.manifestOverride = found;
-            if (HapbeatManifestIntensity.TryGetIntensity(entry, out float resolved))
-                entry.SetCachedManifestIntensity(resolved);
+            if (HapbeatManifestClipGain.TryGetClipGain(entry, out float resolved))
+                entry.SetCachedManifestClipGain(resolved);
             else
-                entry.SetCachedManifestIntensity(-1f);
+                entry.SetCachedManifestClipGain(-1f);
             if (owningMap != null) EditorUtility.SetDirty(owningMap);
         }
 
@@ -2954,13 +2954,13 @@ namespace Hapbeat.Editor
                         return;
                     }
                     {
-                        // Device no longer reads manifest.intensity at runtime —
-                        // SDK applies gain × intensity before putting it on the wire.
+                        // Device no longer reads manifest clip_gain at runtime —
+                        // SDK applies gain × clip_gain before putting it on the wire.
                         float eff = entry.GetEffectiveGain();
-                        if (entry.IsMissingKitIntensity)
+                        if (entry.IsMissingKitClipGain)
                             Debug.LogWarning(
-                                $"[Hapbeat] Test-play Command: manifest intensity not found for '{entry.eventId}'. " +
-                                $"Sending gain={eff:F2} without intensity factor. Deploy the Kit from Studio or Refresh the EventMap.");
+                                $"[Hapbeat] Test-play Command: manifest clip_gain not found for '{entry.eventId}'. " +
+                                $"Sending gain={eff:F2} with clip_gain 1. Deploy the Kit from Studio or Refresh the EventMap.");
                         if (usePlayPath)
                             HapbeatManager.Instance.Play(entry.eventId, eff, label, target);
                         else
@@ -2975,14 +2975,14 @@ namespace Hapbeat.Editor
                             Debug.LogWarning("[Hapbeat] Test-play: StreamClip entry has no clip.");
                             return;
                         }
-                        // Stream modes must apply manifest.intensity themselves because the
+                        // Stream modes must apply manifest clip_gain themselves because the
                         // device just replays the raw PCM it received. GetEffectiveGain returns
-                        // gain × intensity when the intensity is cached, else plain gain.
+                        // gain × clip_gain when the clip_gain is cached, else plain gain.
                         float eff = entry.GetEffectiveGain();
-                        if (entry.IsMissingKitIntensity)
+                        if (entry.IsMissingKitClipGain)
                             Debug.LogWarning(
-                                $"[Hapbeat] Test-play StreamClip: manifest intensity not found for '{entry.streamClip.name}'. " +
-                                $"Sending gain={eff:F2} without intensity factor. Deploy the Kit from Studio or Refresh the EventMap.");
+                                $"[Hapbeat] Test-play StreamClip: manifest clip_gain not found for '{entry.streamClip.name}'. " +
+                                $"Sending gain={eff:F2} with clip_gain 1. Deploy the Kit from Studio or Refresh the EventMap.");
                         if (usePlayPath)
                             HapbeatManager.Instance.StreamAudioClip(entry.streamClip, eff, target, entry.loop);
                         else
@@ -4147,9 +4147,9 @@ namespace Hapbeat.Editor
         }
 
         // ── Event ID dropdown (Command mode) ─────────────────────────────────
-        // Kit manifest scanning was consolidated into HapbeatManifestIntensity;
-        // this window now consumes HapbeatManifestIntensity.LoadAllEvents()
-        // and HapbeatManifestIntensity.GetKitDirectoryNames() instead of
+        // Kit manifest scanning was consolidated into HapbeatManifestClipGain;
+        // this window now consumes HapbeatManifestClipGain.LoadAllEvents()
+        // and HapbeatManifestClipGain.GetKitDirectoryNames() instead of
         // owning a duplicate scanner / parser.
 
         /// <summary>
@@ -4162,7 +4162,7 @@ namespace Hapbeat.Editor
             SerializedProperty eventNameProp,
             SerializedObject so)
         {
-            var events = HapbeatManifestIntensity.LoadAllEvents()
+            var events = HapbeatManifestClipGain.LoadAllEvents()
                 .Where(e => e.mode == "command")
                 .ToList();
 
@@ -4211,7 +4211,7 @@ namespace Hapbeat.Editor
                     }
                     menu.AddSeparator("");
                     menu.AddItem(new GUIContent("Refresh"), false,
-                        HapbeatManifestIntensity.Invalidate);
+                        HapbeatManifestClipGain.Invalidate);
                 }
                 menu.ShowAsContext();
             }
@@ -4402,7 +4402,7 @@ namespace Hapbeat.Editor
             if (DrawCenteredChevronButton(dropRect))
             {
                 var menu = new GenericMenu();
-                var kitNames = HapbeatManifestIntensity.GetKitDirectoryNames();
+                var kitNames = HapbeatManifestClipGain.GetKitDirectoryNames();
                 if (kitNames.Count == 0)
                 {
                     menu.AddDisabledItem(new GUIContent(
@@ -4452,7 +4452,7 @@ namespace Hapbeat.Editor
             // If the user just edited the category (text field or dropdown),
             // auto-attach the matching Kit manifest. This complements the
             // streamClip change-handler so Command-mode entries also get
-            // their intensity resolved without manual Refresh clicks.
+            // their clip_gain resolved without manual Refresh clicks.
             if (categoryChanged)
             {
                 so.ApplyModifiedProperties();
@@ -4913,10 +4913,10 @@ namespace Hapbeat.Editor
         private void OnFocus()
         {
             ScanScene();
-            // Refresh intensity cache on focus — Studio might have re-deployed a Kit
+            // Refresh clip_gain cache on focus — Studio might have re-deployed a Kit
             // while this window was in the background.
-            HapbeatManifestIntensity.Invalidate();
-            RefreshIntensityCache();
+            HapbeatManifestClipGain.Invalidate();
+            RefreshClipGainCache();
         }
 
         /// <summary>
@@ -4928,10 +4928,10 @@ namespace Hapbeat.Editor
 
         /// <summary>
         /// Walk every entry in the current map and re-populate
-        /// <see cref="HapbeatEventEntry.CachedManifestIntensity"/> from the manifests.
+        /// <see cref="HapbeatEventEntry.CachedManifestClipGain"/> from the manifests.
         /// Only writes when the value actually changed, to keep the asset clean.
         /// </summary>
-        private void RefreshIntensityCache()
+        private void RefreshClipGainCache()
         {
             if (_selectedMap == null) return;
 
@@ -4944,11 +4944,11 @@ namespace Hapbeat.Editor
                 var entryProp = entriesProp.GetArrayElementAtIndex(i);
                 var entry = _selectedMap.entries[i];
 
-                float newValue = HapbeatManifestIntensity.TryGetIntensity(entry, out float found)
+                float newValue = HapbeatManifestClipGain.TryGetClipGain(entry, out float found)
                     ? found
                     : -1f;
 
-                var cacheProp = entryProp.FindPropertyRelative("_cachedManifestIntensity");
+                var cacheProp = entryProp.FindPropertyRelative("_cachedManifestClipGain");
                 if (cacheProp == null) continue;
                 if (!Mathf.Approximately(cacheProp.floatValue, newValue))
                 {

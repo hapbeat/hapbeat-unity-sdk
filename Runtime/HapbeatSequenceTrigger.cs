@@ -419,10 +419,11 @@ namespace Hapbeat
 
             string label = string.IsNullOrEmpty(entry.displayName) ? entry.GetSummary() : entry.displayName;
             string target = entry.HasTarget ? entry.target : null;
-            // Effective gain (entry.gain × manifest.intensity) for stream modes;
-            // raw gain for Command (device applies intensity internally).
-            // Per-trigger _gainMultiplier composes on top of both, mirroring
-            // the policy in HapbeatTriggerBase.FireHaptic.
+            // Effective gain (clip_gain × entry.gain) for both Command and StreamClip:
+            // the device never applies the manifest's clip_gain, the SDK multiplies it in.
+            // The phase multiplier and per-trigger _gainMultiplier compose on top,
+            // mirroring the policy in HapbeatTriggerBase.FireHaptic; the product is
+            // clamped to [0, 1] where it is sent (PLAY payload / stream source Gain).
             float gain = entry.GetEffectiveGain() * gainMultiplier * _gainMultiplier;
 
             if (_verboseLog)
