@@ -12,11 +12,77 @@ namespace Hapbeat
         Stopped,
     }
 
-    /// <summary>Why a logical StreamClip has not started a wire stream yet.</summary>
+    /// <summary>
+    /// Why a logical StreamClip has not started a wire stream yet. When the matching
+    /// devices differ, the first of Superseded, LeaseUnavailable, UnknownClass,
+    /// NoResolvedEndpoint is reported (sdk-multi-stream.md §3).
+    /// </summary>
     public enum HapbeatStreamPlaybackDeferReason
     {
         None,
+        /// <summary>No live device's address matches the target.</summary>
         NoResolvedEndpoint,
+        /// <summary>A matching device has not answered this SDK's stream lease request yet.</summary>
+        UnknownClass,
+        /// <summary>A matching device has no usable stream lease (none issued, or it expired).</summary>
+        LeaseUnavailable,
+        /// <summary>
+        /// Another application streamed to a matching device later. It is not taken back
+        /// automatically: call <see cref="HapbeatManager.ReacquireStreamOwnership"/>.
+        /// </summary>
+        Superseded,
+    }
+
+    /// <summary>Stream format a device endpoint receives (stream-session.md "Receiver classification").</summary>
+    public enum HapbeatStreamClass
+    {
+        /// <summary>No matched reply to this SDK's stream lease request yet.</summary>
+        Unknown,
+        /// <summary>Stream Gen 1: firmware before 0.5.0 (no lease).</summary>
+        Gen1,
+        /// <summary>Stream Gen 2: session stream with a device-issued lease.</summary>
+        Gen2,
+    }
+
+    /// <summary>Stream lease of a <see cref="HapbeatStreamClass.Gen2"/> endpoint; <see cref="None"/> otherwise.</summary>
+    public enum HapbeatStreamLeaseState
+    {
+        None,
+        /// <summary>This SDK holds a usable lease.</summary>
+        Valid,
+        /// <summary>No usable lease (not issued, or expired); streams to the device defer.</summary>
+        Unavailable,
+        /// <summary>Another application took the device; see <see cref="HapbeatStreamPlaybackDeferReason.Superseded"/>.</summary>
+        Superseded,
+    }
+
+    /// <summary>Stream state of one device endpoint (<see cref="HapbeatManager.GetStreamEndpoints"/>).</summary>
+    public readonly struct HapbeatStreamEndpointInfo
+    {
+        /// <summary>The device's IPv4 address.</summary>
+        public readonly System.Net.IPAddress Ip;
+        /// <summary>The full device address its PONG reported (null when it reported none).</summary>
+        public readonly string Address;
+        public readonly HapbeatStreamClass StreamClass;
+        public readonly HapbeatStreamLeaseState LeaseState;
+        /// <summary>
+        /// Firmware major from the device's CAPS: -1 = not known yet, 0 = the device has
+        /// no CAPS (firmware 0.x).
+        /// </summary>
+        public readonly int CapsGeneration;
+
+        public HapbeatStreamEndpointInfo(System.Net.IPAddress ip, string address,
+            HapbeatStreamClass streamClass, HapbeatStreamLeaseState leaseState, int capsGeneration)
+        {
+            Ip = ip;
+            Address = address;
+            StreamClass = streamClass;
+            LeaseState = leaseState;
+            CapsGeneration = capsGeneration;
+        }
+
+        public override string ToString() =>
+            $"{Ip} {Address ?? "(no address)"} {StreamClass} lease={LeaseState} caps={CapsGeneration}";
     }
 
     /// <summary>

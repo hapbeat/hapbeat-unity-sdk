@@ -30,11 +30,11 @@ namespace Hapbeat
     }
 
     /// <summary>
-    /// Wire format used for one resolved stream endpoint. <see cref="V2"/> is the
-    /// lease/generation format (stream-session-v2.md). <see cref="Legacy"/> is the
-    /// pre-v2 format kept for devices on older firmware; it is chosen only when a
-    /// matched direct reply to this client's extended PING carries no HBS2 tail
-    /// (DEC-075) and is never inferred from a missing lease.
+    /// Wire format used for one resolved stream endpoint. <see cref="V2"/> is Stream
+    /// Gen 2, the lease/generation format (stream-session.md). <see cref="Legacy"/> is
+    /// Stream Gen 1, kept for devices on firmware before 0.5.0; it is chosen only when
+    /// a matched direct reply to this client's extended PING has nothing after
+    /// volume_wiper (DEC-075) and is never inferred from a missing lease.
     /// </summary>
     internal enum StreamEndpointMode
     {
@@ -82,13 +82,41 @@ namespace Hapbeat
         internal event Action<IPEndPoint, HapbeatProtocol.StreamLeaseIdentity, bool, bool> OnStreamLeaseChanged;
 
         /// <summary>
-        /// Invoked on the main thread after a v2 STREAM_BEGIN is queued for an exact
-        /// endpoint, once per session identity (the mixer re-sends an identical BEGIN
-        /// to survive packet loss; repeats are not announced).
+        /// Invoked on the main thread after a Stream Gen 2 STREAM_BEGIN is queued for an
+        /// exact endpoint, once per session identity (the mixer re-sends an identical
+        /// BEGIN to survive packet loss; repeats are not announced).
         /// </summary>
         internal event Action<IPEndPoint, HapbeatProtocol.StreamSessionIdentity> OnStreamSessionBegan;
 
-        /// <summary>Invoked on main thread when an ERROR response is received.</summary>
+        /// <summary>
+        /// Invoked on the main thread when an endpoint's stream class (Gen 1 / Gen 2 /
+        /// unknown) or lease state changes (see <see cref="GetStreamEndpointInfos"/>).
+        /// </summary>
+        internal event Action<IPEndPoint> OnStreamEndpointStateChanged;
+
+        /// <summary>Invoked on the main thread when an endpoint's CAPS is known (or known to be absent).</summary>
+        internal event Action<IPEndPoint> OnCapsResolved;
+
+        /// <summary>
+        /// Invoked on the main thread for an accepted stream ERROR (0x0011–0x0017) whose
+        /// envelope is a session this client sent to that endpoint (current or previous).
+        /// </summary>
+        internal event Action<IPEndPoint, ushort, HapbeatProtocol.StreamSessionIdentity> OnStreamError;
+
+        /// <summary>
+        /// Invoked on the main thread when a matched reply confirms the same lease after
+        /// STREAM_LEASE_INVALID: the endpoint's session begins a new generation.
+        /// </summary>
+        internal event Action<IPEndPoint> OnStreamLeaseRenewed;
+
+        /// <summary>Same as <see cref="OnError"/>, with the device endpoint that sent it.</summary>
+        internal event Action<IPEndPoint, ushort, string> OnErrorFrom;
+
+        /// <summary>
+        /// Invoked on main thread when an accepted ERROR is received: only from a known
+        /// device's address and the device port, and a stream error only when its
+        /// envelope is a session this client sent to that device (message-format.md §0xFF).
+        /// </summary>
         public event Action<ushort, string> OnError; // (errorCode, message)
 
         /// <summary>Invoked on main thread when connection state changes.</summary>
@@ -208,10 +236,25 @@ namespace Hapbeat
         private readonly ConcurrentDictionary<IPAddress, IPEndPoint> _knownDeviceEndpoints =
             new ConcurrentDictionary<IPAddress, IPEndPoint>();
 
-        // Last v2 session identity announced through OnStreamSessionBegan per device IP.
+        // The Stream Gen 2 sessions this client began per device IP: the current one
+        // (announced once through OnStreamSessionBegan) and the one before it. A stream
+        // ERROR is accepted only for one of these two (message-format.md §0xFF).
         // Written only from the stream mixer thread (SendStreamBeginTo).
-        private readonly ConcurrentDictionary<IPAddress, HapbeatProtocol.StreamSessionIdentity> _announcedStreamBegins =
-            new ConcurrentDictionary<IPAddress, HapbeatProtocol.StreamSessionIdentity>();
+        private readonly struct TrackedStreamSessions
+        {
+            public readonly HapbeatProtocol.StreamSessionIdentity Current;
+            public readonly HapbeatProtocol.StreamSessionIdentity Previous;
+
+            public TrackedStreamSessions(HapbeatProtocol.StreamSessionIdentity current,
+                HapbeatProtocol.StreamSessionIdentity previous)
+            {
+                Current = current;
+                Previous = previous;
+            }
+        }
+
+        private readonly ConcurrentDictionary<IPAddress, TrackedStreamSessions> _trackedStreamSessions =
+            new ConcurrentDictionary<IPAddress, TrackedStreamSessions>();
 
         // Queue for dispatching callbacks to the main thread
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
@@ -220,13 +263,69 @@ namespace Hapbeat
         {
             public readonly long TimestampUs;
             public readonly ulong ClientIncarnation;
+            // 16-byte extended PING (a lease request). Only replies to these classify
+            // an endpoint or change its lease; every firmware answers an 8-byte PING
+            // without a tail, so counting those would make every device Stream Gen 1.
+            public readonly bool IsLeaseRequest;
+            // Unicast destination of a lease request; null for a discovery broadcast.
+            public readonly IPAddress Destination;
 
-            public PendingPing(long timestampUs, ulong clientIncarnation)
+            public PendingPing(long timestampUs, ulong clientIncarnation, bool isLeaseRequest,
+                IPAddress destination)
             {
                 TimestampUs = timestampUs;
                 ClientIncarnation = clientIncarnation;
+                IsLeaseRequest = isLeaseRequest;
+                Destination = destination;
             }
+
+            public bool CameFrom(IPAddress sender) => Destination == null || Destination.Equals(sender);
         }
+
+        // Stream lease TTL of the receiver (stream-session.md "Lease table", reported in
+        // CAPS stream_limits). Extended PINGs refresh a held lease every TTL/3, keep
+        // going for one TTL after the endpoint's last session, and go out every
+        // UnmatchedLeasePingIntervalUs until an endpoint has a matched reply.
+        internal const long StreamLeaseTtlUs = 15_000_000;
+        internal const long LeaseRefreshIntervalUs = StreamLeaseTtlUs / 3;
+        internal const long UnmatchedLeasePingIntervalUs = 1_000_000;
+
+        // CAPS_REQ is repeated every 500 ms, three times in total (message-format.md §0x12).
+        internal const long CapsRetryIntervalUs = 500_000;
+        internal const int CapsMaxAttempts = 3;
+
+        // Per lease target: when its last extended PING went out. An IP leaves this
+        // table (and its lease stops being usable) once nothing streams to it.
+        // Guarded by _streamLeaseLock.
+        private readonly Dictionary<IPAddress, long> _leasePingSentUs = new Dictionary<IPAddress, long>();
+        // Last BEGIN / END sent per device IP. Guarded by _streamLeaseLock.
+        private readonly Dictionary<IPAddress, long> _lastStreamPacketUs = new Dictionary<IPAddress, long>();
+        private readonly HashSet<IPAddress> _leaseTargetScratch = new HashSet<IPAddress>();
+        private readonly List<IPAddress> _leaseDropScratch = new List<IPAddress>();
+        // Lease reported invalid by STREAM_LEASE_INVALID, awaiting the matched reply to
+        // the renewal PING. Guarded by _streamLeaseLock.
+        private readonly Dictionary<IPAddress, HapbeatProtocol.StreamLeaseIdentity> _pendingLeaseRenewals =
+            new Dictionary<IPAddress, HapbeatProtocol.StreamLeaseIdentity>();
+        // Endpoints already warned about an ignored (unknown) PONG tail. Guarded by _streamLeaseLock.
+        private readonly HashSet<IPAddress> _warnedIgnoredTails = new HashSet<IPAddress>();
+
+        private sealed class CapsState
+        {
+            public string FirmwareVersion;
+            public ulong DeviceBootId;
+            public int Attempts;
+            public long NextDueUs;
+            public readonly List<ushort> RequestSeqs = new List<ushort>(CapsMaxAttempts);
+            public bool Resolved;
+            public HapbeatProtocol.CapsInfo? Caps;
+        }
+
+        // CAPS per device IP, from the first matched PONG until the boot or firmware
+        // changes. Guarded by _streamLeaseLock.
+        private readonly Dictionary<IPAddress, CapsState> _capsStates = new Dictionary<IPAddress, CapsState>();
+
+        // versioning.md §3.3: warn once per application run about a newer device.
+        private static int s_warnedNewerDevice;
 
         private readonly struct StreamLeaseState : IEquatable<StreamLeaseState>
         {
@@ -279,18 +378,25 @@ namespace Hapbeat
             public readonly bool DiscardPong;
             public readonly bool Changed;
             public readonly StreamLeaseState State;
+            // Class or public lease state changed (OnStreamEndpointStateChanged).
+            public readonly bool EndpointStateChanged;
+            // Same lease confirmed after STREAM_LEASE_INVALID (OnStreamLeaseRenewed).
+            public readonly bool LeaseRenewed;
 
-            public StreamLeaseUpdate(bool discardPong, bool changed, StreamLeaseState state)
+            public StreamLeaseUpdate(bool discardPong, bool changed, StreamLeaseState state,
+                bool endpointStateChanged = false, bool leaseRenewed = false)
             {
                 DiscardPong = discardPong;
                 Changed = changed;
                 State = state;
+                EndpointStateChanged = endpointStateChanged;
+                LeaseRenewed = leaseRenewed;
             }
         }
 
         // A broadcast PING receives one PONG from every endpoint. Pending requests
         // must therefore survive the first reply long enough for every device to
-        // correlate its HBS2 tail, and are pruned only by age / sequence replacement.
+        // correlate it, and are pruned only by age / sequence replacement.
         private readonly ConcurrentDictionary<ushort, PendingPing> _pendingPings =
             new ConcurrentDictionary<ushort, PendingPing>();
 
@@ -303,24 +409,24 @@ namespace Hapbeat
             new Dictionary<HapbeatProtocol.StreamLeaseIdentity, uint>();
         private readonly object _streamLeaseLock = new object();
 
-        // Endpoints classified as pre-v2 firmware (stream-session-v2.md "Legacy
-        // receiver fallback"), keyed like _streamLeases, value = echoed timestamp of
+        // Endpoints classified Stream Gen 1 (stream-session.md "Legacy receiver
+        // fallback"), keyed like _streamLeases, value = echoed timestamp of
         // the matched reply that classified them. Mutually exclusive with
         // _streamLeases. Deliberately NOT cleared by RenewStreamLeaseIncarnation:
-        // legacy firmware has no lease, so focus changes / reacquire must not
+        // Stream Gen 1 firmware has no lease, so focus changes / reacquire must not
         // interrupt its streams. Cleared on Disconnect with other device knowledge.
         private readonly ConcurrentDictionary<IPAddress, long> _legacyStreamEndpoints =
             new ConcurrentDictionary<IPAddress, long>();
 
         // Echoed timestamp of the last accepted matched reply per endpoint across
-        // BOTH classes, so a late reply can never flip v2<->legacy backwards.
+        // BOTH classes, so a late reply can never flip Gen 2<->Gen 1 backwards.
         // Guarded by _streamLeaseLock. Timestamps are strictly increasing for the
         // client's lifetime, so this survives incarnation renewal safely.
         private readonly Dictionary<IPAddress, long> _lastMatchedStreamReplyUs =
             new Dictionary<IPAddress, long>();
 
         private ulong _clientIncarnation;
-        private long _lastLeasePingTimestampUs;
+        private long _lastPingTimestampUs;
         private long _nextAcceptedStreamLeaseRouteOrder;
 
         private bool _disposed;
@@ -469,6 +575,11 @@ namespace Hapbeat
                 _legacyStreamEndpoints.Clear();
                 _lastMatchedStreamReplyUs.Clear();
                 _loggedStreamModes.Clear();
+                _leasePingSentUs.Clear();
+                _lastStreamPacketUs.Clear();
+                _pendingLeaseRenewals.Clear();
+                _warnedIgnoredTails.Clear();
+                _capsStates.Clear();
             }
 
             // Device knowledge is per-connection: after a reconnect (Wi-Fi change,
@@ -482,7 +593,7 @@ namespace Hapbeat
             _knownDeviceIps.Clear();
             _deviceAddresses.Clear();
             _knownDeviceEndpoints.Clear();
-            _announcedStreamBegins.Clear();
+            _trackedStreamSessions.Clear();
             // Routes belong to the network we were on: after a reconnect the host
             // may well have different interfaces (docking, VPN up, Wi-Fi switch).
             _broadcastRoutes = new List<BroadcastRoute>();
@@ -531,15 +642,18 @@ namespace Hapbeat
             public readonly string Address;
             public readonly HapbeatProtocol.StreamLeaseIdentity Lease;
             public readonly StreamEndpointMode Mode;
+            // CAPS haptic_channels (the motor count); -1 = not reported (0.x firmware).
+            public readonly int HapticChannels;
 
             public StreamEndpoint(IPEndPoint endPoint, string address,
                 HapbeatProtocol.StreamLeaseIdentity lease = default,
-                StreamEndpointMode mode = StreamEndpointMode.V2)
+                StreamEndpointMode mode = StreamEndpointMode.V2, int hapticChannels = -1)
             {
                 EndPoint = endPoint;
                 Address = address;
                 Lease = lease;
                 Mode = mode;
+                HapticChannels = hapticChannels;
             }
         }
 
@@ -572,8 +686,9 @@ namespace Hapbeat
                     }
                 }
 
-                // Pre-v2 endpoints have no lease. A v2 state for the same IP (even a
-                // deferred one) wins; the two maps are kept exclusive regardless.
+                // Stream Gen 1 endpoints have no lease. A Stream Gen 2 state for the
+                // same IP (even a deferred one) wins; the two maps are kept exclusive
+                // regardless.
                 foreach (var pair in _legacyStreamEndpoints)
                 {
                     if (_streamLeases.ContainsKey(pair.Key)) continue;
@@ -581,18 +696,204 @@ namespace Hapbeat
                             out IPEndPoint legacyEndpoint, out string legacyAddress))
                     {
                         result.Add(new StreamEndpoint(legacyEndpoint, legacyAddress, default,
-                            StreamEndpointMode.Legacy));
+                            StreamEndpointMode.Legacy, HapticChannelsLocked(pair.Key)));
                     }
+                }
+
+                foreach (StreamLeaseRoute route in currentRoutes.Values)
+                {
+                    if (TryResolveStreamRoute(route.Address, target, nowUs, ttlUs,
+                            out IPEndPoint endpoint, out string address))
+                        result.Add(new StreamEndpoint(endpoint, address, route.State.Identity,
+                            StreamEndpointMode.V2, HapticChannelsLocked(route.Address)));
+                }
+            }
+            return result;
+        }
+
+        private int HapticChannelsLocked(IPAddress address) =>
+            _capsStates.TryGetValue(address, out CapsState caps) && caps.Caps.HasValue
+                ? caps.Caps.Value.HapticChannels
+                : -1;
+
+        /// <summary>
+        /// Why a stream to <paramref name="target"/> cannot start (sdk-multi-stream.md §3):
+        /// over the live endpoints whose address matches, Superseded &gt; LeaseUnavailable
+        /// &gt; UnknownClass (no matched reply yet, including an ignored tail); with no
+        /// matching endpoint, NoResolvedEndpoint.
+        /// </summary>
+        internal HapbeatStreamPlaybackDeferReason GetStreamDeferReason(string target)
+        {
+            long nowUs = GetLocalTimestampUs();
+            long ttlUs = (long)(Math.Max(1f, _knownDeviceTtlSeconds) * 1_000_000d);
+            var reason = HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint;
+            lock (_streamLeaseLock)
+            {
+                foreach (var pair in _knownDeviceEndpoints)
+                {
+                    if (!TryResolveStreamRoute(pair.Key, target, nowUs, ttlUs, out _, out _)) continue;
+                    HapbeatStreamPlaybackDeferReason candidate;
+                    if (_streamLeases.TryGetValue(pair.Key, out StreamLeaseState lease))
+                    {
+                        if (lease.IsSuperseded) return HapbeatStreamPlaybackDeferReason.Superseded;
+                        candidate = lease.IsUsableFor(_clientIncarnation)
+                            ? HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint
+                            : HapbeatStreamPlaybackDeferReason.LeaseUnavailable;
+                    }
+                    else if (_legacyStreamEndpoints.ContainsKey(pair.Key))
+                        candidate = HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint;
+                    else
+                        candidate = HapbeatStreamPlaybackDeferReason.UnknownClass;
+                    if (DeferReasonRank(candidate) > DeferReasonRank(reason)) reason = candidate;
+                }
+            }
+            return reason;
+        }
+
+        private static int DeferReasonRank(HapbeatStreamPlaybackDeferReason reason)
+        {
+            switch (reason)
+            {
+                case HapbeatStreamPlaybackDeferReason.Superseded: return 3;
+                case HapbeatStreamPlaybackDeferReason.LeaseUnavailable: return 2;
+                case HapbeatStreamPlaybackDeferReason.UnknownClass: return 1;
+                default: return 0;
+            }
+        }
+
+        /// <summary>
+        /// Stream class and lease state of every live device endpoint
+        /// (stream-session.md Sender requirements 6, sdk-multi-stream.md §3).
+        /// </summary>
+        internal List<HapbeatStreamEndpointInfo> GetStreamEndpointInfos()
+        {
+            var result = new List<HapbeatStreamEndpointInfo>();
+            long nowUs = GetLocalTimestampUs();
+            long ttlUs = (long)(Math.Max(1f, _knownDeviceTtlSeconds) * 1_000_000d);
+            lock (_streamLeaseLock)
+            {
+                foreach (var pair in _knownDeviceEndpoints)
+                {
+                    if (!_knownDeviceIps.TryGetValue(pair.Key, out long lastPongUs) ||
+                        nowUs - lastPongUs > ttlUs) continue;
+                    result.Add(GetStreamEndpointInfoLocked(pair.Key));
+                }
+            }
+            return result;
+        }
+
+        internal HapbeatStreamEndpointInfo GetStreamEndpointInfo(IPAddress address)
+        {
+            lock (_streamLeaseLock) return GetStreamEndpointInfoLocked(address);
+        }
+
+        private HapbeatStreamEndpointInfo GetStreamEndpointInfoLocked(IPAddress address)
+        {
+            _deviceAddresses.TryGetValue(address, out string deviceAddress);
+            HapbeatStreamClass streamClass = HapbeatStreamClass.Unknown;
+            HapbeatStreamLeaseState leaseState = HapbeatStreamLeaseState.None;
+            if (_streamLeases.TryGetValue(address, out StreamLeaseState lease))
+            {
+                streamClass = HapbeatStreamClass.Gen2;
+                leaseState = PublicLeaseState(lease);
+            }
+            else if (_legacyStreamEndpoints.ContainsKey(address))
+                streamClass = HapbeatStreamClass.Gen1;
+
+            int capsGeneration = -1;
+            if (_capsStates.TryGetValue(address, out CapsState caps) && caps.Resolved)
+                capsGeneration = caps.Caps.HasValue ? Math.Max(0, caps.Caps.Value.Generation) : 0;
+            return new HapbeatStreamEndpointInfo(address, deviceAddress, streamClass, leaseState, capsGeneration);
+        }
+
+        private HapbeatStreamLeaseState PublicLeaseState(StreamLeaseState lease) =>
+            lease.IsSuperseded ? HapbeatStreamLeaseState.Superseded
+            : lease.IsUsableFor(_clientIncarnation) ? HapbeatStreamLeaseState.Valid
+            : HapbeatStreamLeaseState.Unavailable;
+
+        /// <summary>
+        /// Sends the extended PINGs that are due (stream-session.md "How SDKs send
+        /// extended PINGs") and the CAPS_REQ retries. Lease targets are the live
+        /// endpoints whose address matches one of <paramref name="effectiveTargets"/>
+        /// (the Deferred or Active Playbacks) and those whose last session is less than
+        /// one lease TTL old. Each gets a unicast extended PING every
+        /// <see cref="LeaseRefreshIntervalUs"/> once it has a matched reply, at once and
+        /// then every <see cref="UnmatchedLeasePingIntervalUs"/> before that. An endpoint
+        /// that stops being a target stops being refreshed, and its lease stops being
+        /// usable (the receiver expires it): the next stream renews it first.
+        /// <paramref name="immediate"/> sends to every target now.
+        /// </summary>
+        internal void RefreshStreamLeases(IReadOnlyList<string> effectiveTargets, bool immediate = false)
+        {
+            RefreshStreamLeases(effectiveTargets, immediate, GetLocalTimestampUs());
+        }
+
+        internal void RefreshStreamLeases(IReadOnlyList<string> effectiveTargets, bool immediate, long nowUs)
+        {
+            List<IPEndPoint> due = null;
+            List<IPAddress> expired = null;
+            long ttlUs = (long)(Math.Max(1f, _knownDeviceTtlSeconds) * 1_000_000d);
+            lock (_streamLeaseLock)
+            {
+                _leaseTargetScratch.Clear();
+                foreach (var pair in _knownDeviceEndpoints)
+                {
+                    IPAddress ip = pair.Key;
+                    if (!_knownDeviceIps.TryGetValue(ip, out long lastPongUs) || nowUs - lastPongUs > ttlUs)
+                        continue;
+                    if (!IsLeaseTargetLocked(ip, effectiveTargets, nowUs)) continue;
+                    _leaseTargetScratch.Add(ip);
+                    bool matched = _streamLeases.ContainsKey(ip) || _legacyStreamEndpoints.ContainsKey(ip);
+                    long intervalUs = matched ? LeaseRefreshIntervalUs : UnmatchedLeasePingIntervalUs;
+                    if (!immediate && _leasePingSentUs.TryGetValue(ip, out long sentUs) && nowUs - sentUs < intervalUs)
+                        continue;
+                    if (due == null) due = new List<IPEndPoint>();
+                    due.Add(pair.Value);
+                }
+
+                _leaseDropScratch.Clear();
+                foreach (IPAddress ip in _leasePingSentUs.Keys)
+                    if (!_leaseTargetScratch.Contains(ip)) _leaseDropScratch.Add(ip);
+                for (int i = 0; i < _leaseDropScratch.Count; i++)
+                {
+                    IPAddress ip = _leaseDropScratch[i];
+                    _leasePingSentUs.Remove(ip);
+                    if (!_streamLeases.TryGetValue(ip, out StreamLeaseState lease) || !lease.IsLeaseValid) continue;
+                    // No refresh from here on: the receiver expires the entry one TTL
+                    // after the last PING. Keep the superseded latch; only a renewed
+                    // matched reply makes the lease usable again.
+                    _streamLeases[ip] = new StreamLeaseState(lease.Identity, lease.LastAcceptedTimestampUs,
+                        lease.RouteOrder, lease.ClientIncarnation, false, lease.IsSuperseded);
+                    if (expired == null) expired = new List<IPAddress>();
+                    expired.Add(ip);
                 }
             }
 
-            foreach (StreamLeaseRoute route in currentRoutes.Values)
+            if (due != null)
+                for (int i = 0; i < due.Count; i++) SendLeasePingTo(due[i], nowUs);
+            if (expired != null)
             {
-                if (TryResolveStreamRoute(route.Address, target, nowUs, ttlUs,
-                        out IPEndPoint endpoint, out string address))
-                    result.Add(new StreamEndpoint(endpoint, address, route.State.Identity));
+                for (int i = 0; i < expired.Count; i++)
+                {
+                    var endpoint = _knownDeviceEndpoints.TryGetValue(expired[i], out IPEndPoint known)
+                        ? new IPEndPoint(known.Address, known.Port)
+                        : new IPEndPoint(expired[i], 0);
+                    EnqueueMainThread(() => OnStreamEndpointStateChanged?.Invoke(endpoint));
+                }
             }
-            return result;
+            TickCaps(nowUs);
+        }
+
+        private bool IsLeaseTargetLocked(IPAddress ip, IReadOnlyList<string> effectiveTargets, long nowUs)
+        {
+            if (_lastStreamPacketUs.TryGetValue(ip, out long lastStreamUs) && nowUs - lastStreamUs < StreamLeaseTtlUs)
+                return true;
+            if (effectiveTargets == null || effectiveTargets.Count == 0) return false;
+            if (!_deviceAddresses.TryGetValue(ip, out string address) || string.IsNullOrEmpty(address))
+                return false;
+            for (int i = 0; i < effectiveTargets.Count; i++)
+                if (AddressMatches(effectiveTargets[i], address)) return true;
+            return false;
         }
 
         private bool TryResolveStreamRoute(IPAddress ipAddress, string target, long nowUs, long ttlUs,
@@ -610,16 +911,7 @@ namespace Hapbeat
             return _knownDeviceEndpoints.TryGetValue(ipAddress, out endpoint);
         }
 
-        /// <summary>
-        /// Whether a matched reply classified any device as v2 (it holds, or is
-        /// waiting for, a stream lease that only periodic PING keeps alive).
-        /// </summary>
-        internal bool HasV2StreamEndpoints
-        {
-            get { lock (_streamLeaseLock) return !_streamLeases.IsEmpty; }
-        }
-
-        /// <summary>Whether a matched reply classified this device IP as pre-v2 firmware.</summary>
+        /// <summary>Whether a matched reply classified this device IP as Stream Gen 1.</summary>
         internal bool IsLegacyStreamEndpoint(IPAddress address)
         {
             lock (_streamLeaseLock)
@@ -858,12 +1150,30 @@ namespace Hapbeat
             byte[] payload = HapbeatProtocol.BuildStreamBeginPayload(identity,
                 sampleRate, channels, format, totalSamples, gain, target);
             SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_BEGIN, payload);
-            if (_announcedStreamBegins.TryGetValue(endpoint.Address, out var announced) &&
-                announced.Lease.Equals(identity.Lease) && announced.Generation == identity.Generation)
+            NoteStreamPacketSent(endpoint);
+            if (_trackedStreamSessions.TryGetValue(endpoint.Address, out TrackedStreamSessions tracked) &&
+                SameSession(tracked.Current, identity))
                 return;
-            _announcedStreamBegins[endpoint.Address] = identity;
+            _trackedStreamSessions[endpoint.Address] = new TrackedStreamSessions(identity, tracked.Current);
             var capturedEndpoint = new IPEndPoint(endpoint.Address, endpoint.Port);
             EnqueueMainThread(() => OnStreamSessionBegan?.Invoke(capturedEndpoint, identity));
+        }
+
+        private static bool SameSession(HapbeatProtocol.StreamSessionIdentity a,
+            HapbeatProtocol.StreamSessionIdentity b) =>
+            a.Lease.Equals(b.Lease) && a.Generation == b.Generation;
+
+        /// <summary>Whether <paramref name="identity"/> is the current or previous session begun at <paramref name="address"/>.</summary>
+        private bool IsTrackedStreamSession(IPAddress address, HapbeatProtocol.StreamSessionIdentity identity) =>
+            identity.IsValid && _trackedStreamSessions.TryGetValue(address, out TrackedStreamSessions tracked) &&
+            (SameSession(tracked.Current, identity) || SameSession(tracked.Previous, identity));
+
+        // A BEGIN or END keeps the endpoint a lease target for one TTL (see RefreshStreamLeases).
+        private void NoteStreamPacketSent(IPEndPoint endpoint)
+        {
+            if (endpoint == null) return;
+            long nowUs = GetLocalTimestampUs();
+            lock (_streamLeaseLock) _lastStreamPacketUs[endpoint.Address] = nowUs;
         }
 
         internal void SendStreamDataTo(IPEndPoint endpoint, HapbeatProtocol.StreamSessionIdentity identity,
@@ -884,13 +1194,14 @@ namespace Hapbeat
         {
             SendStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_END,
                 HapbeatProtocol.BuildStreamEndPayload(identity));
+            NoteStreamPacketSent(endpoint);
         }
 
-        // Pre-v2 stream format for endpoints classified Legacy (stream-session-v2.md
+        // Stream Gen 1 format for endpoints classified Legacy (stream-session.md
         // "Legacy receiver fallback"): header protocol_version=1, no identity
-        // envelope, empty END, exact unicast. No lease gating: legacy firmware has no
-        // lease. The mixer owns the per-endpoint 300 ms END->BEGIN guard, and
-        // OnStreamSessionBegan is deliberately not raised (it carries a v2 identity).
+        // envelope, empty END, exact unicast. No lease gating: Stream Gen 1 firmware
+        // has no lease. The mixer owns the per-endpoint 300 ms END->BEGIN guard, and
+        // OnStreamSessionBegan is deliberately not raised (it carries a Gen 2 identity).
 
         internal void SendLegacyStreamBeginTo(IPEndPoint endpoint, ushort sampleRate, byte channels,
             byte format, uint totalSamples, float gain, string target = null)
@@ -898,6 +1209,7 @@ namespace Hapbeat
             byte[] payload = HapbeatProtocol.BuildLegacyStreamBeginPayload(
                 sampleRate, channels, format, totalSamples, gain, target);
             SendLegacyStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_BEGIN, payload);
+            NoteStreamPacketSent(endpoint);
         }
 
         internal void SendLegacyStreamDataTo(IPEndPoint endpoint, uint byteOffset, byte[] audioData,
@@ -913,6 +1225,7 @@ namespace Hapbeat
         internal void SendLegacyStreamEndTo(IPEndPoint endpoint)
         {
             SendLegacyStreamPacketTo(endpoint, HapbeatProtocol.CMD_STREAM_END, Array.Empty<byte>());
+            NoteStreamPacketSent(endpoint);
         }
 
         private void SendLegacyStreamPacketTo(IPEndPoint endpoint, byte commandType, byte[] payload)
@@ -923,33 +1236,70 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Send a PING command for keep-alive and time synchronization.
+        /// Broadcast an 8-byte discovery PING for keep-alive and time synchronization.
+        /// It never requests a stream lease (extended PINGs go by unicast only, see
+        /// <see cref="RefreshStreamLeases(IReadOnlyList{string}, bool)"/>), and its
+        /// replies never classify a stream endpoint.
         /// </summary>
         /// <returns>The sequence number of the ping packet.</returns>
         public ushort SendPing()
         {
-            long timestampUs = GetLocalTimestampUs();
             ushort seq = GetNextSequenceNumber();
             byte[] packet;
             lock (_streamLeaseLock)
             {
-                // Ordering of lease adoption is defined by the echoed PING
-                // timestamp. Stopwatch resolution can yield equal values for two
-                // immediate requests, so make locally-issued lease PING timestamps
-                // strictly increasing without adding a network round trip.
-                if (timestampUs <= _lastLeasePingTimestampUs)
-                    timestampUs = _lastLeasePingTimestampUs + 1;
-                _lastLeasePingTimestampUs = timestampUs;
-                byte[] payload = HapbeatProtocol.BuildPingPayload(timestampUs, _clientIncarnation);
+                long timestampUs = NextPingTimestampLocked();
+                byte[] payload = HapbeatProtocol.BuildPingPayload(timestampUs);
                 packet = HapbeatProtocol.BuildPacket(HapbeatProtocol.CMD_PING, seq, payload);
                 PrunePendingPingsLocked(timestampUs);
-                _pendingPings[seq] = new PendingPing(timestampUs, _clientIncarnation);
+                _pendingPings[seq] = new PendingPing(timestampUs, 0, false, null);
             }
 
             // Fans out until a device answers — this is what finds a Hapbeat the
             // limited broadcast cannot reach on a multi-homed host.
             SendDiscoveryRaw(packet);
             return seq;
+        }
+
+        /// <summary>
+        /// Unicast an extended (16-byte) PING to <paramref name="endpoint"/>, requesting
+        /// or refreshing its stream lease, from the socket the streams use. Only a
+        /// reply from that endpoint's IP is matched to it. The request is recorded even
+        /// while disconnected (nothing is sent then).
+        /// </summary>
+        /// <returns>The sequence number of the ping packet.</returns>
+        internal ushort SendLeasePingTo(IPEndPoint endpoint) =>
+            SendLeasePingTo(endpoint, GetLocalTimestampUs());
+
+        private ushort SendLeasePingTo(IPEndPoint endpoint, long scheduleUs)
+        {
+            if (endpoint == null) throw new ArgumentNullException(nameof(endpoint));
+            ushort seq = GetNextSequenceNumber();
+            byte[] packet;
+            lock (_streamLeaseLock)
+            {
+                long timestampUs = NextPingTimestampLocked();
+                byte[] payload = HapbeatProtocol.BuildPingPayload(timestampUs, _clientIncarnation);
+                packet = HapbeatProtocol.BuildPacket(HapbeatProtocol.CMD_PING, seq, payload);
+                PrunePendingPingsLocked(timestampUs);
+                _pendingPings[seq] = new PendingPing(timestampUs, _clientIncarnation, true, endpoint.Address);
+                _leasePingSentUs[endpoint.Address] = scheduleUs;
+            }
+            SendStreamRawTo(endpoint, packet);
+            return seq;
+        }
+
+        // Ordering of lease adoption is defined by the echoed PING timestamp.
+        // Stopwatch resolution can yield equal values for two immediate requests, so
+        // make locally-issued PING timestamps strictly increasing without adding a
+        // network round trip.
+        private long NextPingTimestampLocked()
+        {
+            long timestampUs = GetLocalTimestampUs();
+            if (timestampUs <= _lastPingTimestampUs)
+                timestampUs = _lastPingTimestampUs + 1;
+            _lastPingTimestampUs = timestampUs;
+            return timestampUs;
         }
 
         /// <summary>
@@ -1664,7 +2014,11 @@ namespace Hapbeat
                         break;
 
                     case HapbeatProtocol.CMD_ERROR:
-                        HandleError(payload);
+                        HandleError(payload, sender);
+                        break;
+
+                    case HapbeatProtocol.CMD_CAPS:
+                        HandleCaps(seq, payload, sender);
                         break;
 
                     default:
@@ -1738,6 +2092,7 @@ namespace Hapbeat
                     // Fallback: use the timestamp from the pong payload
                     rttUs = nowUs - timestamp;
                 }
+                NoteCapsCandidate(seq, pong, sender);
             }
 
             // broadcast 経路だと device 毎に複数 PONG が届く。送信元 endpoint を
@@ -1753,7 +2108,28 @@ namespace Hapbeat
                 if (leaseUpdate.Changed)
                     OnStreamLeaseChanged?.Invoke(capturedSender, leaseUpdate.State.Identity,
                         leaseUpdate.State.IsLeaseValid, leaseUpdate.State.IsSuperseded);
+                if (leaseUpdate.EndpointStateChanged)
+                    OnStreamEndpointStateChanged?.Invoke(capturedSender);
+                if (leaseUpdate.LeaseRenewed)
+                    OnStreamLeaseRenewed?.Invoke(capturedSender);
             });
+        }
+
+        /// <summary>
+        /// Whether a PONG is the direct reply to this client's pending extended PING
+        /// of the active incarnation: header seq, echoed timestamp and the PING's
+        /// unicast destination all match (stream-session.md "Discovery lease").
+        /// </summary>
+        private bool TryMatchLeaseReplyLocked(IPEndPoint sender, ushort seq, long timestamp,
+            out PendingPing pending)
+        {
+            pending = default;
+            return timestamp != 0 &&
+                _pendingPings.TryGetValue(seq, out pending) &&
+                pending.IsLeaseRequest &&
+                pending.TimestampUs == timestamp &&
+                pending.ClientIncarnation == _clientIncarnation &&
+                pending.CameFrom(sender.Address);
         }
 
         private StreamLeaseUpdate EvaluateStreamLeasePong(IPEndPoint sender, ushort seq,
@@ -1762,22 +2138,29 @@ namespace Hapbeat
             lock (_streamLeaseLock)
             {
                 HapbeatProtocol.StreamLeasePongTail tail = pong.StreamLease;
-                if (tail.Status == HapbeatProtocol.StreamLeaseTailStatus.Malformed)
+                if (tail.Status == HapbeatProtocol.StreamLeaseTailStatus.Ignored)
                 {
-                    // An HBS2 marker with a bad length/version/flags/reserved field
-                    // is neither a lease nor proof of pre-v2 firmware: no class or
-                    // lease change. Ordinary discovery fields still refresh.
+                    // Bytes after volume_wiper that are not a version-1 HBS2 tail
+                    // (a later major, or a cut-off tail) are neither a lease nor
+                    // proof of Stream Gen 1: no class or lease change, and the
+                    // endpoint stays unknown. Ordinary discovery fields still refresh.
+                    if (TryMatchLeaseReplyLocked(sender, seq, pong.Timestamp, out _) &&
+                        _warnedIgnoredTails.Add(sender.Address))
+                    {
+                        UnityEngine.Debug.LogWarning(
+                            $"[Hapbeat] Ignoring an unknown stream tail from {sender.Address}: " +
+                            "the device may be newer than this SDK. Update the Hapbeat SDK.");
+                    }
                     return default;
                 }
 
                 if (tail.Status == HapbeatProtocol.StreamLeaseTailStatus.Absent)
                 {
                     // A normal unextended PONG, including an unsolicited identity
-                    // update, is still permitted to refresh endpoint discovery. Only
-                    // a matched direct reply to our extended PING may classify the
-                    // endpoint as pre-v2 firmware.
-                    EvaluateLegacyPongLocked(sender, seq, pong);
-                    return default;
+                    // update or a reply to the 8-byte discovery PING, is still
+                    // permitted to refresh endpoint discovery. Only a matched direct
+                    // reply to our extended PING may classify the endpoint Gen 1.
+                    return EvaluateLegacyPongLocked(sender, seq, pong);
                 }
 
                 // HBS2 is only valid on a direct reply to the active incarnation.
@@ -1786,9 +2169,7 @@ namespace Hapbeat
                 if (tail.EchoedClientIncarnation != _clientIncarnation)
                     return new StreamLeaseUpdate(true, false, default);
 
-                if (pong.Timestamp == 0 ||
-                    !_pendingPings.TryGetValue(seq, out PendingPing pending) ||
-                    pending.TimestampUs != pong.Timestamp ||
+                if (!TryMatchLeaseReplyLocked(sender, seq, pong.Timestamp, out PendingPing pending) ||
                     pending.ClientIncarnation != tail.EchoedClientIncarnation)
                 {
                     // HBS2 is a correlation-bearing direct reply. If any part of
@@ -1807,17 +2188,28 @@ namespace Hapbeat
                     return new StreamLeaseUpdate(true, false, default);
                 }
                 _lastMatchedStreamReplyUs[sender.Address] = pong.Timestamp;
-                // A matched valid v2 reply clears pre-v2 classification (firmware
-                // update). The mixer ENDs a live legacy session in its old format.
+                // A matched Gen 2 reply clears the Gen 1 classification (firmware
+                // update). The mixer ENDs a live Gen 1 session in its old format.
+                bool classChanged = !hadExisting;
                 _legacyStreamEndpoints.TryRemove(sender.Address, out _);
                 NoteStreamModeLocked(sender.Address, StreamEndpointMode.V2);
 
                 // A superseded writer must not turn a later periodic discovery
-                // reply into an implicit takeover. Only RenewStreamLeaseIncarnation
-                // (Connect/reconnect/foreground resume/explicit reacquire) clears
-                // this latch and permits a new lease to become usable.
-                bool keepSuperseded = hadExisting && existing.IsSuperseded &&
+                // reply into an implicit takeover. Only a reply whose ticket the
+                // receiver re-issued (lease_reissued: the other writer left, or this
+                // application came back under the same incarnation) or
+                // RenewStreamLeaseIncarnation (Connect/reconnect/foreground
+                // resume/explicit reacquire) clears this latch.
+                bool reissued = tail.IsLeaseValid && !tail.IsLeaseSuperseded && tail.IsLeaseReissued;
+                bool wasSuperseded = hadExisting && existing.IsSuperseded &&
                     existing.ClientIncarnation == pending.ClientIncarnation;
+                bool keepSuperseded = wasSuperseded && !reissued;
+                if (wasSuperseded && reissued)
+                {
+                    UnityEngine.Debug.Log(
+                        $"[Hapbeat] {sender.Address} re-issued the stream lease (ticket {tail.Lease.LeaseTicket}); " +
+                        "streaming to it resumes.");
+                }
                 long routeOrder = ++_nextAcceptedStreamLeaseRouteOrder;
                 var next = keepSuperseded
                     ? new StreamLeaseState(existing.Identity, pong.Timestamp,
@@ -1826,36 +2218,46 @@ namespace Hapbeat
                         routeOrder, pending.ClientIncarnation, tail.IsLeaseValid, tail.IsLeaseSuperseded);
                 bool changed = !hadExisting || !next.Equals(existing);
                 _streamLeases[sender.Address] = next;
-                return new StreamLeaseUpdate(false, changed, next);
+
+                bool renewed = false;
+                if (_pendingLeaseRenewals.TryGetValue(sender.Address, out HapbeatProtocol.StreamLeaseIdentity invalid))
+                {
+                    _pendingLeaseRenewals.Remove(sender.Address);
+                    renewed = next.IsUsableFor(_clientIncarnation) && next.Identity.Equals(invalid);
+                }
+                bool stateChanged = classChanged ||
+                    PublicLeaseState(existing) != PublicLeaseState(next);
+                return new StreamLeaseUpdate(false, changed, next, stateChanged, renewed);
             }
         }
 
         /// <summary>
-        /// Classify <paramref name="sender"/> as pre-v2 firmware from a PONG with no
-        /// HBS2 marker, but only when it is a matched direct reply to this client's
-        /// current extended PING (header seq + echoed timestamp, pending request of
-        /// the active incarnation) and newer than the last accepted matched reply for
-        /// that endpoint in either class. Unsolicited (timestamp 0), unmatched or late
-        /// replies never change the class.
+        /// Classify <paramref name="sender"/> as Stream Gen 1 from a PONG with nothing
+        /// after volume_wiper, but only when it is a matched direct reply to this
+        /// client's current extended PING (header seq + echoed timestamp + unicast
+        /// destination, pending lease request of the active incarnation) and newer than
+        /// the last accepted matched reply for that endpoint in either class.
+        /// Unsolicited (timestamp 0), unmatched, late replies and replies to the 8-byte
+        /// discovery PING never change the class.
         /// </summary>
-        private void EvaluateLegacyPongLocked(IPEndPoint sender, ushort seq,
+        private StreamLeaseUpdate EvaluateLegacyPongLocked(IPEndPoint sender, ushort seq,
             HapbeatProtocol.PongExtendedInfo pong)
         {
-            if (pong.Timestamp == 0 ||
-                !_pendingPings.TryGetValue(seq, out PendingPing pending) ||
-                pending.TimestampUs != pong.Timestamp ||
-                pending.ClientIncarnation != _clientIncarnation ||
+            if (!TryMatchLeaseReplyLocked(sender, seq, pong.Timestamp, out _) ||
                 !IsNewerMatchedStreamReplyLocked(sender.Address, pong.Timestamp))
-                return;
+                return default;
 
             _lastMatchedStreamReplyUs[sender.Address] = pong.Timestamp;
-            // A matched legacy reply clears the v2 lease (firmware rollback). This is
-            // not reported through OnStreamLeaseChanged: a legacy endpoint has no
+            // A matched Gen 1 reply clears the Gen 2 lease (firmware rollback). This is
+            // not reported through OnStreamLeaseChanged: a Gen 1 endpoint has no
             // lease to be "unavailable", and the ordinary PONG callback already
-            // reconciles the mixer, which ENDs the v2 session in its old format.
+            // reconciles the mixer, which ENDs the Gen 2 session in its old format.
             _streamLeases.TryRemove(sender.Address, out _);
+            _pendingLeaseRenewals.Remove(sender.Address);
+            bool classChanged = !_legacyStreamEndpoints.ContainsKey(sender.Address);
             _legacyStreamEndpoints[sender.Address] = pong.Timestamp;
             NoteStreamModeLocked(sender.Address, StreamEndpointMode.Legacy);
+            return new StreamLeaseUpdate(false, false, default, classChanged);
         }
 
         private bool IsNewerMatchedStreamReplyLocked(IPAddress address, long timestampUs) =>
@@ -1872,8 +2274,8 @@ namespace Hapbeat
                 return;
             _loggedStreamModes[address] = mode;
             UnityEngine.Debug.Log(mode == StreamEndpointMode.Legacy
-                ? $"[Hapbeat] Stream mode legacy (pre-v2 firmware) at {address}"
-                : $"[Hapbeat] Stream mode v2 at {address}");
+                ? $"[Hapbeat] Stream Gen 1 (firmware before 0.5.0) at {address}"
+                : $"[Hapbeat] Stream Gen 2 at {address}");
         }
 
         private void RenewStreamLeaseIncarnation()
@@ -1882,9 +2284,12 @@ namespace Hapbeat
             {
                 _clientIncarnation = CreateClientIncarnation();
                 _pendingPings.Clear();
-                // Legacy classification survives: pre-v2 firmware has no lease, so
-                // focus/reacquire must not interrupt its streams.
+                // Gen 1 classification survives: Stream Gen 1 firmware has no lease,
+                // so focus/reacquire must not interrupt its streams.
                 _streamLeases.Clear();
+                _pendingLeaseRenewals.Clear();
+                // Every lease target asks for a lease under the new incarnation at once.
+                _leasePingSentUs.Clear();
             }
         }
 
@@ -1945,10 +2350,215 @@ namespace Hapbeat
             return incarnation == 0 ? 1UL : incarnation;
         }
 
-        private void HandleError(byte[] payload)
+        /// <summary>
+        /// Accept an ERROR only from a known device's address and the device port, and a
+        /// stream error (0x0011–0x0017) only when its detail is the envelope of the
+        /// current or previous session sent to that device (message-format.md §0xFF,
+        /// stream-session.md Sender requirements 5). Handling is per endpoint; the
+        /// mixer acts on the stream errors through <see cref="OnStreamError"/>.
+        /// </summary>
+        private void HandleError(byte[] payload, IPEndPoint sender)
         {
-            var (errorCode, message) = HapbeatProtocol.ParseError(payload);
-            EnqueueMainThread(() => OnError?.Invoke(errorCode, message));
+            HapbeatProtocol.ErrorInfo error = HapbeatProtocol.ParseErrorExtended(payload);
+            int devicePort = _targetEndPoint != null ? _targetEndPoint.Port : 7700;
+            if (sender == null || sender.Port != devicePort ||
+                !_knownDeviceEndpoints.ContainsKey(sender.Address))
+                return;
+
+            ushort code = error.Code;
+            HapbeatProtocol.StreamSessionIdentity identity = default;
+            if (HapbeatProtocol.IsStreamSessionErrorCode(code) &&
+                (!error.TryGetStreamIdentity(out identity) || !IsTrackedStreamSession(sender.Address, identity)))
+                return;
+
+            var endpoint = new IPEndPoint(sender.Address, sender.Port);
+            StreamLeaseUpdate superseded = default;
+            bool capsResolved = false;
+            switch (code)
+            {
+                case HapbeatProtocol.ERROR_UNKNOWN_COMMAND:
+                    // Only CAPS_REQ is optional today: that device has no CAPS.
+                    if (error.HasReference && error.RefCommand == HapbeatProtocol.CMD_CAPS_REQ)
+                        capsResolved = ResolveCapsAbsent(sender.Address);
+                    break;
+                case HapbeatProtocol.ERROR_STREAM_GEN_UNSUPPORTED:
+                case HapbeatProtocol.ERROR_STREAM_TARGET_MISMATCH:
+                    // Stale class (the device was updated) or address: classify and
+                    // resolve the endpoint again from a fresh matched reply.
+                    EnqueueMainThread(() => SendLeasePingTo(endpoint));
+                    break;
+                case HapbeatProtocol.ERROR_STREAM_LEASE_INVALID:
+                    lock (_streamLeaseLock) _pendingLeaseRenewals[sender.Address] = identity.Lease;
+                    EnqueueMainThread(() => SendLeasePingTo(endpoint));
+                    break;
+                case HapbeatProtocol.ERROR_STREAM_SUPERSEDED:
+                    lock (_streamLeaseLock) superseded = MarkStreamLeaseSupersededLocked(sender.Address);
+                    break;
+            }
+
+            string message = error.Message;
+            bool streamError = HapbeatProtocol.IsStreamSessionErrorCode(code);
+            EnqueueMainThread(() =>
+            {
+                if (superseded.Changed)
+                    OnStreamLeaseChanged?.Invoke(endpoint, superseded.State.Identity,
+                        superseded.State.IsLeaseValid, superseded.State.IsSuperseded);
+                if (superseded.EndpointStateChanged)
+                    OnStreamEndpointStateChanged?.Invoke(endpoint);
+                if (capsResolved)
+                    OnCapsResolved?.Invoke(endpoint);
+                OnError?.Invoke(code, message);
+                OnErrorFrom?.Invoke(endpoint, code, message);
+                if (streamError)
+                    OnStreamError?.Invoke(endpoint, code, identity);
+            });
+        }
+
+        // STREAM_SUPERSEDED defers the endpoint exactly like a PONG that reports it
+        // superseded; only a re-issued reply or an explicit reacquisition clears it.
+        private StreamLeaseUpdate MarkStreamLeaseSupersededLocked(IPAddress address)
+        {
+            if (!_streamLeases.TryGetValue(address, out StreamLeaseState existing) || existing.IsSuperseded)
+                return default;
+            var next = new StreamLeaseState(existing.Identity, existing.LastAcceptedTimestampUs,
+                existing.RouteOrder, existing.ClientIncarnation, false, true);
+            _streamLeases[address] = next;
+            return new StreamLeaseUpdate(false, true, next, true);
+        }
+
+        /// <summary>
+        /// Start (or restart) the CAPS request for a device after a matched PONG: its
+        /// first one, or one whose firmware_version or lease-tail device_boot_id changed
+        /// (message-format.md §0x12). Replies to 8-byte and extended PINGs both count.
+        /// </summary>
+        private void NoteCapsCandidate(ushort seq, HapbeatProtocol.PongExtendedInfo pong, IPEndPoint sender)
+        {
+            ulong bootId = pong.StreamLease.Status == HapbeatProtocol.StreamLeaseTailStatus.Valid
+                ? pong.StreamLease.Lease.DeviceBootId
+                : 0;
+            lock (_streamLeaseLock)
+            {
+                if (!_pendingPings.TryGetValue(seq, out PendingPing pending) ||
+                    pending.TimestampUs != pong.Timestamp || !pending.CameFrom(sender.Address))
+                    return;
+
+                if (_capsStates.TryGetValue(sender.Address, out CapsState state))
+                {
+                    bool firmwareChanged = !string.Equals(state.FirmwareVersion, pong.FirmwareVersion, StringComparison.Ordinal);
+                    bool rebooted = bootId != 0 && state.DeviceBootId != 0 && bootId != state.DeviceBootId;
+                    if (bootId != 0) state.DeviceBootId = bootId;
+                    if (!firmwareChanged && !rebooted) return;
+                }
+                _capsStates[sender.Address] = new CapsState
+                {
+                    FirmwareVersion = pong.FirmwareVersion,
+                    DeviceBootId = bootId,
+                    NextDueUs = long.MinValue,
+                };
+            }
+        }
+
+        /// <summary>
+        /// Sends due CAPS_REQs by exact unicast (500 ms apart, three in total) and
+        /// treats a device that answered none of them as having no CAPS (0.x firmware:
+        /// generation 0, no added features) until its boot or firmware changes.
+        /// </summary>
+        private void TickCaps(long nowUs)
+        {
+            List<KeyValuePair<IPEndPoint, ushort>> requests = null;
+            List<IPEndPoint> resolved = null;
+            lock (_streamLeaseLock)
+            {
+                foreach (var pair in _capsStates)
+                {
+                    CapsState state = pair.Value;
+                    if (state.Resolved || nowUs < state.NextDueUs) continue;
+                    if (!_knownDeviceEndpoints.TryGetValue(pair.Key, out IPEndPoint endpoint)) continue;
+                    if (state.Attempts >= CapsMaxAttempts)
+                    {
+                        state.Resolved = true;
+                        if (resolved == null) resolved = new List<IPEndPoint>();
+                        resolved.Add(new IPEndPoint(endpoint.Address, endpoint.Port));
+                        continue;
+                    }
+                    ushort seq = GetNextSequenceNumber();
+                    state.RequestSeqs.Add(seq);
+                    state.Attempts++;
+                    state.NextDueUs = nowUs + CapsRetryIntervalUs;
+                    if (requests == null) requests = new List<KeyValuePair<IPEndPoint, ushort>>();
+                    requests.Add(new KeyValuePair<IPEndPoint, ushort>(
+                        new IPEndPoint(endpoint.Address, endpoint.Port), seq));
+                }
+            }
+
+            if (requests != null)
+            {
+                byte[] payload = HapbeatProtocol.BuildCapsRequestPayload();
+                for (int i = 0; i < requests.Count; i++)
+                    SendStreamRawTo(requests[i].Key,
+                        HapbeatProtocol.BuildPacket(HapbeatProtocol.CMD_CAPS_REQ, requests[i].Value, payload));
+            }
+            if (resolved != null)
+                for (int i = 0; i < resolved.Count; i++)
+                {
+                    IPEndPoint endpoint = resolved[i];
+                    EnqueueMainThread(() => OnCapsResolved?.Invoke(endpoint));
+                }
+        }
+
+        private bool ResolveCapsAbsent(IPAddress address)
+        {
+            lock (_streamLeaseLock)
+            {
+                if (!_capsStates.TryGetValue(address, out CapsState state) || state.Resolved) return false;
+                state.Resolved = true;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Accept a CAPS only from the device it was requested from (its known
+        /// address and port) whose header seq is one of that device's CAPS_REQ seqs.
+        /// </summary>
+        private void HandleCaps(ushort seq, byte[] payload, IPEndPoint sender)
+        {
+            HapbeatProtocol.CapsInfo caps = HapbeatProtocol.ParseCaps(payload);
+            lock (_streamLeaseLock)
+            {
+                if (!_knownDeviceEndpoints.TryGetValue(sender.Address, out IPEndPoint known) ||
+                    known.Port != sender.Port ||
+                    !_capsStates.TryGetValue(sender.Address, out CapsState state) ||
+                    !state.RequestSeqs.Contains(seq))
+                    return;
+                state.Caps = caps;
+                state.Resolved = true;
+            }
+
+            if (caps.Generation > HapbeatProtocol.SdkMajorVersion &&
+                Interlocked.Exchange(ref s_warnedNewerDevice, 1) == 0)
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[Hapbeat] The Hapbeat at {sender.Address} runs firmware {caps.FirmwareVersion} " +
+                    $"(major {caps.Generation}), newer than this SDK (major {HapbeatProtocol.SdkMajorVersion}). " +
+                    "Update the Hapbeat SDK to use its newer features.");
+            }
+            var endpoint = new IPEndPoint(sender.Address, sender.Port);
+            EnqueueMainThread(() => OnCapsResolved?.Invoke(endpoint));
+        }
+
+        /// <summary>The parsed CAPS of a device, or false while unknown or absent.</summary>
+        internal bool TryGetCaps(IPAddress address, out HapbeatProtocol.CapsInfo caps)
+        {
+            lock (_streamLeaseLock)
+            {
+                if (_capsStates.TryGetValue(address, out CapsState state) && state.Caps.HasValue)
+                {
+                    caps = state.Caps.Value;
+                    return true;
+                }
+            }
+            caps = default;
+            return false;
         }
 
         private void HandleDisconnection()

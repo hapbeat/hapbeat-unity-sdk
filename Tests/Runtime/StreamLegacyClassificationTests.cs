@@ -4,13 +4,16 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Hapbeat.Tests
 {
     /// <summary>
-    /// stream-session-v2.md "Legacy receiver fallback (SDK)": an endpoint is classified
-    /// only from matched direct replies to this client's own extended PING. Drives the
-    /// private PONG handler directly; no socket is opened and nothing is sent.
+    /// stream-session.md "Receiver classification (SDK)" (1.x rules) and "Legacy receiver
+    /// fallback (SDK)": an endpoint is classified only from matched direct replies to this
+    /// client's own extended PING. Drives the private PONG handler directly; no socket is
+    /// opened and nothing is sent.
     /// </summary>
     public sealed class StreamLegacyClassificationTests
     {
@@ -26,44 +29,44 @@ namespace Hapbeat.Tests
             OtherBytes,    // non-HBS2 bytes follow volume_wiper
         }
 
-        [TestCase(Tail.None, TestName = "MatchedTaillessPong_ClassifiesLegacy")]
-        [TestCase(Tail.BeforeWiper, TestName = "MatchedPongEndingBeforeVolumeWiper_ClassifiesLegacy")]
-        [TestCase(Tail.OtherBytes, TestName = "MatchedPongWithNonHbs2Bytes_ClassifiesLegacy")]
-        public void MatchedPongWithoutHbs2Marker_ClassifiesLegacy(Tail tail)
+        [TestCase(Tail.None, TestName = "MatchedTaillessPong_ClassifiesGen1")]
+        [TestCase(Tail.BeforeWiper, TestName = "MatchedPongEndingBeforeVolumeWiper_ClassifiesGen1")]
+        public void MatchedPongWithNothingAfterVolumeWiper_ClassifiesGen1(Tail tail)
         {
             using var client = new HapbeatClient();
             var sender = Endpoint("192.0.2.30");
             int leaseEvents = 0;
             client.OnStreamLeaseChanged += (_, __, ___, ____) => leaseEvents++;
 
-            var ping = SendPing(client);
+            var ping = SendPing(client, sender);
             InvokeHandlePong(client, ping.seq, LegacyPong(ping.timestamp, tail), sender);
             client.DispatchMainThreadCallbacks();
 
             var resolved = client.GetResolvedStreamEndpoints(Address);
             Assert.AreEqual(1, resolved.Count);
             Assert.AreEqual(StreamEndpointMode.Legacy, resolved[0].Mode);
-            Assert.IsFalse(resolved[0].Lease.IsValid, "a legacy endpoint has no lease");
+            Assert.IsFalse(resolved[0].Lease.IsValid, "a Gen 1 endpoint has no lease");
             Assert.AreEqual(sender, resolved[0].EndPoint);
             Assert.AreEqual(0, leaseEvents,
-                "legacy classification must not raise lease events (no 'lease unavailable' warning)");
+                "Gen 1 classification must not raise lease events (no 'lease unavailable' warning)");
         }
 
         [TestCase(0, TestName = "UnsolicitedTaillessPong_DoesNotClassify")]
         [TestCase(1, TestName = "TaillessPongForUnknownSeq_DoesNotClassify")]
         [TestCase(2, TestName = "TaillessPongWithTimestampMismatch_DoesNotClassify")]
         [TestCase(3, TestName = "TaillessPongForRetiredIncarnation_DoesNotClassify")]
+        [TestCase(4, TestName = "TaillessPongFromAnotherDevice_DoesNotClassify")]
         public void UnmatchedTaillessPong_LeavesUnknownEndpointDeferred(int failure)
         {
             using var client = new HapbeatClient();
             var sender = Endpoint("192.0.2.31");
-            var ping = SendPing(client);
+            var ping = SendPing(client, failure == 4 ? Endpoint("192.0.2.131") : sender);
             ushort seq = ping.seq;
             long timestamp = ping.timestamp;
             if (failure == 0) timestamp = 0;
             else if (failure == 1) seq = unchecked((ushort)(seq + 1));
             else if (failure == 2) timestamp++;
-            else client.ReacquireStreamLeases();
+            else if (failure == 3) client.ReacquireStreamLeases();
 
             InvokeHandlePong(client, seq, LegacyPong(timestamp, Tail.None), sender);
 
@@ -73,15 +76,31 @@ namespace Hapbeat.Tests
         }
 
         [Test]
-        public void UnsolicitedTaillessPong_DoesNotEraseV2Lease()
+        public void ReplyToDiscoveryPing_NeverClassifiesGen1()
+        {
+            // Every firmware answers the 8-byte PING without a tail; counting that reply
+            // would make every device Gen 1.
+            using var client = new HapbeatClient();
+            var sender = Endpoint("192.0.2.41");
+            ushort seq = client.SendPing();
+            Assert.IsTrue(client.TryGetPendingPing(seq, out long timestamp, out _));
+            InvokeHandlePong(client, seq, LegacyPong(timestamp, Tail.None), sender);
+
+            Assert.IsFalse(client.IsLegacyStreamEndpoint(sender.Address));
+            Assert.IsEmpty(client.GetResolvedStreamEndpoints(Address));
+            Assert.AreEqual(HapbeatStreamClass.Unknown, client.GetStreamEndpointInfo(sender.Address).StreamClass);
+        }
+
+        [Test]
+        public void UnsolicitedTaillessPong_DoesNotEraseGen2Lease()
         {
             using var client = new HapbeatClient();
             var sender = Endpoint("192.0.2.32");
             var lease = new HapbeatProtocol.StreamLeaseIdentity(0x51, 5);
-            var ping = SendPing(client);
+            var ping = SendPing(client, sender);
             InvokeHandlePong(client, ping.seq, V2Pong(ping.timestamp, ping.incarnation, lease), sender);
 
-            var next = SendPingAfter(client, ping.timestamp);
+            var next = SendPingAfter(client, sender, ping.timestamp);
             InvokeHandlePong(client, next.seq, LegacyPong(0, Tail.None), sender);
 
             var resolved = client.GetResolvedStreamEndpoints(Address);
@@ -91,12 +110,12 @@ namespace Hapbeat.Tests
         }
 
         [Test]
-        public void LateTaillessReply_AfterNewerV2Reply_DoesNotFlipToLegacy()
+        public void LateTaillessReply_AfterNewerGen2Reply_DoesNotFlipToGen1()
         {
             using var client = new HapbeatClient();
             var sender = Endpoint("192.0.2.33");
-            var older = SendPing(client);
-            var newer = SendPingAfter(client, older.timestamp);
+            var older = SendPing(client, sender);
+            var newer = SendPingAfter(client, sender, older.timestamp);
             var lease = new HapbeatProtocol.StreamLeaseIdentity(0x52, 6);
             InvokeHandlePong(client, newer.seq, V2Pong(newer.timestamp, newer.incarnation, lease), sender);
 
@@ -109,12 +128,12 @@ namespace Hapbeat.Tests
         }
 
         [Test]
-        public void LateV2Reply_AfterNewerLegacyReply_DoesNotFlipToV2()
+        public void LateGen2Reply_AfterNewerGen1Reply_DoesNotFlipToGen2()
         {
             using var client = new HapbeatClient();
             var sender = Endpoint("192.0.2.34");
-            var older = SendPing(client);
-            var newer = SendPingAfter(client, older.timestamp);
+            var older = SendPing(client, sender);
+            var newer = SendPingAfter(client, sender, older.timestamp);
             InvokeHandlePong(client, newer.seq, LegacyPong(newer.timestamp, Tail.None), sender);
 
             InvokeHandlePong(client, older.seq, V2Pong(older.timestamp, older.incarnation,
@@ -126,31 +145,36 @@ namespace Hapbeat.Tests
                 "ordering is enforced across both classes");
         }
 
-        [TestCase(0, TestName = "Hbs2TailWithWrongLength_IsIgnored")]
-        [TestCase(1, TestName = "Hbs2TailWithWrongVersion_IsIgnored")]
-        [TestCase(2, TestName = "Hbs2TailWithNonzeroReserved_IsIgnored")]
-        [TestCase(3, TestName = "Hbs2TailWithUnknownFlag_IsIgnored")]
-        public void MalformedHbs2Tail_ChangesNeitherClassNorLease(int defect)
+        // 1.x rule: fewer than 32 bytes, another extension_version, or bytes not starting
+        // with HBS2 after volume_wiper are ignored (no class or lease change).
+        [TestCase(0, TestName = "Hbs2TailOf31Bytes_IsIgnored")]
+        [TestCase(1, TestName = "Hbs2TailWithExtensionVersion2_IsIgnored")]
+        [TestCase(2, TestName = "NonHbs2BytesAfterVolumeWiper_AreIgnored")]
+        [TestCase(3, TestName = "TruncatedHbs2Marker_IsIgnored")]
+        public void IgnoredTail_ChangesNeitherClassNorLease(int defect)
         {
-            // Unknown endpoint: stays unknown (deferred), NOT legacy.
+            // Unknown endpoint: stays unknown (deferred), NOT Gen 1.
             using (var client = new HapbeatClient())
             {
                 var sender = Endpoint("192.0.2.35");
-                var ping = SendPing(client);
-                InvokeHandlePong(client, ping.seq, MalformedPong(ping.timestamp, ping.incarnation, defect), sender);
+                var ping = SendPing(client, sender);
+                LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("unknown stream tail"));
+                InvokeHandlePong(client, ping.seq, IgnoredPong(ping.timestamp, ping.incarnation, defect), sender);
                 Assert.IsEmpty(client.GetResolvedStreamEndpoints(Address));
                 Assert.IsFalse(client.IsLegacyStreamEndpoint(sender.Address));
+                Assert.AreEqual(HapbeatStreamPlaybackDeferReason.UnknownClass, client.GetStreamDeferReason(Address));
             }
 
-            // Established v2 endpoint: keeps its lease.
+            // Established Gen 2 endpoint: keeps its lease.
             using (var client = new HapbeatClient())
             {
                 var sender = Endpoint("192.0.2.36");
                 var lease = new HapbeatProtocol.StreamLeaseIdentity(0x54, 8);
-                var ping = SendPing(client);
+                var ping = SendPing(client, sender);
                 InvokeHandlePong(client, ping.seq, V2Pong(ping.timestamp, ping.incarnation, lease), sender);
-                var next = SendPingAfter(client, ping.timestamp);
-                InvokeHandlePong(client, next.seq, MalformedPong(next.timestamp, next.incarnation, defect), sender);
+                var next = SendPingAfter(client, sender, ping.timestamp);
+                LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("unknown stream tail"));
+                InvokeHandlePong(client, next.seq, IgnoredPong(next.timestamp, next.incarnation, defect), sender);
 
                 var resolved = client.GetResolvedStreamEndpoints(Address);
                 Assert.AreEqual(1, resolved.Count);
@@ -158,30 +182,84 @@ namespace Hapbeat.Tests
                 Assert.AreEqual(lease, resolved[0].Lease);
             }
 
-            // Established legacy endpoint: stays legacy.
+            // Established Gen 1 endpoint: stays Gen 1.
             using (var client = new HapbeatClient())
             {
                 var sender = Endpoint("192.0.2.37");
-                var ping = SendPing(client);
+                var ping = SendPing(client, sender);
                 InvokeHandlePong(client, ping.seq, LegacyPong(ping.timestamp, Tail.None), sender);
-                var next = SendPingAfter(client, ping.timestamp);
-                InvokeHandlePong(client, next.seq, MalformedPong(next.timestamp, next.incarnation, defect), sender);
+                var next = SendPingAfter(client, sender, ping.timestamp);
+                LogAssert.Expect(LogType.Warning, new System.Text.RegularExpressions.Regex("unknown stream tail"));
+                InvokeHandlePong(client, next.seq, IgnoredPong(next.timestamp, next.incarnation, defect), sender);
                 Assert.IsTrue(client.IsLegacyStreamEndpoint(sender.Address));
             }
         }
 
         [Test]
-        public void LegacyToV2_AndBack_FollowsLatestMatchedReply()
+        public void IgnoredTail_WarnsOncePerEndpoint_AndOnlyForMatchedReplies()
+        {
+            using var client = new HapbeatClient();
+            var sender = Endpoint("192.0.2.42");
+            int warnings = 0;
+            Application.LogCallback count = (message, _, type) =>
+            {
+                if (type == LogType.Warning && message.Contains("unknown stream tail")) warnings++;
+            };
+            Application.logMessageReceived += count;
+            try
+            {
+                // An unmatched reply (no pending request) does not warn.
+                InvokeHandlePong(client, 999, IgnoredPong(12345, 1, 1), sender);
+                Assert.AreEqual(0, warnings);
+
+                var first = SendPing(client, sender);
+                InvokeHandlePong(client, first.seq, IgnoredPong(first.timestamp, first.incarnation, 1), sender);
+                var second = SendPingAfter(client, sender, first.timestamp);
+                InvokeHandlePong(client, second.seq, IgnoredPong(second.timestamp, second.incarnation, 1), sender);
+                Assert.AreEqual(1, warnings, "warn once per endpoint");
+            }
+            finally
+            {
+                Application.logMessageReceived -= count;
+            }
+        }
+
+        // Fields a later major may use inside the first 32 bytes, or append after them,
+        // are ignored: the tail still classifies Gen 2.
+        [TestCase(0, TestName = "Hbs2TailOf40Bytes_ClassifiesGen2")]
+        [TestCase(1, TestName = "Hbs2TailWithNonzeroReserved_ClassifiesGen2")]
+        [TestCase(2, TestName = "Hbs2TailWithUnknownFlagBit3_ClassifiesGen2")]
+        public void FutureFormTail_ClassifiesGen2(int form)
+        {
+            using var client = new HapbeatClient();
+            var sender = Endpoint("192.0.2.43");
+            var lease = new HapbeatProtocol.StreamLeaseIdentity(0x57, 9);
+            var ping = SendPing(client, sender);
+            var payload = new List<byte>(V2Pong(ping.timestamp, ping.incarnation, lease));
+            int tail = payload.Count - 32;
+            if (form == 0) payload.AddRange(new byte[] { 0, 1, 2, 3, 4, 5, 6, 7 });
+            else if (form == 1) payload[tail + 6] = 1;
+            else payload[tail + 5] |= 0x08;
+            InvokeHandlePong(client, ping.seq, payload.ToArray(), sender);
+
+            var resolved = client.GetResolvedStreamEndpoints(Address);
+            Assert.AreEqual(1, resolved.Count);
+            Assert.AreEqual(StreamEndpointMode.V2, resolved[0].Mode);
+            Assert.AreEqual(lease, resolved[0].Lease);
+        }
+
+        [Test]
+        public void Gen1ToGen2_AndBack_FollowsLatestMatchedReply()
         {
             using var client = new HapbeatClient();
             var sender = Endpoint("192.0.2.38");
-            var first = SendPing(client);
+            var first = SendPing(client, sender);
             InvokeHandlePong(client, first.seq, LegacyPong(first.timestamp, Tail.None), sender);
             Assert.AreEqual(StreamEndpointMode.Legacy, client.GetResolvedStreamEndpoints(Address)[0].Mode);
 
-            // Firmware update: a matched valid HBS2 reply clears the legacy class.
+            // Firmware update: a matched valid HBS2 reply clears the Gen 1 class.
             var lease = new HapbeatProtocol.StreamLeaseIdentity(0x55, 9);
-            var second = SendPingAfter(client, first.timestamp);
+            var second = SendPingAfter(client, sender, first.timestamp);
             InvokeHandlePong(client, second.seq, V2Pong(second.timestamp, second.incarnation, lease), sender);
             var v2 = client.GetResolvedStreamEndpoints(Address);
             Assert.AreEqual(1, v2.Count);
@@ -189,8 +267,8 @@ namespace Hapbeat.Tests
             Assert.AreEqual(lease, v2[0].Lease);
             Assert.IsFalse(client.IsLegacyStreamEndpoint(sender.Address));
 
-            // Rollback: a matched tailless reply clears the v2 lease.
-            var third = SendPingAfter(client, second.timestamp);
+            // Rollback: a matched tailless reply clears the Gen 2 lease.
+            var third = SendPingAfter(client, sender, second.timestamp);
             InvokeHandlePong(client, third.seq, LegacyPong(third.timestamp, Tail.None), sender);
             var legacy = client.GetResolvedStreamEndpoints(Address);
             Assert.AreEqual(1, legacy.Count);
@@ -199,43 +277,47 @@ namespace Hapbeat.Tests
         }
 
         [Test]
-        public void V2DeferredLease_NeverFallsBackToLegacy()
+        public void Gen2DeferredLease_NeverFallsBackToGen1()
         {
             using var client = new HapbeatClient();
             var sender = Endpoint("192.0.2.39");
-            var ping = SendPing(client);
+            var ping = SendPing(client, sender);
             InvokeHandlePong(client, ping.seq, V2Pong(ping.timestamp, ping.incarnation,
                 new HapbeatProtocol.StreamLeaseIdentity(0x56, 0), leaseValid: false), sender);
             Assert.IsEmpty(client.GetResolvedStreamEndpoints(Address), "lease_valid=0 defers");
             Assert.IsFalse(client.IsLegacyStreamEndpoint(sender.Address));
+            Assert.AreEqual(HapbeatStreamPlaybackDeferReason.LeaseUnavailable, client.GetStreamDeferReason(Address));
         }
 
         [Test]
-        public void ExplicitReacquire_KeepsLegacyClassification()
+        public void ExplicitReacquire_KeepsGen1Classification()
         {
             using var client = new HapbeatClient();
             var sender = Endpoint("192.0.2.40");
-            var ping = SendPing(client);
+            var ping = SendPing(client, sender);
             InvokeHandlePong(client, ping.seq, LegacyPong(ping.timestamp, Tail.None), sender);
 
             client.ReacquireStreamLeases();
 
             var resolved = client.GetResolvedStreamEndpoints(Address);
             Assert.AreEqual(1, resolved.Count,
-                "legacy firmware has no lease; focus/reacquire must not interrupt its stream");
+                "Gen 1 firmware has no lease; focus/reacquire must not interrupt its stream");
             Assert.AreEqual(StreamEndpointMode.Legacy, resolved[0].Mode);
         }
 
         [Test]
-        public void MalformedHbs2Tail_ParsesAsMalformedNotAbsent()
+        public void TailParse_DistinguishesAbsentIgnoredAndValid()
         {
             var ping = (seq: (ushort)1, timestamp: 42L, incarnation: 7UL);
-            var info = HapbeatProtocol.ParsePongExtendedInfo(MalformedPong(ping.timestamp, ping.incarnation, 0));
-            Assert.AreEqual(HapbeatProtocol.StreamLeaseTailStatus.Malformed, info.StreamLease.Status);
+            var info = HapbeatProtocol.ParsePongExtendedInfo(IgnoredPong(ping.timestamp, ping.incarnation, 0));
+            Assert.AreEqual(HapbeatProtocol.StreamLeaseTailStatus.Ignored, info.StreamLease.Status);
             Assert.IsFalse(info.StreamLease.IsPresent);
             Assert.AreEqual(Address, info.Address, "ordinary fields still parse");
 
-            var legacy = HapbeatProtocol.ParsePongExtendedInfo(LegacyPong(42, Tail.OtherBytes));
+            var other = HapbeatProtocol.ParsePongExtendedInfo(LegacyPong(42, Tail.OtherBytes));
+            Assert.AreEqual(HapbeatProtocol.StreamLeaseTailStatus.Ignored, other.StreamLease.Status,
+                "1.x: bytes that do not start with HBS2 are not Gen 1");
+            var legacy = HapbeatProtocol.ParsePongExtendedInfo(LegacyPong(42, Tail.None));
             Assert.AreEqual(HapbeatProtocol.StreamLeaseTailStatus.Absent, legacy.StreamLease.Status);
             var valid = HapbeatProtocol.ParsePongExtendedInfo(V2Pong(42, 7, new HapbeatProtocol.StreamLeaseIdentity(1, 1)));
             Assert.AreEqual(HapbeatProtocol.StreamLeaseTailStatus.Valid, valid.StreamLease.Status);
@@ -251,29 +333,31 @@ namespace Hapbeat.Tests
             HandlePongMethod.Invoke(client, new object[] { seq, payload, sender });
         }
 
-        private static (ushort seq, long timestamp, ulong incarnation) SendPing(HapbeatClient client)
+        /// <summary>A pending unicast extended PING to <paramref name="to"/> (nothing is sent: unopened client).</summary>
+        internal static (ushort seq, long timestamp, ulong incarnation) SendPing(HapbeatClient client, IPEndPoint to)
         {
-            ushort seq = client.SendPing();
+            ushort seq = client.SendLeasePingTo(to);
             Assert.IsTrue(client.TryGetPendingPing(seq, out long timestamp, out ulong incarnation));
             return (seq, timestamp, incarnation);
         }
 
-        private static (ushort seq, long timestamp, ulong incarnation) SendPingAfter(HapbeatClient client, long after)
+        internal static (ushort seq, long timestamp, ulong incarnation) SendPingAfter(HapbeatClient client,
+            IPEndPoint to, long after)
         {
             (ushort seq, long timestamp, ulong incarnation) pending;
-            do pending = SendPing(client);
+            do pending = SendPing(client, to);
             while (pending.timestamp <= after);
             return pending;
         }
 
-        private static List<byte> OrdinaryFields(long timestamp, bool withVolume)
+        private static List<byte> OrdinaryFields(long timestamp, bool withVolume, string firmware = "0.1.0")
         {
             var payload = new List<byte>();
             AppendUInt64(payload, unchecked((ulong)timestamp));
             AppendUInt64(payload, 2);
             AppendCString(payload, "test-device");
             AppendCString(payload, Address);
-            AppendCString(payload, "0.1.0");
+            AppendCString(payload, firmware);
             if (withVolume)
             {
                 payload.Add(0); // volume_level
@@ -290,20 +374,27 @@ namespace Hapbeat.Tests
         }
 
         internal static byte[] V2Pong(long timestamp, ulong incarnation,
-            HapbeatProtocol.StreamLeaseIdentity lease, bool leaseValid = true, bool superseded = false)
+            HapbeatProtocol.StreamLeaseIdentity lease, bool leaseValid = true, bool superseded = false,
+            bool reissued = false, uint highWaterTicket = 0, string firmware = "0.1.0")
         {
-            var payload = OrdinaryFields(timestamp, true);
+            var payload = OrdinaryFields(timestamp, true, firmware);
             payload.AddRange(new byte[] { (byte)'H', (byte)'B', (byte)'S', (byte)'2', 1,
-                (byte)((leaseValid ? 1 : 0) | (superseded ? 2 : 0)), 0, 0 });
+                (byte)((leaseValid ? 1 : 0) | (superseded ? 2 : 0) | (reissued ? 4 : 0)), 0, 0 });
             AppendUInt64(payload, incarnation);
             AppendUInt64(payload, lease.DeviceBootId);
             AppendUInt32(payload, lease.LeaseTicket);
-            AppendUInt32(payload, 0);
+            AppendUInt32(payload, highWaterTicket);
             return payload.ToArray();
         }
 
-        private static byte[] MalformedPong(long timestamp, ulong incarnation, int defect)
+        private static byte[] IgnoredPong(long timestamp, ulong incarnation, int defect)
         {
+            if (defect == 3)
+            {
+                var truncated = OrdinaryFields(timestamp, true);
+                truncated.AddRange(new byte[] { (byte)'H', (byte)'B', (byte)'S' });
+                return truncated.ToArray();
+            }
             var payload = new List<byte>(V2Pong(timestamp, incarnation,
                 new HapbeatProtocol.StreamLeaseIdentity(0x99, 3)));
             int tail = payload.Count - 32;
@@ -311,8 +402,7 @@ namespace Hapbeat.Tests
             {
                 case 0: payload.RemoveAt(payload.Count - 1); break; // 31 bytes
                 case 1: payload[tail + 4] = 2; break;               // extension_version
-                case 2: payload[tail + 6] = 1; break;               // reserved
-                default: payload[tail + 5] |= 0x04; break;          // undefined flag bit
+                default: payload[tail] = (byte)'X'; break;          // not HBS2
             }
             return payload.ToArray();
         }

@@ -36,9 +36,9 @@ namespace Hapbeat
     }
 
     /// <summary>
-    /// Pre-v2 stream packets for endpoints classified <see cref="StreamEndpointMode.Legacy"/>
-    /// (stream-session-v2.md "Legacy receiver fallback"). Separate from the v2 sink so
-    /// v2-only sinks keep compiling; a sink without it leaves legacy endpoints unresolved.
+    /// Stream Gen 1 packets for endpoints classified <see cref="StreamEndpointMode.Legacy"/>
+    /// (stream-session.md "Legacy receiver fallback"). Separate from the Gen 2 sink so
+    /// Gen 2-only sinks keep compiling; a sink without it leaves Gen 1 endpoints unresolved.
     /// </summary>
     internal interface IHapbeatLegacyEndpointStreamPacketSink
     {
@@ -61,16 +61,21 @@ namespace Hapbeat
         private const byte OutputChannels = 2;
         private const float ChunkSeconds = 0.01f;
         private const double EmptySessionLingerSeconds = 0.3;
-        // Pre-v2 firmware cannot reject an old END, so a legacy endpoint keeps the
-        // pre-v2 END->BEGIN guard. v2 endpoints have no cooldown (identity protects).
+        // Stream Gen 1 firmware cannot reject an old END, so a Gen 1 endpoint keeps the
+        // END->BEGIN guard. Gen 2 endpoints have no cooldown (identity protects).
         private const double LegacyEndToBeginCooldownSeconds = 0.3;
-        // A lost v2 BEGIN silences its whole session: firmware accepts DATA only for
+        // A lost Gen 2 BEGIN silences its whole session: firmware accepts DATA only for
         // the active tuple. An identical BEGIN is idempotent on the receiver (equal
-        // tuple is ignored without a decoder/buffer reset, stream-session-v2.md
-        // "Receiver ordering"), so v2 sessions repeat it before the first DATA blocks
-        // and then periodically. Legacy firmware restarts on every BEGIN: no repeat.
+        // tuple is ignored without a decoder/buffer reset, stream-session.md
+        // "Receiver ordering"), so Gen 2 sessions repeat it before the first DATA blocks
+        // and then at least every 500 ms (Sender requirements 2). Gen 1 firmware
+        // restarts on every BEGIN: no repeat.
         private const int BeginRepeatInitialBlocks = 3;
         private const int BeginRepeatIntervalBlocks = 50; // 500 ms of 10 ms blocks
+        // Sender requirements 3: after 3 s or more without DATA (the process was
+        // suspended, a debugger break, sleep) the receiver may have timed the session
+        // out (5 s), so the session ENDs and BEGINs a new generation before more DATA.
+        internal const double OwnGapSeconds = 3.0;
         // Re-splice (DEC-093): a source due inside blocks already sent ahead would play late by up to the send-ahead
         // (it joins behind the queued data). When the device holds more than its BEGIN flush threshold (512 frames =
         // 32 ms; this margin covers packets in flight), the session restarts under a new generation from the source's
@@ -109,6 +114,10 @@ namespace Hapbeat
             public readonly HapbeatStreamPlayback Playback;
             // Mixer-clock time (s) its first frame is due on the stream timeline (Add time + its start delay).
             public double StartSec;
+            // Devices (by IP, so an address change keeps it) whose session STOP_ALL ended
+            // while this source played there (ERROR STREAM_STOPPED, sdk-multi-stream.md
+            // §6.13): this Playback never rejoins them.
+            public readonly HashSet<IPAddress> RemovedDevices = new HashSet<IPAddress>();
 
             public Source(AudioClip clip, HapbeatStreamPlayback playback, string target)
             {
@@ -138,9 +147,16 @@ namespace Hapbeat
             public string Address;
             public string WireTarget;
             public readonly HapbeatProtocol.StreamLeaseIdentity Lease;
-            // Replaced by a re-splice (a new generation on the same lease).
+            // Replaced by a new generation on the same lease (re-splice, own gap,
+            // STREAM_TIMED_OUT / STREAM_LEASE_INVALID); the replaced one is kept so an
+            // ERROR about it still matches this session.
             public HapbeatProtocol.StreamSessionIdentity Identity;
+            public HapbeatProtocol.StreamSessionIdentity PreviousIdentity;
             public readonly StreamEndpointMode Mode;
+            // CAPS haptic_channels == 1: one motor, so pan is not applied (§6.15).
+            public bool MonoOutput;
+            // Mixer-clock time (s) the last DATA block was sent (own-gap rule).
+            public double LastDataSec;
             // Mixer-clock time (s) the next block this session sends is due: block k plays about the network latency
             // after its due time. Kept at "now" while the session sends nothing, so resuming never sends old silence.
             public double DueSec = double.NegativeInfinity;
@@ -201,6 +217,7 @@ namespace Hapbeat
         private bool _loggedLegacySinkUnsupported;
         private readonly Func<string, List<HapbeatClient.StreamEndpoint>> _resolveEndpoints;
         private readonly Func<string, string> _resolveEffectiveTarget;
+        private readonly Func<string, HapbeatStreamPlaybackDeferReason> _resolveDeferReason;
         private readonly Func<IPEndPoint, HapbeatProtocol.StreamLeaseIdentity,
             HapbeatProtocol.StreamSessionIdentity> _allocateSessionIdentity;
         private readonly Func<float> _getSendAheadSeconds;
@@ -221,7 +238,9 @@ namespace Hapbeat
         private Thread _thread;
         // The stream timeline: source start times and session due times are seconds on this clock.
         private readonly Stopwatch _clock = Stopwatch.StartNew();
-        private double Now => _clock.Elapsed.TotalSeconds;
+        // Added to the clock by tests that simulate a stalled sender (AdvanceClockForTest).
+        private long _clockOffsetTicks;
+        private double Now => (_clock.ElapsedTicks + Interlocked.Read(ref _clockOffsetTicks)) / (double)Stopwatch.Frequency;
         // Set by a re-splice so the scheduler sends the re-mixed blocks without waiting out its sleep.
         private volatile bool _wakeRequested;
         private volatile bool _stopRequested;
@@ -244,6 +263,13 @@ namespace Hapbeat
             _legacySink = clientSink;
             _resolveEndpoints = resolveEndpoints;
             _resolveEffectiveTarget = resolveEffectiveTarget ?? throw new ArgumentNullException(nameof(resolveEffectiveTarget));
+            _resolveDeferReason = target =>
+            {
+                HapbeatClient client = getClient();
+                return client != null
+                    ? client.GetStreamDeferReason(target)
+                    : HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint;
+            };
             _allocateSessionIdentity = (endpoint, lease) =>
             {
                 HapbeatClient client = getClient();
@@ -262,12 +288,14 @@ namespace Hapbeat
             Func<string, List<HapbeatClient.StreamEndpoint>> resolveEndpoints,
             Func<float> getSendAheadSeconds, Action<string> log,
             Action beforeNaturalFinalize = null, Action beforeStopFinalize = null,
-            Func<string, string> resolveEffectiveTarget = null)
+            Func<string, string> resolveEffectiveTarget = null,
+            Func<string, HapbeatStreamPlaybackDeferReason> resolveDeferReason = null)
         {
             _sink = sink;
             _legacySink = sink as IHapbeatLegacyEndpointStreamPacketSink;
             _resolveEndpoints = resolveEndpoints;
             _resolveEffectiveTarget = resolveEffectiveTarget ?? (target => target);
+            _resolveDeferReason = resolveDeferReason ?? (_ => HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint);
             _allocateSessionIdentity = null;
             _getSendAheadSeconds = getSendAheadSeconds;
             _sendAheadSeconds = Math.Max(0.01f, getSendAheadSeconds());
@@ -364,11 +392,12 @@ namespace Hapbeat
 
         /// <summary>
         /// Puts <paramref name="source"/> at its start on every session that already sent the blocks it falls in
-        /// (see <see cref="RespliceMinQueuedSeconds"/>): the other sources' cursors go back to that block, the session
-        /// ENDs its generation and BEGINs a new one, and the scheduler re-sends from there at once. Sessions that did
-        /// not send that far, legacy sessions (no generations), or a queue too short to be flushed are left alone
-        /// (the source then joins at the next unsent block). A one-shot that finished inside the re-sent blocks has
-        /// already been removed: its last few ms are not sent again.
+        /// (sdk-multi-stream.md §6.14, see <see cref="RespliceMinQueuedSeconds"/>): the other sources' cursors go back
+        /// to that block, the session ENDs its generation and BEGINs a new one, and the scheduler re-sends from there
+        /// at once. Sessions that did not send that far, Stream Gen 1 sessions (no generations), or less than the
+        /// minimum sent after the source's start (too short to be flushed) are left alone (the source then joins at
+        /// the next unsent block). A one-shot that finished inside the re-sent blocks has already been removed: its
+        /// last few ms are not sent again.
         /// </summary>
         private void RespliceLocked(Source source)
         {
@@ -378,7 +407,7 @@ namespace Hapbeat
                 if (!session.MatchingSources.Contains(source) || !session.BeginSent || session.EndSent ||
                     session.Mode != StreamEndpointMode.V2 || session.DataBlocksSent == 0) continue;
                 if (source.StartSec >= session.DueSec - ChunkSeconds * 0.5) continue;
-                if (session.DueSec - now < RespliceMinQueuedSeconds) continue;
+                if (session.DueSec - Math.Max(now, source.StartSec) < RespliceMinQueuedSeconds) continue;
                 int blocks = (int)Math.Round((session.DueSec - Math.Max(now, source.StartSec)) / ChunkSeconds);
                 if (blocks <= 0) continue;
                 HapbeatProtocol.StreamSessionIdentity next = AllocateSessionIdentity(session.Endpoint, session.Lease);
@@ -401,15 +430,139 @@ namespace Hapbeat
                 // The new source enters at its start (never part way into it).
                 session.Positions[source] = Math.Min(0, (from - source.StartSec) * source.SampleRate);
 
-                _sink.End(session.Endpoint, session.Identity);
-                session.Identity = next;
-                session.ByteOffset = 0;
-                session.DataBlocksSent = 0;
-                SendBegin(session);
+                ReplaceGenerationLocked(session, next);
                 session.DueSec = from;
                 _wakeRequested = true;
             }
         }
+
+        /// <summary>
+        /// ENDs <paramref name="session"/>'s generation and BEGINs <paramref name="next"/> on the same lease and
+        /// endpoint. Source cursors, gains and the limiter stay as they are, so every source continues where it was
+        /// (Sender requirements 8).
+        /// </summary>
+        private void ReplaceGenerationLocked(Session session, HapbeatProtocol.StreamSessionIdentity next)
+        {
+            _sink.End(session.Endpoint, session.Identity);
+            session.PreviousIdentity = session.Identity;
+            session.Identity = next;
+            session.ByteOffset = 0;
+            session.DataBlocksSent = 0;
+            SendBegin(session);
+        }
+
+        /// <summary>
+        /// Begins a new generation for an open Stream Gen 2 session that still has sources (own gap,
+        /// STREAM_TIMED_OUT, a lease confirmed after STREAM_LEASE_INVALID). Returns false when the session is not
+        /// open, is Stream Gen 1, or its lease has no generation left.
+        /// </summary>
+        private bool RestartGenerationLocked(Session session)
+        {
+            if (session.Mode != StreamEndpointMode.V2 || !session.BeginSent || session.EndSent ||
+                session.MatchingSources.Count == 0) return false;
+            HapbeatProtocol.StreamSessionIdentity next = AllocateSessionIdentity(session.Endpoint, session.Lease);
+            if (session.Lease.IsValid && !next.IsValid) return false;
+            ReplaceGenerationLocked(session, next);
+            _wakeRequested = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Applies an accepted stream ERROR from <paramref name="endpoint"/> (stream-session.md Sender requirements 5)
+        /// to the Stream Gen 2 session there whose current or previous identity is <paramref name="identity"/>.
+        /// Other endpoints are not affected. Called on the main thread.
+        /// </summary>
+        internal void HandleStreamError(IPEndPoint endpoint, ushort code, HapbeatProtocol.StreamSessionIdentity identity)
+        {
+            if (endpoint == null) return;
+            lock (_lock)
+            {
+                if (_disposed) return;
+                Session session = null;
+                bool current = false;
+                foreach (Session candidate in _sessions.Values)
+                {
+                    if (candidate.Mode != StreamEndpointMode.V2 || !candidate.Endpoint.Address.Equals(endpoint.Address))
+                        continue;
+                    if (SameSession(candidate.Identity, identity)) { session = candidate; current = true; break; }
+                    if (SameSession(candidate.PreviousIdentity, identity)) session = candidate;
+                }
+                if (session == null) return;
+
+                switch (code)
+                {
+                    case HapbeatProtocol.ERROR_STREAM_NOT_STARTED:
+                        // Its BEGIN was lost: resend the same BEGIN now.
+                        if (current && session.BeginSent && !session.EndSent) SendBegin(session);
+                        break;
+                    case HapbeatProtocol.ERROR_STREAM_TIMED_OUT:
+                        if (current) RestartGenerationLocked(session);
+                        break;
+                    case HapbeatProtocol.ERROR_STREAM_STOPPED:
+                        RemoveSourcesFromDeviceLocked(session);
+                        break;
+                    case HapbeatProtocol.ERROR_STREAM_ENDED:
+                        _log($"Stream ERROR STREAM_ENDED from {endpoint} ({identity}): DATA after END (a sender bug).");
+                        break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// STREAM_STOPPED (sdk-multi-stream.md §6.13): STOP_ALL ended this device's session, so every source in it
+        /// leaves that device for good; its other devices keep playing. A source left with no device is finished.
+        /// </summary>
+        private void RemoveSourcesFromDeviceLocked(Session session)
+        {
+            if (session.MatchingSources.Count == 0) return;
+            IPAddress device = session.Endpoint.Address;
+            foreach (Source source in session.MatchingSources) source.RemovedDevices.Add(device);
+            RebuildSessionMembershipLocked(Stopwatch.GetTimestamp());
+            if (RemoveCompletedSourcesLocked()) ReconcileEndpointsLocked();
+            UpdatePlaybackStatesLocked();
+            StartThreadLocked();
+        }
+
+        /// <summary>
+        /// A matched reply confirmed the lease STREAM_LEASE_INVALID questioned: the session on
+        /// <paramref name="endpoint"/> begins a new generation (Sender requirements 5). Called on the main thread.
+        /// </summary>
+        internal void RestartSessionGeneration(IPEndPoint endpoint)
+        {
+            if (endpoint == null) return;
+            lock (_lock)
+            {
+                if (_disposed) return;
+                foreach (Session session in _sessions.Values)
+                {
+                    if (session.Endpoint.Address.Equals(endpoint.Address) && RestartGenerationLocked(session))
+                        break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds the effective target of every Deferred or Active source to <paramref name="targets"/>: the devices
+        /// the SDK streams to or expects to stream to, which keep a stream lease.
+        /// </summary>
+        internal void CollectStreamTargets(List<string> targets)
+        {
+            lock (_lock)
+            {
+                for (int i = 0; i < _sources.Count; i++)
+                    if (!_sources[i].Playback.IsStopped) targets.Add(_sources[i].EffectiveTarget);
+            }
+        }
+
+        /// <summary>Simulates a sender that could not run for <paramref name="seconds"/> (tests).</summary>
+        internal void AdvanceClockForTest(double seconds)
+        {
+            // Between scheduler passes, so no block is half-timed on either side of the jump.
+            lock (_lock) Interlocked.Add(ref _clockOffsetTicks, (long)(seconds * Stopwatch.Frequency));
+        }
+
+        private static bool SameSession(HapbeatProtocol.StreamSessionIdentity a, HapbeatProtocol.StreamSessionIdentity b) =>
+            a.Generation != 0 && a.Lease.Equals(b.Lease) && a.Generation == b.Generation;
 
         /// <summary>Called after PONG callbacks have been dispatched on Unity's main thread.</summary>
         public void ReconcileEndpoints()
@@ -500,7 +653,7 @@ namespace Hapbeat
                         if (!_loggedLegacySinkUnsupported)
                         {
                             _loggedLegacySinkUnsupported = true;
-                            _log("Stream sink has no legacy (pre-v2) support; legacy endpoints stay unresolved.");
+                            _log("Stream sink has no Stream Gen 1 support; Gen 1 endpoints stay unresolved.");
                         }
                         continue;
                     }
@@ -523,7 +676,11 @@ namespace Hapbeat
                     exact.Resolved = true;
                     exact.Endpoint = wanted[key].EndPoint;
                     exact.Address = wanted[key].Address;
-                    if (!exact.BeginSent) exact.WireTarget = exact.Address;
+                    exact.MonoOutput = wanted[key].HapticChannels == 1;
+                    // A Gen 2 session repeats its BEGIN, which must carry the address the
+                    // device reports now (else STREAM_TARGET_MISMATCH); the same tuple is
+                    // still idempotent on the receiver.
+                    if (!exact.BeginSent || exact.Mode == StreamEndpointMode.V2) exact.WireTarget = exact.Address;
                     unassignedSessions.Remove(exact);
                 }
                 else remainingWanted.Add(key);
@@ -561,9 +718,12 @@ namespace Hapbeat
                 migration.Endpoint = endpoint.EndPoint;
                 migration.Key = key;
                 migration.Address = endpoint.Address;
-                // An unbegun session (e.g. held by the legacy guard) must BEGIN with
-                // the address the device reports now, or firmware rejects the BEGIN.
-                if (!migration.BeginSent) migration.WireTarget = endpoint.Address;
+                migration.MonoOutput = endpoint.HapticChannels == 1;
+                // An unbegun session (e.g. held by the Gen 1 guard) and every repeated
+                // Gen 2 BEGIN must carry the address the device reports now, or
+                // firmware rejects the BEGIN.
+                if (!migration.BeginSent || migration.Mode == StreamEndpointMode.V2)
+                    migration.WireTarget = endpoint.Address;
                 migration.Resolved = true;
                 migration.EmptySinceTicks = 0;
                 _sessions.Add(key, migration);
@@ -577,7 +737,7 @@ namespace Hapbeat
             // A device reboot or lease renewal changes its transport identity. End
             // the retired session with the identity it began under before a new
             // session starts; never migrate an old END onto the new token. A class
-            // change (legacy<->v2 after a firmware update/rollback) likewise ENDs the
+            // change (Gen 1<->Gen 2 after a firmware update/rollback) likewise ENDs the
             // retired session immediately in its OLD format, without the idle linger.
             for (int s = unassignedSessions.Count - 1; s >= 0; s--)
             {
@@ -608,7 +768,7 @@ namespace Hapbeat
                 // STREAM_DATA has no target. Even though this is an explicit direct
                 // endpoint, BEGIN must carry the PONG-resolved address so firmware
                 // rejects it if that IP was reassigned before the next PONG refresh.
-                // Legacy sessions carry no identity: pre-v2 firmware has no lease.
+                // Gen 1 sessions carry no identity: Stream Gen 1 firmware has no lease.
                 HapbeatProtocol.StreamSessionIdentity identity =
                     endpoint.Mode == StreamEndpointMode.Legacy
                         ? default
@@ -620,6 +780,7 @@ namespace Hapbeat
                 var session = new Session(endpoint.EndPoint, key, endpoint.Address, endpoint.Address,
                     endpoint.Lease, identity, endpoint.Mode);
                 session.Resolved = true;
+                session.MonoOutput = endpoint.HapticChannels == 1;
                 // Only the identity is new: the same device continues every source
                 // from where its previous session left it (no restart from frame 0).
                 CarryCursorsLocked(session, retiredSessions);
@@ -638,14 +799,18 @@ namespace Hapbeat
                 bool matched = false;
                 foreach (var session in _sessions.Values)
                 {
-                    if (session.BeginSent && !session.EndSent && session.MatchingSources.Contains(source))
+                    // A Gen 1 session waiting out its 300 ms END->BEGIN guard counts as
+                    // playing (sdk-multi-stream.md §3, §6.10).
+                    bool playing = session.BeginSent ? !session.EndSent
+                        : session.Mode == StreamEndpointMode.Legacy && session.Resolved;
+                    if (playing && session.MatchingSources.Contains(source))
                     {
                         matched = true;
                         break;
                     }
                 }
                 if (matched) source.Playback.MarkActive();
-                else source.Playback.MarkDeferred(HapbeatStreamPlaybackDeferReason.NoResolvedEndpoint);
+                else source.Playback.MarkDeferred(_resolveDeferReason(source.EffectiveTarget));
             }
         }
 
@@ -708,6 +873,10 @@ namespace Hapbeat
                         {
                             if (session.BeginSent && !session.EndSent && session.MatchingSources.Count > 0)
                             {
+                                // The receiver may have timed out a generation this thread could not feed.
+                                if (session.Mode == StreamEndpointMode.V2 && session.DataBlocksSent > 0 &&
+                                    clock - session.LastDataSec >= OwnGapSeconds)
+                                    RestartGenerationLocked(session);
                                 if (session.DueSec < clock - ChunkSeconds) session.DueSec = clock;
                                 for (int b = 0; b < MaxBlocksPerPass && session.DueSec < clock + ahead; b++)
                                 {
@@ -820,6 +989,7 @@ namespace Hapbeat
             Interlocked.Add(ref _sentPcmBytes, pcm.Length);
             session.ByteOffset += (uint)pcm.Length;
             session.DataBlocksSent++;
+            session.LastDataSec = Now;
         }
 
         private static void MixSource(Source source, Session session, int frames, float[] mix)
@@ -830,9 +1000,12 @@ namespace Hapbeat
                 position = Math.Min(0, (session.DueSec - source.StartSec) * source.SampleRate);
             double step = source.SampleRate / (double)OutputSampleRate;
             float gain = source.Playback.Gain;
+            // One motor (§6.15): no pan, and both channels carry the source's mono mix,
+            // which is what the receiver's (L+R)/2 plays anyway.
+            bool mono = session.MonoOutput;
             source.Playback.GetStereoChannelGains(out float panL, out float panR);
-            float gainL = gain * panL;
-            float gainR = gain * panR;
+            float gainL = mono ? gain : gain * panL;
+            float gainR = mono ? gain : gain * panR;
             // A new source starts at its own gains (its PCM carries the onset); a changed
             // gain / pan ramps linearly across this block instead of stepping at its edge.
             ChannelGains start = session.Gains.TryGetValue(source, out ChannelGains previous)
@@ -862,6 +1035,7 @@ namespace Hapbeat
                 float fraction = (float)(position - index);
                 float left = LerpSample(source, index, next, 0, fraction);
                 float right = source.Channels == 1 ? left : LerpSample(source, index, next, 1, fraction);
+                if (mono && source.Channels != 1) left = right = (left + right) * 0.5f;
                 int output = frame * OutputChannels;
                 float frameGainL = ramp ? start.Left + stepL * (frame + 1) : gainL;
                 float frameGainR = ramp ? start.Right + stepR * (frame + 1) : gainR;
@@ -937,14 +1111,16 @@ namespace Hapbeat
             for (int i = _sources.Count - 1; i >= 0; i--)
             {
                 Source source = _sources[i];
-                if (source.Playback.Loop || source.Playback.IsStopped) continue;
+                if (source.Playback.IsStopped) continue;
+                bool loop = source.Playback.Loop;
+                if (loop && source.RemovedDevices.Count == 0) continue;
                 bool matchedAnySession = false;
                 bool completedEverywhere = true;
                 foreach (var session in _sessions.Values)
                 {
                     if (!session.MatchingSources.Contains(source)) continue;
                     matchedAnySession = true;
-                    if (!session.Positions.TryGetValue(source, out double position) ||
+                    if (loop || !session.Positions.TryGetValue(source, out double position) ||
                         position < source.Samples.Length / source.Channels)
                     {
                         completedEverywhere = false;
@@ -953,8 +1129,10 @@ namespace Hapbeat
                 }
                 // A deferred one-shot has no matching endpoint yet. Keep it in the
                 // registry so a later PONG can start it; unrelated endpoint sessions
-                // must not make it look naturally complete.
-                if (matchedAnySession && completedEverywhere)
+                // must not make it look naturally complete. A device that STOP_ALL
+                // removed it from counts as played; a loop removed from every device
+                // it played on is stopped (§6.13).
+                if (matchedAnySession ? completedEverywhere : source.RemovedDevices.Count > 0)
                 {
                     source.Playback.MarkStopped();
                     RemoveSourceLocked(source, i);
@@ -1103,7 +1281,7 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Whether the identical v2 BEGIN is re-sent before DATA block
+        /// Whether the identical Gen 2 BEGIN is re-sent before DATA block
         /// <paramref name="dataBlocksSent"/> (0-based). Block 0 follows the original
         /// BEGIN; blocks 1..<see cref="BeginRepeatInitialBlocks"/>-1 and every
         /// <see cref="BeginRepeatIntervalBlocks"/>-th block are preceded by a repeat.
@@ -1113,7 +1291,7 @@ namespace Hapbeat
             (dataBlocksSent < BeginRepeatInitialBlocks || dataBlocksSent % BeginRepeatIntervalBlocks == 0);
 
         // Keyed by device endpoint, not session key: an address change on the same
-        // device must not skip the guard, since pre-v2 firmware ignores END payloads.
+        // device must not skip the guard, since Stream Gen 1 firmware ignores END payloads.
         private bool LegacyCooldownElapsedLocked(IPEndPoint endpoint, long now)
         {
             if (!_lastLegacyEndTicksByEndpoint.TryGetValue(endpoint.ToString(), out long endedAt)) return true;
@@ -1122,7 +1300,8 @@ namespace Hapbeat
 
         private static bool SessionMatchesSource(Session session, Source source)
         {
-            return HapbeatClient.AddressMatches(source.EffectiveTarget, session.Address);
+            return HapbeatClient.AddressMatches(source.EffectiveTarget, session.Address) &&
+                (source.RemovedDevices.Count == 0 || !source.RemovedDevices.Contains(session.Endpoint.Address));
         }
 
         private void EndAllSessionsLocked()
@@ -1146,7 +1325,7 @@ namespace Hapbeat
             {
                 _legacySink.LegacyEnd(session.Endpoint);
                 // The guard is recorded only on a legacy END and read only for legacy
-                // sessions, so v2 endpoints never inherit it.
+                // sessions, so Gen 2 endpoints never inherit it.
                 _lastLegacyEndTicksByEndpoint[session.Endpoint.ToString()] = Stopwatch.GetTimestamp();
             }
             else

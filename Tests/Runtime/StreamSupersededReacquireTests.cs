@@ -6,8 +6,9 @@ namespace Hapbeat.Tests
 {
     /// <summary>
     /// A superseded lease is never taken back automatically, but an explicit user stream
-    /// start (Editor Test Play) reacquires it. Drives the private PONG handler directly;
-    /// no socket is opened and nothing is sent.
+    /// start (Editor Test Play) reacquires it, and a reply whose ticket the receiver
+    /// re-issued (lease_reissued, stream-session.md "Incarnation and takeover") clears it.
+    /// Drives the private PONG handler directly; no socket is opened and nothing is sent.
     /// </summary>
     public sealed class StreamSupersededReacquireTests
     {
@@ -40,16 +41,54 @@ namespace Hapbeat.Tests
             Assert.AreEqual(1, client.GetResolvedStreamEndpoints(Address).Count);
         }
 
-        private static ulong ReplyWithLease(HapbeatClient client, bool superseded, uint ticket = 2)
+        [Test]
+        public void NewTicketWithoutReissued_KeepsTheSupersededDeferral()
         {
-            ushort seq = client.SendPing();
+            // For example after this application's own lease entry expired: the device
+            // hands out a fresh ticket, but another application may still be present.
+            using var client = new HapbeatClient();
+            ReplyWithLease(client, superseded: true);
+            ReplyWithLease(client, superseded: false, ticket: 9);
+
+            Assert.IsEmpty(client.GetResolvedStreamEndpoints(Address));
+            Assert.AreEqual(HapbeatStreamPlaybackDeferReason.Superseded, client.GetStreamDeferReason(Address));
+            Assert.AreEqual(HapbeatStreamLeaseState.Superseded, client.GetStreamEndpointInfo(Device.Address).LeaseState);
+        }
+
+        [Test]
+        public void ReissuedReply_ClearsTheSupersededDeferral()
+        {
+            using var client = new HapbeatClient();
+            int stateChanges = 0;
+            client.OnStreamEndpointStateChanged += _ => stateChanges++;
+            ReplyWithLease(client, superseded: true);
+            client.DispatchMainThreadCallbacks();
+            stateChanges = 0;
+
+            // A re-issued ticket that is still superseded (or not valid) does not clear it.
+            ReplyWithLease(client, superseded: true, ticket: 9, reissued: true);
+            Assert.IsEmpty(client.GetResolvedStreamEndpoints(Address));
+
+            ReplyWithLease(client, superseded: false, ticket: 10, reissued: true);
+            var resolved = client.GetResolvedStreamEndpoints(Address);
+            Assert.AreEqual(1, resolved.Count, "lease_valid, not superseded and lease_reissued clears the deferral");
+            Assert.AreEqual(10u, resolved[0].Lease.LeaseTicket, "the re-issued ticket is adopted");
+            client.DispatchMainThreadCallbacks();
+            Assert.AreEqual(1, stateChanges, "the endpoint's lease state changed once (Superseded -> Valid)");
+            Assert.AreEqual(HapbeatStreamLeaseState.Valid, client.GetStreamEndpointInfo(Device.Address).LeaseState);
+        }
+
+        private static ulong ReplyWithLease(HapbeatClient client, bool superseded, uint ticket = 2,
+            bool reissued = false)
+        {
+            ushort seq = client.SendLeasePingTo(Device);
             Assert.IsTrue(client.TryGetPendingPing(seq, out long timestamp, out ulong incarnation));
             Assert.IsNotNull(HandlePongMethod);
             HandlePongMethod.Invoke(client, new object[]
             {
                 seq,
                 StreamLegacyClassificationTests.V2Pong(timestamp, incarnation,
-                    new HapbeatProtocol.StreamLeaseIdentity(Lease.DeviceBootId, ticket), true, superseded),
+                    new HapbeatProtocol.StreamLeaseIdentity(Lease.DeviceBootId, ticket), true, superseded, reissued),
                 Device,
             });
             return incarnation;

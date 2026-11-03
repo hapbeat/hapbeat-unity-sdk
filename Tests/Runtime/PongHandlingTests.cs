@@ -20,7 +20,7 @@ namespace Hapbeat.Tests
             const string oldAddress = "player_1/pos_chest/group_1";
             const string newAddress = "player_2/pos_neck/group_2";
 
-            var initial = SendPendingLeasePing(client);
+            var initial = SendPendingLeasePing(client, sender);
             var expectedLease = new HapbeatProtocol.StreamLeaseIdentity(0x0102030405060708UL, 7);
             InvokeHandlePong(client, initial.seq, BuildPongPayload(initial.timestamp, 2, oldAddress,
                 initial.incarnation, expectedLease, 0, leaseValid: true, superseded: false), sender);
@@ -36,7 +36,7 @@ namespace Hapbeat.Tests
                 livenessRttUs = rttUs;
             };
 
-            var pending = SendPendingLeasePing(client);
+            var pending = SendPendingLeasePing(client, sender);
             InvokeHandlePong(client, pending.seq, BuildPongPayload(0, 123456789, newAddress), sender);
             client.DispatchMainThreadCallbacks();
 
@@ -68,8 +68,8 @@ namespace Hapbeat.Tests
             const string oldAddress = "player_1/pos_chest/group_1";
             const string newAddress = "player_2/pos_neck/group_2";
 
-            var oldRequest = SendPendingLeasePing(client);
-            var newRequest = SendPendingLeasePingAfter(client, oldRequest.timestamp);
+            var oldRequest = SendPendingLeasePing(client, sender);
+            var newRequest = SendPendingLeasePingAfter(client, sender, oldRequest.timestamp);
             var newLease = new HapbeatProtocol.StreamLeaseIdentity(0xAABBCCDDEEFF0011UL, 21);
             InvokeHandlePong(client, newRequest.seq, BuildPongPayload(newRequest.timestamp, 2, newAddress,
                 newRequest.incarnation, newLease, 0, leaseValid: true, superseded: false), sender);
@@ -94,21 +94,46 @@ namespace Hapbeat.Tests
         }
 
         [Test]
-        public void OneBroadcastPendingPing_CorrelatesLeasePongsFromMultipleDevices()
+        public void OneDiscoveryBroadcast_CorrelatesPongsFromMultipleDevices_WithoutClassifyingThem()
         {
             using var client = new HapbeatClient();
-            var request = SendPendingLeasePing(client);
-            InvokeHandlePong(client, request.seq, BuildPongPayload(request.timestamp, 2,
-                "player_1/pos_l_arm/group_1", request.incarnation,
-                new HapbeatProtocol.StreamLeaseIdentity(11, 1), 0, true, false),
-                new IPEndPoint(IPAddress.Parse("192.0.2.10"), 7700));
+            var left = new IPEndPoint(IPAddress.Parse("192.0.2.10"), 7700);
+            var right = new IPEndPoint(IPAddress.Parse("192.0.2.11"), 7700);
+            int rttSamples = 0;
+            client.OnPong += (_, __) => rttSamples++;
+            ushort seq = client.SendPing();
+            Assert.IsTrue(client.TryGetPendingPing(seq, out long timestamp, out ulong incarnation));
+            Assert.AreEqual(0UL, incarnation, "the discovery broadcast is the 8-byte PING (no lease request)");
+            InvokeHandlePong(client, seq, BuildPongPayload(timestamp, 2, "player_1/pos_l_arm/group_1"), left);
+            InvokeHandlePong(client, seq, BuildPongPayload(timestamp, 2, "player_1/pos_r_arm/group_1"), right);
+            client.DispatchMainThreadCallbacks();
+
+            Assert.AreEqual(2, rttSamples,
+                "the first PONG to a broadcast PING must not consume the pending correlation");
+            Assert.IsEmpty(client.GetResolvedStreamEndpoints(""),
+                "every firmware answers the 8-byte PING without a tail: that must not classify Gen 1");
+            Assert.IsFalse(client.IsLegacyStreamEndpoint(left.Address));
+        }
+
+        [Test]
+        public void LeaseReply_FromAnotherDevice_IsNotMatchedToAUnicastLeasePing()
+        {
+            using var client = new HapbeatClient();
+            var asked = new IPEndPoint(IPAddress.Parse("192.0.2.10"), 7700);
+            var other = new IPEndPoint(IPAddress.Parse("192.0.2.11"), 7700);
+            var request = SendPendingLeasePing(client, asked);
             InvokeHandlePong(client, request.seq, BuildPongPayload(request.timestamp, 2,
                 "player_1/pos_r_arm/group_1", request.incarnation,
-                new HapbeatProtocol.StreamLeaseIdentity(12, 2), 0, true, false),
-                new IPEndPoint(IPAddress.Parse("192.0.2.11"), 7700));
+                new HapbeatProtocol.StreamLeaseIdentity(12, 2), 0, true, false), other);
+            Assert.IsEmpty(client.GetResolvedStreamEndpoints(""),
+                "an extended PING is unicast: only its destination's reply is matched");
 
-            Assert.AreEqual(2, client.GetResolvedStreamEndpoints("").Count,
-                "the first PONG to a broadcast PING must not consume the pending correlation");
+            InvokeHandlePong(client, request.seq, BuildPongPayload(request.timestamp, 2,
+                "player_1/pos_l_arm/group_1", request.incarnation,
+                new HapbeatProtocol.StreamLeaseIdentity(11, 1), 0, true, false), asked);
+            var resolved = client.GetResolvedStreamEndpoints("");
+            Assert.AreEqual(1, resolved.Count);
+            Assert.AreEqual(asked, resolved[0].EndPoint);
         }
 
         [Test]
@@ -120,8 +145,8 @@ namespace Hapbeat.Tests
             const string address = "player_1/pos_l_arm/group_1";
             var lease = new HapbeatProtocol.StreamLeaseIdentity(51, 12);
 
-            var oldRequest = SendPendingLeasePing(client);
-            var newRequest = SendPendingLeasePingAfter(client, oldRequest.timestamp);
+            var oldRequest = SendPendingLeasePing(client, oldSender);
+            var newRequest = SendPendingLeasePingAfter(client, newSender, oldRequest.timestamp);
             InvokeHandlePong(client, oldRequest.seq, BuildPongPayload(oldRequest.timestamp, 2, address,
                 oldRequest.incarnation, lease, 0, leaseValid: true, superseded: false), oldSender);
             InvokeHandlePong(client, newRequest.seq, BuildPongPayload(newRequest.timestamp, 2, address,
@@ -148,13 +173,13 @@ namespace Hapbeat.Tests
             using var client = new HapbeatClient();
             var sender = new IPEndPoint(IPAddress.Parse("192.0.2.12"), 7700);
             const string address = "player_1/pos_chest/group_1";
-            var superseded = SendPendingLeasePing(client);
+            var superseded = SendPendingLeasePing(client, sender);
             InvokeHandlePong(client, superseded.seq, BuildPongPayload(superseded.timestamp, 2, address,
                 superseded.incarnation, new HapbeatProtocol.StreamLeaseIdentity(21, 7), 8,
                 leaseValid: true, superseded: true), sender);
             Assert.IsEmpty(client.GetResolvedStreamEndpoints(address));
 
-            var periodic = SendPendingLeasePingAfter(client, superseded.timestamp);
+            var periodic = SendPendingLeasePingAfter(client, sender, superseded.timestamp);
             InvokeHandlePong(client, periodic.seq, BuildPongPayload(periodic.timestamp, 2, address,
                 periodic.incarnation, new HapbeatProtocol.StreamLeaseIdentity(21, 7), 8,
                 leaseValid: true, superseded: false), sender);
@@ -162,7 +187,7 @@ namespace Hapbeat.Tests
                 "periodic discovery must not automatically reacquire a superseded lease");
 
             client.ReacquireStreamLeases();
-            var reacquired = SendPendingLeasePing(client);
+            var reacquired = SendPendingLeasePing(client, sender);
             InvokeHandlePong(client, reacquired.seq, BuildPongPayload(reacquired.timestamp, 2, address,
                 reacquired.incarnation, new HapbeatProtocol.StreamLeaseIdentity(22, 9), 0,
                 leaseValid: true, superseded: false), sender);
@@ -176,10 +201,10 @@ namespace Hapbeat.Tests
             var sender = new IPEndPoint(IPAddress.Parse("192.0.2.13"), 7700);
             const string oldAddress = "player_1/pos_chest/group_1";
             const string newAddress = "player_3/pos_back/group_3";
-            var oldRequest = SendPendingLeasePing(client);
+            var oldRequest = SendPendingLeasePing(client, sender);
 
             client.ReacquireStreamLeases();
-            var newRequest = SendPendingLeasePing(client);
+            var newRequest = SendPendingLeasePing(client, sender);
             var newLease = new HapbeatProtocol.StreamLeaseIdentity(31, 10);
             InvokeHandlePong(client, newRequest.seq, BuildPongPayload(newRequest.timestamp, 2, newAddress,
                 newRequest.incarnation, newLease, 0, leaseValid: true, superseded: false), sender);
@@ -202,7 +227,7 @@ namespace Hapbeat.Tests
             var sender = new IPEndPoint(IPAddress.Parse("192.0.2.14"), 7700);
             const string newAddress = "player_4/pos_l_arm/group_4";
             const string oldAddress = "player_1/pos_chest/group_1";
-            var accepted = SendPendingLeasePing(client);
+            var accepted = SendPendingLeasePing(client, sender);
             var validLease = new HapbeatProtocol.StreamLeaseIdentity(41, 11);
             InvokeHandlePong(client, accepted.seq, BuildPongPayload(accepted.timestamp, 2, newAddress,
                 accepted.incarnation, validLease, 0, leaseValid: true, superseded: false), sender);
@@ -270,20 +295,21 @@ namespace Hapbeat.Tests
             });
         }
 
-        private static (ushort seq, long timestamp, ulong incarnation) SendPendingLeasePing(HapbeatClient client)
+        private static (ushort seq, long timestamp, ulong incarnation) SendPendingLeasePing(
+            HapbeatClient client, IPEndPoint to)
         {
-            ushort seq = client.SendPing();
+            ushort seq = client.SendLeasePingTo(to);
             Assert.IsTrue(client.TryGetPendingPing(seq, out long timestamp, out ulong incarnation));
             return (seq, timestamp, incarnation);
         }
 
         private static (ushort seq, long timestamp, ulong incarnation) SendPendingLeasePingAfter(
-            HapbeatClient client, long timestamp)
+            HapbeatClient client, IPEndPoint to, long timestamp)
         {
             (ushort seq, long nextTimestamp, ulong incarnation) pending;
             do
             {
-                pending = SendPendingLeasePing(client);
+                pending = SendPendingLeasePing(client, to);
             }
             while (pending.nextTimestamp <= timestamp);
             return pending;
