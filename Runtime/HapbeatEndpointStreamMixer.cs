@@ -844,7 +844,11 @@ namespace Hapbeat
             {
                 while (!_stopRequested)
                 {
+#if !ENABLE_IL2CPP
+                    // IL2CPP has no implementation of this icall: its body is __builtin_unreachable(), which
+                    // traps on Apple targets (EXC_BREAKPOINT on iOS) and runs unrelated code elsewhere.
                     long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+#endif
                     long mixStarted = Stopwatch.GetTimestamp();
                     double mixStartedSec = Now;
                     _wakeRequested = false;
@@ -894,12 +898,14 @@ namespace Hapbeat
                     }
 
                     long mixTicks = Stopwatch.GetTimestamp() - mixStarted;
-                    long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocationBefore;
                     Interlocked.Increment(ref _mixedChunkCount);
                     if (mixTicks > Stopwatch.Frequency * ChunkSeconds)
                         Interlocked.Increment(ref _deadlineMissCount);
+#if !ENABLE_IL2CPP
+                    long allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocationBefore;
                     if (allocatedBytes > 0)
                         Interlocked.Add(ref _schedulerAllocatedBytes, allocatedBytes);
+#endif
                     UpdateMaximum(ref _maxMixTicks, mixTicks);
 
                     // The next block is due one chunk later; a re-splice wakes the loop early.

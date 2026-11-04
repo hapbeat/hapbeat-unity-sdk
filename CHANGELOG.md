@@ -32,6 +32,9 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 - StreamClip の遅延を一定にした: 別のクリップがストリーム中の端末に新しいクリップを足すと、これまでは先送り分（既定 50 ms）だけ遅れて鳴っていた。先送り済みのブロックに重なるときは、そのセッションを新しい generation で開始し直し、端末に溜まったデータを捨てさせて、新しいクリップの頭から混ぜ直して送る。
 - Trigger の遅延待ちで、StreamClip はコルーチンではなくストリームの時間軸に置く（Command は従来どおりコルーチン）。
 
+### 修正
+- iOS で StreamClip を再生し、機体が見つかるとアプリが `EXC_BREAKPOINT` で落ちる不具合を修正。Mixer のスレッドの診断用の計測に使っていた `GC.GetAllocatedBytesForCurrentThread()` は IL2CPP に実装が無く、Apple 向けのビルドでは停止命令になる。IL2CPP のビルドではこの計測を行わない（`SchedulerAllocatedBytes` は 0 のまま）。
+
 ### 削除
 - `HapbeatConfig.hapticDelaySeconds`: 音の出力遅延は端末ごとに違うため、プロジェクト共通の設定から `HapbeatAvSync.OffsetMs`（端末ごと）へ移した。
 
