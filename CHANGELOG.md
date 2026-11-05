@@ -7,7 +7,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ---
 
-## [Unreleased]
+## [1.0.0] - 2026-11-06
 
 通信の 1.x（DEC-096）に対応。対応する仕様は hapbeat-contracts `46f246e`（1.0 の仕様。release 時に contracts の版に置き換える）。
 
@@ -341,6 +341,7 @@ v0.1.0 以降に蓄積した API 整理・サンプル再編・遅延補正・Ed
 - **Tutorial サンプルを編集していた場合**: 編集内容は `Assets/` 配下にコピー済みのはず。再 import で Showcase が降ってくるが、旧 Tutorial 編集物は上書きされません (UPM の Sample import は新規パスに展開するため)。
 - **古い EventMap entry の参照が外れた場合**: Trigger 側で entry を pick し直してください (`_entryIndex` 廃止のため)。
 
+[1.0.0]: https://github.com/Hapbeat/hapbeat-unity-sdk/releases/tag/v1.0.0
 [0.2.0]: https://github.com/Hapbeat/hapbeat-unity-sdk/releases/tag/v0.2.0
 
 ---
