@@ -3,7 +3,7 @@
 Single self-contained reference so an AI coding agent can use this SDK correctly
 from one file. Unity package id: `com.hapbeat.sdk`. C# namespace: `Hapbeat`.
 
-- last-verified-against: package 1.0.0 (requires Unity `6000.0`+)
+- last-verified-against: package 1.0.1 (requires Unity `6000.0`+)
 - Source of truth is the code: public runtime API in `Runtime/HapbeatManager.cs`,
   the EventMap model in `Runtime/HapbeatEventMap.cs` + `Runtime/HapbeatEventEntry.cs`,
   WifiUdp routing / addressing in `Runtime/HapbeatClient.cs`, settings in
