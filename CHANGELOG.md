@@ -7,6 +7,12 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ---
 
+## [Unreleased]
+
+### 修正
+- `HapbeatManager.StopAll` の直後に始めた StreamClip が鳴らない不具合を修正。StopAll は STOP_ALL を送るだけで、この SDK の stream の session を開いたまま（Playback が無くなった後の 300 ms の待ちを含む）にしていたため、直後の StreamClip は機体が STOP_ALL で止めた世代の session に入り、その DATA は機体にすべて捨てられていた（返ってくる ERROR STREAM_STOPPED で、その StreamClip も機体から外れていた）。StopAll は、target に一致する機体の session をその場で END し、そこで鳴っていた Playback をその機体から外す（他の機体では鳴り続け、機体が残らない Playback は止まる）。この後に始めた StreamClip は、新しい世代でその機体に入る（contracts `sdk-multi-stream.md` §6.13）。待機中（Deferred）の Playback は対象外で、全部止めるには `StopStream()` を使う。
+- 別のアプリの STOP_ALL で機体の stream が止まった（ERROR STREAM_STOPPED）ときも、その session をその場で閉じる（END は送らない）。これまでは 300 ms 待ってから閉じていたため、その間に始めた StreamClip が止められた世代に入って鳴らなかった。
+
 ## [1.0.1] - 2026-11-06
 
 ### 修正

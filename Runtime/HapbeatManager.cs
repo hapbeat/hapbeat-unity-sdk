@@ -514,13 +514,20 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// Stop all haptic events.
+        /// Stop all haptic events. This app's StreamClip sessions on the matching devices end at once and their
+        /// Playbacks leave those devices for good (they keep playing on other devices; a Playback left with no device
+        /// is stopped). A StreamClip started afterwards plays on those devices as usual. Deferred Playbacks are not
+        /// affected; <see cref="StopStream"/> stops every stream source.
         /// </summary>
         /// <param name="target">Device-addressing target string. Empty = broadcast (stop all on every matching device).</param>
         public void StopAll(string target = null)
         {
             if (!EnsureConnected())
                 return;
+            // End this app's sessions there first: a session left open would take the next StreamClip into the
+            // generation the device's STOP_ALL ends, where every DATA is rejected (sdk-multi-stream.md §6.13).
+            _endpointStreamMixer?.EndSessionsForStopAll(
+                HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup));
             _client.SendStopAll(target);
             Log($"\u25a0 StopAll target={target ?? "(broadcast)"}");
         }

@@ -499,7 +499,11 @@ namespace Hapbeat
                         if (current) RestartGenerationLocked(session);
                         break;
                     case HapbeatProtocol.ERROR_STREAM_STOPPED:
-                        RemoveSourcesFromDeviceLocked(session);
+                        // The device ended the current generation: the session closes now, without an END (nothing is
+                        // left to end), so a new Playback begins a new generation there instead of joining this one.
+                        // An ERROR about the previous generation (re-spliced since) leaves the current one open.
+                        RemoveSessionSourcesFromDeviceLocked(session, close: current, sendEnd: false);
+                        AfterSourcesLeftDevicesLocked();
                         break;
                     case HapbeatProtocol.ERROR_STREAM_ENDED:
                         _log($"Stream ERROR STREAM_ENDED from {endpoint} ({identity}): DATA after END (a sender bug).");
@@ -509,16 +513,58 @@ namespace Hapbeat
         }
 
         /// <summary>
-        /// STREAM_STOPPED (sdk-multi-stream.md §6.13): STOP_ALL ended this device's session, so every source in it
-        /// leaves that device for good; its other devices keep playing. A source left with no device is finished.
+        /// Called by <see cref="HapbeatManager.StopAll"/> before it sends STOP_ALL to <paramref name="target"/>
+        /// (already resolved): every session open on a device the target matches ENDs now and its sources leave that
+        /// device for good, as when a STOP_ALL is reported by ERROR STREAM_STOPPED (sdk-multi-stream.md §6.13). Left
+        /// open, or lingering, the session would take the next source into the generation the device's STOP_ALL
+        /// ends, where every DATA is rejected; the next source there begins a new session (generation) instead.
         /// </summary>
-        private void RemoveSourcesFromDeviceLocked(Session session)
+        internal void EndSessionsForStopAll(string target)
         {
-            if (session.MatchingSources.Count == 0) return;
+            lock (_lock)
+            {
+                if (_disposed) return;
+                List<Session> stopped = null;
+                foreach (Session session in _sessions.Values)
+                {
+                    if (!session.BeginSent || session.EndSent || !HapbeatClient.AddressMatches(target, session.Address))
+                        continue;
+                    if (stopped == null) stopped = new List<Session>();
+                    stopped.Add(session);
+                }
+                if (stopped == null) return;
+                for (int i = 0; i < stopped.Count; i++)
+                    RemoveSessionSourcesFromDeviceLocked(stopped[i], close: true, sendEnd: true);
+                AfterSourcesLeftDevicesLocked();
+            }
+        }
+
+        /// <summary>
+        /// STOP_ALL ended <paramref name="session"/>'s stream on its device (sdk-multi-stream.md §6.13): every source
+        /// in it leaves that device for good. With <paramref name="close"/> the session also closes at once (with an
+        /// END only when <paramref name="sendEnd"/>), so the next source on that device begins a new session.
+        /// Follow with <see cref="AfterSourcesLeftDevicesLocked"/>.
+        /// </summary>
+        private void RemoveSessionSourcesFromDeviceLocked(Session session, bool close, bool sendEnd)
+        {
             IPAddress device = session.Endpoint.Address;
             foreach (Source source in session.MatchingSources) source.RemovedDevices.Add(device);
+            foreach (Source source in session.Positions.Keys) source.RemovedDevices.Add(device);
+            if (!close) return;
+            if (sendEnd) EndSessionLocked(session);
+            else session.EndSent = true;
+            _sessions.Remove(session.Key);
+        }
+
+        /// <summary>
+        /// After sources left devices: their other devices keep playing, a source left with no device is finished
+        /// (a one-shot counts the devices it left as played; a loop is stopped).
+        /// </summary>
+        private void AfterSourcesLeftDevicesLocked()
+        {
             RebuildSessionMembershipLocked(Stopwatch.GetTimestamp());
-            if (RemoveCompletedSourcesLocked()) ReconcileEndpointsLocked();
+            RemoveCompletedSourcesLocked();
+            ReconcileEndpointsLocked();
             UpdatePlaybackStatesLocked();
             StartThreadLocked();
         }
@@ -648,6 +694,9 @@ namespace Hapbeat
                 for (int e = 0; e < endpoints.Count; e++)
                 {
                     var endpoint = endpoints[e];
+                    // A device STOP_ALL took this source off (§6.13) needs no session for it.
+                    if (source.RemovedDevices.Count > 0 && source.RemovedDevices.Contains(endpoint.EndPoint.Address))
+                        continue;
                     if (endpoint.Mode == StreamEndpointMode.Legacy && _legacySink == null)
                     {
                         if (!_loggedLegacySinkUnsupported)

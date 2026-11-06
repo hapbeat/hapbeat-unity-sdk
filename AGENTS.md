@@ -311,6 +311,8 @@ target the EventMap supplies.
   continue from their current position after a reacquisition.
 - Stream leases are refreshed by their own unicast PINGs every 5 s, independent of
   `pingInterval` (which only paces the discovery broadcast and CONNECT_STATUS).
+- `HapbeatManager.StopAll(target)` also ends this app's streams on the matching devices at
+  once (same rule as below). A `StreamAudioClip` started right after plays there as usual.
 - If a device's STOP_ALL ends a stream (from any app), the Playbacks playing there leave
   that device for good (they keep playing on other devices); start a new `StreamAudioClip`
   to play there again.

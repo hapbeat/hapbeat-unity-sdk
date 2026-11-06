@@ -153,7 +153,7 @@ namespace Hapbeat.Editor
         {
             if (!EnsureOpen()) return;
             if (string.IsNullOrEmpty(eventId))
-                _client.SendStopAll(target);
+                SendStopAll(target);
             else
                 _client.SendStop(eventId, target);
         }
@@ -161,6 +161,15 @@ namespace Hapbeat.Editor
         public static void StopAll(string target = null)
         {
             if (!EnsureOpen()) return;
+            SendStopAll(target);
+        }
+
+        private static void SendStopAll(string target)
+        {
+            // As HapbeatManager.StopAll: end this transport's stream sessions on those devices first, so the next
+            // Test Play begins a new generation there instead of joining the one the device's STOP_ALL ends, where
+            // every DATA is rejected (sdk-multi-stream.md §6.13).
+            _streamMixer?.EndSessionsForStopAll(HapbeatClient.ResolveTarget(target, _overridePlayer, _overrideGroup));
             _client.SendStopAll(target);
         }
 

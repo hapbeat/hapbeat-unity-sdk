@@ -303,13 +303,49 @@ namespace Hapbeat.Tests
             Assert.AreEqual(stoppedData, sink.Count(Kind.Data, Device), "no more DATA to the stopped device");
             Assert.Greater(sink.Count(Kind.Data, OtherDevice), otherData, "the other device keeps playing");
             Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, playback.Status);
-            WaitFor(() => sink.Count(Kind.End, Device) == 1); // the empty session's END after the linger
+            Assert.AreEqual(0, sink.Count(Kind.End, Device), "the device ended the session: it closes without an END");
 
             // A new Playback joins the stopped device as usual.
             var fresh = mixer.AddSamples(new float[16000], 16000, 1, 1f, 1f, "*/pos_chest", true);
             WaitFor(() => sink.Count(Kind.Data, Device) > stoppedData);
             fresh.Stop();
             playback.Stop();
+        }
+
+        [Test]
+        public void StreamStopped_ANewSourceRightAfter_BeginsANewGeneration_AndALateErrorLeavesItAlone()
+        {
+            var sink = new PacketSink();
+            using var mixer = TwoEndpointMixer(sink);
+            var playback = mixer.AddSamples(new float[16000], 16000, 1, 1f, 1f, "*/pos_chest", true);
+            WaitFor(() => sink.Count(Kind.Data, Device) > 5);
+            HapbeatProtocol.StreamSessionIdentity stopped = sink.LastIdentity(Device);
+
+            mixer.HandleStreamError(Device, HapbeatProtocol.ERROR_STREAM_STOPPED, stopped);
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Stopped, playback.Status, "the loop has no device left");
+            Assert.IsFalse(mixer.IsStreaming, "the session the device stopped closes at once");
+            Assert.AreEqual(0, sink.Count(Kind.End, Device), "... without an END");
+            int stoppedData = sink.Count(Kind.Data, Device);
+
+            // Right after (within what used to be the 300 ms linger): a new generation, not the stopped one.
+            var fresh = mixer.AddSamples(new float[16000], 16000, 1, 1f, 1f, "*/pos_chest", true);
+            WaitFor(() => sink.Count(Kind.Data, Device) > stoppedData + 3);
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, fresh.Status);
+            var packets = sink.Snapshot().FindAll(p => p.endpoint == Device.ToString());
+            Assert.AreEqual(stoppedData,
+                packets.FindAll(p => p.kind == Kind.Data && p.identity.Generation == stopped.Generation).Count,
+                "no DATA goes out under the generation the device stopped");
+            int firstNew = packets.FindIndex(p => p.identity.Generation > stopped.Generation);
+            Assert.GreaterOrEqual(firstNew, 0);
+            Assert.AreEqual(Kind.Begin, packets[firstNew].kind, "the new session starts with a BEGIN");
+            Assert.AreEqual(stopped.Lease, packets[firstNew].identity.Lease, "same lease");
+
+            // An ERROR about the stopped generation that arrives late (DATA was in flight) names no open session.
+            mixer.HandleStreamError(Device, HapbeatProtocol.ERROR_STREAM_STOPPED, stopped);
+            Assert.AreEqual(HapbeatStreamPlaybackStatus.Active, fresh.Status, "a late ERROR leaves the new Playback alone");
+            int data = sink.Count(Kind.Data, Device);
+            WaitFor(() => sink.Count(Kind.Data, Device) > data);
+            fresh.Stop();
         }
 
         [TestCase(false, TestName = "StreamStopped_OneShotOnItsOnlyEndpoint_IsStopped")]
