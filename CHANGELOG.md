@@ -14,7 +14,7 @@ Hapbeat Unity SDK の主要な変更点をまとめます。
 
 ## [1.0.0] - 2026-11-06
 
-通信の 1.x（DEC-096）に対応。対応する仕様は hapbeat-contracts `46f246e`（1.0 の仕様。release 時に contracts の版に置き換える）。
+通信の 1.x（DEC-096）に対応。対応する仕様は hapbeat-contracts `v1.0.0`。
 
 ### 追加
 - `HapbeatStreamPlaybackDeferReason` に `UnknownClass`（機体がまだ stream lease の要求に答えていない）・`LeaseUnavailable`（lease が無い・失効した）・`Superseded`（別のアプリが後から再生した）を追加。一致する機体ごとに理由が違うときは Superseded > LeaseUnavailable > UnknownClass > NoResolvedEndpoint の順で 1 つを報告する。
